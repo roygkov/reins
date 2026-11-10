@@ -1,0 +1,16 @@
+{
+  "name": "reins",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Client-independent agent harness. The core has no runtime dependencies.",
+  "type": "module",
+  "engines": { "node": ">=23.6" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

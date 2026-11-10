@@ -1,0 +1,498 @@
+[
+ {
+  "name": "a minimal row is valid",
+  "errors": []
+ },
+ {
+  "name": "a row must be an object",
+  "row": 5,
+  "errors": [
+   "not_object $"
+  ]
+ },
+ {
+  "name": "a kind outside the list is not written",
+  "patch": {
+   "kind": "task.done"
+  },
+  "errors": [
+   "unknown_kind kind"
+  ]
+ },
+ {
+  "name": "a kind in free words is not written",
+  "patch": {
+   "kind": "задача открыта"
+  },
+  "errors": [
+   "unknown_kind kind"
+  ]
+ },
+ {
+  "name": "the time is required",
+  "patch": {
+   "ts": null
+  },
+  "errors": [
+   "missing ts"
+  ]
+ },
+ {
+  "name": "the time is ISO 8601 in UTC",
+  "patch": {
+   "ts": "yesterday"
+  },
+  "errors": [
+   "bad_time ts"
+  ]
+ },
+ {
+  "name": "a local time is refused",
+  "patch": {
+   "ts": "2026-11-11T08:00:00+03:00"
+  },
+  "errors": [
+   "bad_time ts"
+  ]
+ },
+ {
+  "name": "only schema version 1 is known",
+  "patch": {
+   "v": 2
+  },
+  "errors": [
+   "version_unsupported v"
+  ]
+ },
+ {
+  "name": "the project is required",
+  "patch": {
+   "project": null
+  },
+  "errors": [
+   "missing project"
+  ]
+ },
+ {
+  "name": "an unknown field is not written",
+  "patch": {
+   "text": "hello"
+  },
+  "errors": [
+   "unknown_field text"
+  ]
+ },
+ {
+  "name": "a task event names its task",
+  "patch": {
+   "task": null
+  },
+  "errors": [
+   "missing task"
+  ]
+ },
+ {
+  "name": "a harness event needs no task",
+  "row": {
+   "ts": "2026-11-11T08:00:00.000Z",
+   "v": 1,
+   "kind": "harness.failure",
+   "project": "p1a2b3c4",
+   "data": {
+    "where": "policy"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "a memory event needs no task",
+  "row": {
+   "ts": "2026-11-11T08:00:00.000Z",
+   "v": 1,
+   "kind": "memory.read",
+   "project": "p1a2b3c4"
+  },
+  "errors": []
+ },
+ {
+  "name": "a subordinate executor names the parent task",
+  "patch": {
+   "executor": "sub"
+  },
+  "errors": [
+   "missing parent"
+  ]
+ },
+ {
+  "name": "a subordinate executor with a parent is valid",
+  "patch": {
+   "executor": "sub",
+   "parent": "t0000",
+   "role": "reviewer",
+   "level": "medium",
+   "client": "client-a"
+  },
+  "errors": []
+ },
+ {
+  "name": "the executor is main or sub",
+  "patch": {
+   "executor": "helper"
+  },
+  "errors": [
+   "not_in_list executor"
+  ]
+ },
+ {
+  "name": "the model level is from the list",
+  "patch": {
+   "level": "max"
+  },
+  "errors": [
+   "not_in_list level"
+  ]
+ },
+ {
+  "name": "the rule package is from the list",
+  "patch": {
+   "pack": "team"
+  },
+  "errors": [
+   "not_in_list pack"
+  ]
+ },
+ {
+  "name": "the fingerprint is hex",
+  "patch": {
+   "fp": "zzz"
+  },
+  "errors": [
+   "bad_fingerprint fp"
+  ]
+ },
+ {
+  "name": "a hex fingerprint is valid",
+  "patch": {
+   "fp": "9f3ac2d41b07"
+  },
+  "errors": []
+ },
+ {
+  "name": "a scenario name comes with its version",
+  "patch": {
+   "scenario": "change-review"
+  },
+  "errors": [
+   "missing scenario_v"
+  ]
+ },
+ {
+  "name": "a scenario with a version is valid",
+  "patch": {
+   "scenario": "change-review",
+   "scenario_v": 3,
+   "session": "s-01"
+  },
+  "errors": []
+ },
+ {
+  "name": "an identifier is a token",
+  "patch": {
+   "task": "task with spaces"
+  },
+  "errors": [
+   "bad_token task"
+  ]
+ },
+ {
+  "name": "event data holds no free text",
+  "patch": {
+   "kind": "task.returned",
+   "data": {
+    "reason": "tests are red again"
+   }
+  },
+  "errors": [
+   "free_text data.reason"
+  ]
+ },
+ {
+  "name": "event data holds a reason code",
+  "patch": {
+   "kind": "task.returned",
+   "data": {
+    "reason": "no_check",
+    "n": 1
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "event data holds no nested object",
+  "patch": {
+   "kind": "task.returned",
+   "data": {
+    "detail": {
+     "a": 1
+    }
+   }
+  },
+  "errors": [
+   "bad_value data.detail"
+  ]
+ },
+ {
+  "name": "event data holds no list",
+  "patch": {
+   "kind": "task.returned",
+   "data": {
+    "files": [
+     "a",
+     "b"
+    ]
+   }
+  },
+  "errors": [
+   "bad_value data.files"
+  ]
+ },
+ {
+  "name": "event data is an object",
+  "patch": {
+   "data": "opened"
+  },
+  "errors": [
+   "not_object data"
+  ]
+ },
+ {
+  "name": "a report is written as size and fingerprint",
+  "patch": {
+   "kind": "task.report_submitted",
+   "data": {
+    "size": 512,
+    "cut": false,
+    "fp": "9f3ac2d41b07"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "a closed task carries the result label",
+  "patch": {
+   "kind": "task.closed"
+  },
+  "errors": [
+   "missing data.label"
+  ]
+ },
+ {
+  "name": "the result label is from the list",
+  "patch": {
+   "kind": "task.closed",
+   "data": {
+    "label": "done"
+   }
+  },
+  "errors": [
+   "not_in_list data.label"
+  ]
+ },
+ {
+  "name": "a closed task with a label is valid",
+  "patch": {
+   "kind": "task.closed",
+   "data": {
+    "label": "verified_form"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "the task kind comes with its reason",
+  "patch": {
+   "kind": "task.kind_decided",
+   "data": {
+    "kind": "scenario",
+    "reason": "scenario_name"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "the task kind is never decided by words",
+  "patch": {
+   "kind": "task.kind_decided",
+   "data": {
+    "kind": "scenario",
+    "reason": "prompt_words"
+   }
+  },
+  "errors": [
+   "not_in_list data.reason"
+  ]
+ },
+ {
+  "name": "a policy decision is valid",
+  "patch": {
+   "kind": "policy.decision",
+   "data": {
+    "outcome": "ask",
+    "action_kind": "write",
+    "env": "work"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "the policy outcome is from the list",
+  "patch": {
+   "kind": "policy.decision",
+   "data": {
+    "outcome": "maybe",
+    "action_kind": "write",
+    "env": "work"
+   }
+  },
+  "errors": [
+   "not_in_list data.outcome"
+  ]
+ },
+ {
+  "name": "the basis names the layer and the rule",
+  "patch": {
+   "kind": "policy.basis",
+   "data": {
+    "layer": "project",
+    "rule": "git.push-protected"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "the basis layer is from the list",
+  "patch": {
+   "kind": "policy.basis",
+   "data": {
+    "layer": "team",
+    "rule": "r1"
+   }
+  },
+  "errors": [
+   "not_in_list data.layer"
+  ]
+ },
+ {
+  "name": "a check answer is PASS or FAIL",
+  "patch": {
+   "kind": "check.answered",
+   "data": {
+    "result": "OK",
+    "check_kind": "command"
+   }
+  },
+  "errors": [
+   "not_in_list data.result"
+  ]
+ },
+ {
+  "name": "a check answer is valid",
+  "patch": {
+   "kind": "check.answered",
+   "data": {
+    "result": "PASS",
+    "check_kind": "citations"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "cost is numbers",
+  "patch": {
+   "kind": "executor.cost",
+   "data": {
+    "tokens": "many",
+    "ms": 900,
+    "calls": 3
+   }
+  },
+  "errors": [
+   "not_number data.tokens"
+  ]
+ },
+ {
+  "name": "cost is valid",
+  "patch": {
+   "kind": "executor.cost",
+   "data": {
+    "tokens": 1200,
+    "ms": 900,
+    "calls": 3
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "a harness failure holds no error text",
+  "row": {
+   "ts": "2026-11-11T08:00:00.000Z",
+   "v": 1,
+   "kind": "harness.failure",
+   "project": "p1a2b3c4",
+   "data": {
+    "where": "policy",
+    "error": "TypeError: x is undefined"
+   }
+  },
+  "errors": [
+   "free_text data.error"
+  ]
+ },
+ {
+  "name": "a harness failure names the place",
+  "row": {
+   "ts": "2026-11-11T08:00:00.000Z",
+   "v": 1,
+   "kind": "harness.failure",
+   "project": "p1a2b3c4"
+  },
+  "errors": [
+   "missing data.where"
+  ]
+ },
+ {
+  "name": "free text cannot hide in a data key",
+  "patch": {
+   "kind": "task.returned",
+   "data": {
+    "tests are red again after the fix": true
+   }
+  },
+  "errors": [
+   "free_text data.tests are red again after the fix"
+  ]
+ },
+ {
+  "name": "a data key named like an object method is a plain field",
+  "patch": {
+   "kind": "task.returned",
+   "data": {
+    "constructor": "x",
+    "to_string": 1
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "a required data field is an own field",
+  "patch": {
+   "kind": "task.closed",
+   "data": {
+    "constructor": "x"
+   }
+  },
+  "errors": [
+   "missing data.label"
+  ]
+ }
+]

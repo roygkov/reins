@@ -1,0 +1,19 @@
+[
+  {
+    "name": "default",
+    "pack": {
+      "readConnectors": ["code-host", "tracker"],
+      "writeActions": ["comment"],
+      "scripts": ["collect/change"],
+      "checks": ["tests"],
+      "envs": ["work", "live"],
+      "productionEnvs": ["live"],
+      "roles": ["reviewer"],
+      "memoryTypes": ["pitfall", "case"],
+      "maxLevel": "strong",
+      "maxTokens": 200000,
+      "maxWriteLimit": 20,
+      "maxExecutors": 2
+    }
+  }
+]

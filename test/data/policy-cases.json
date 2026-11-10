@@ -1,0 +1,1063 @@
+[
+ {
+  "name": "a read passes by default",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "get-change",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.read",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a read in production passes by default",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "get-logs",
+    "target": "logs",
+    "env": {
+     "name": "live",
+     "known": true,
+     "production": true
+    }
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.read",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a write asks by default",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "an unknown tool call counts as a write",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "unknown",
+    "name": "do-thing",
+    "target": "",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.unknown-tool",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a shell command outside the dangerous classes passes",
+  "input": {
+   "action": {
+    "via": "shell",
+    "kind": "unknown",
+    "name": "ls",
+    "target": "",
+    "env": {
+     "name": "local",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.shell",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a change inside the work tree passes by default",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "local",
+    "name": "edit-file",
+    "target": "src/a.ts",
+    "env": {
+     "name": "local",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.local",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a layer can protect a path inside the work tree",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "local",
+    "name": "edit-file",
+    "target": "test/a.test.ts",
+    "env": {
+     "name": "local",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "core",
+     "outcome": "ask",
+     "rule": "check.protected"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "check.protected",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a shell command of a dangerous class asks",
+  "input": {
+   "action": {
+    "via": "shell",
+    "kind": "write",
+    "name": "git-push",
+    "target": "main",
+    "env": {
+     "name": "local",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "core",
+     "outcome": "ask",
+     "rule": "git.push-protected"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "git.push-protected",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a lower layer makes the decision stricter",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "get-secret",
+    "target": "vault",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "allow",
+     "rule": "org.read"
+    },
+    {
+     "layer": "project",
+     "outcome": "ask",
+     "rule": "project.secrets"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "project",
+   "rule": "project.secrets",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a lower layer cannot make the decision looser",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "merge",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "core",
+     "outcome": "ask",
+     "rule": "core.merge"
+    },
+    {
+     "layer": "person",
+     "outcome": "allow",
+     "rule": "person.merge"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "core.merge",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a personal allow does not remove the default question for a write",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "merge",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "person",
+     "outcome": "allow",
+     "rule": "person.merge"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "deny wins over defer",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "deploy",
+    "target": "svc",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "defer",
+     "rule": "org.deploy"
+    },
+    {
+     "layer": "project",
+     "outcome": "deny",
+     "rule": "project.deploy"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "deny",
+   "layer": "project",
+   "rule": "project.deploy",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "deny of an upper layer stays",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "drop",
+    "target": "db",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "deny",
+     "rule": "org.drop"
+    },
+    {
+     "layer": "project",
+     "outcome": "ask",
+     "rule": "project.drop"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "deny",
+   "layer": "organization",
+   "rule": "org.drop",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "the basis is the upper layer when two layers agree",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "merge",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "project",
+     "outcome": "ask",
+     "rule": "project.merge"
+    },
+    {
+     "layer": "core",
+     "outcome": "ask",
+     "rule": "core.merge"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "core.merge",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "defer puts the action into the queue",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "deploy",
+    "target": "svc",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "defer",
+     "rule": "org.deploy"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "defer",
+   "layer": "organization",
+   "rule": "org.deploy",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "the envelope turns a question into an allow",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "applied"
+  }
+ },
+ {
+  "name": "an envelope with one confirmation asks once for the task",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "once"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "task",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "confirm"
+  }
+ },
+ {
+  "name": "after the confirmation the envelope allows",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "once"
+    }
+   ],
+   "task": {
+    "confirmed": [
+     "comment change/7 work"
+    ],
+    "used": {
+     "comment change/7 work": 3
+    }
+   }
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "applied"
+  }
+ },
+ {
+  "name": "another target is not in the envelope",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/8",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "not_named"
+  }
+ },
+ {
+  "name": "another environment is not in the envelope",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "test",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "not_named"
+  }
+ },
+ {
+  "name": "a used-up limit returns the question",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 2,
+     "confirm": "none"
+    }
+   ],
+   "task": {
+    "confirmed": [],
+    "used": {
+     "comment change/7 work": 2
+    }
+   }
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "limit"
+  }
+ },
+ {
+  "name": "the envelope turns an explicit question of a layer into an allow",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "project",
+     "outcome": "ask",
+     "rule": "project.comment"
+    }
+   ],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "project",
+   "rule": "project.comment",
+   "envelope": "applied"
+  }
+ },
+ {
+  "name": "an unknown tool call named in the envelope is allowed",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "unknown",
+    "name": "post-note",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "post-note",
+     "target": "change/7",
+     "env": "work",
+     "limit": 1,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.unknown-tool",
+   "envelope": "applied"
+  }
+ },
+ {
+  "name": "the envelope is not needed for a read",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "get-change",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.read",
+   "envelope": "not_needed"
+  }
+ },
+ {
+  "name": "the envelope does not act on a production write",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "live",
+     "known": true,
+     "production": true
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "live",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "production"
+  }
+ },
+ {
+  "name": "a confirmed envelope still does not act on a production write",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "live",
+     "known": true,
+     "production": true
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "live",
+     "limit": 20,
+     "confirm": "once"
+    }
+   ],
+   "task": {
+    "confirmed": [
+     "comment change/7 live"
+    ],
+    "used": {}
+   }
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "production"
+  }
+ },
+ {
+  "name": "an unknown environment counts as production for a write",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "stage9",
+     "known": false,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "stage9",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "production"
+  }
+ },
+ {
+  "name": "no layer can allow a production write without the human",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "restart",
+    "target": "svc",
+    "env": {
+     "name": "live",
+     "known": true,
+     "production": true
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "allow",
+     "rule": "org.restart"
+    },
+    {
+     "layer": "person",
+     "outcome": "allow",
+     "rule": "person.restart"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "a production write that a layer denies stays denied",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "drop",
+    "target": "db",
+    "env": {
+     "name": "live",
+     "known": true,
+     "production": true
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "deny",
+     "rule": "org.drop"
+    }
+   ],
+   "envelope": [
+    {
+     "action": "drop",
+     "target": "db",
+     "env": "live",
+     "limit": 1,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "deny",
+   "layer": "organization",
+   "rule": "org.drop",
+   "envelope": "not_applicable"
+  }
+ },
+ {
+  "name": "the envelope does not pass the queue",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "deploy",
+    "target": "svc",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "defer",
+     "rule": "org.deploy"
+    }
+   ],
+   "envelope": [
+    {
+     "action": "deploy",
+     "target": "svc",
+     "env": "work",
+     "limit": 1,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "defer",
+   "layer": "organization",
+   "rule": "org.deploy",
+   "envelope": "not_applicable"
+  }
+ },
+ {
+  "name": "an unknown tool call in an unknown environment is not covered by the envelope",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "unknown",
+    "name": "post-note",
+    "target": "change/7",
+    "env": {
+     "name": "stage9",
+     "known": false,
+     "production": false
+    }
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "post-note",
+     "target": "change/7",
+     "env": "stage9",
+     "limit": 1,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.unknown-tool",
+   "envelope": "production"
+  }
+ },
+ {
+  "name": "an unclassified shell command that a rule asks about is not covered by the envelope in production",
+  "input": {
+   "action": {
+    "via": "shell",
+    "kind": "unknown",
+    "name": "kubectl",
+    "target": "svc",
+    "env": {
+     "name": "live",
+     "known": true,
+     "production": true
+    }
+   },
+   "layers": [
+    {
+     "layer": "core",
+     "outcome": "ask",
+     "rule": "deploy.kubectl"
+    }
+   ],
+   "envelope": [
+    {
+     "action": "kubectl",
+     "target": "svc",
+     "env": "live",
+     "limit": 1,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "deploy.kubectl",
+   "envelope": "production"
+  }
+ },
+ {
+  "name": "a layer outcome outside the list counts as deny",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "get-change",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    }
+   },
+   "layers": [
+    {
+     "layer": "organization",
+     "outcome": "Deny",
+     "rule": "org.typo"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "deny",
+   "layer": "organization",
+   "rule": "org.typo",
+   "envelope": "none"
+  }
+ }
+]

@@ -1,0 +1,965 @@
+[
+ {
+  "name": "the review scenario is valid without a pack",
+  "base": "review",
+  "errors": []
+ },
+ {
+  "name": "the review scenario is valid against the pack",
+  "base": "review",
+  "pack": "default",
+  "errors": []
+ },
+ {
+  "name": "the minimal scenario is valid",
+  "base": "minimal",
+  "pack": "default",
+  "errors": []
+ },
+ {
+  "name": "a manifest must be an object",
+  "manifest": "change-review",
+  "errors": [
+   "not_object $"
+  ]
+ },
+ {
+  "name": "an array is not a manifest",
+  "manifest": [],
+  "errors": [
+   "not_object $"
+  ]
+ },
+ {
+  "name": "an unknown top field is refused",
+  "base": "review",
+  "patch": {
+   "steps": []
+  },
+  "errors": [
+   "unknown_field steps"
+  ]
+ },
+ {
+  "name": "a condition is an unknown field",
+  "base": "review",
+  "patch": {
+   "if": "has_new_commits"
+  },
+  "errors": [
+   "unknown_field if"
+  ]
+ },
+ {
+  "name": "the name is required",
+  "base": "review",
+  "patch": {
+   "name": null
+  },
+  "errors": [
+   "missing name"
+  ]
+ },
+ {
+  "name": "only contract version 1 is known",
+  "base": "review",
+  "patch": {
+   "manifest": 2
+  },
+  "errors": [
+   "version_unsupported manifest"
+  ]
+ },
+ {
+  "name": "the name is a slug",
+  "base": "review",
+  "patch": {
+   "name": "Change Review"
+  },
+  "errors": [
+   "bad_name name"
+  ]
+ },
+ {
+  "name": "the owner package is from the list",
+  "base": "review",
+  "patch": {
+   "package": "team"
+  },
+  "errors": [
+   "not_in_list package"
+  ]
+ },
+ {
+  "name": "the state is from the list",
+  "base": "review",
+  "patch": {
+   "state": "paused"
+  },
+  "errors": [
+   "not_in_list state"
+  ]
+ },
+ {
+  "name": "a disabled scenario is valid",
+  "base": "review",
+  "patch": {
+   "state": "disabled"
+  },
+  "errors": []
+ },
+ {
+  "name": "the title is one line",
+  "base": "review",
+  "patch": {
+   "title": "Ревью\nизменения"
+  },
+  "errors": [
+   "not_one_line title"
+  ]
+ },
+ {
+  "name": "the description is one line",
+  "base": "review",
+  "patch": {
+   "description": "a\nb"
+  },
+  "errors": [
+   "not_one_line description"
+  ]
+ },
+ {
+  "name": "the trigger kind is from the list",
+  "base": "review",
+  "patch": {
+   "trigger": {
+    "kind": "webhook"
+   }
+  },
+  "errors": [
+   "not_in_list trigger.kind"
+  ]
+ },
+ {
+  "name": "a schedule needs a value",
+  "base": "minimal",
+  "patch": {
+   "trigger": {
+    "kind": "schedule"
+   }
+  },
+  "errors": [
+   "missing trigger.value"
+  ]
+ },
+ {
+  "name": "a schedule with a value is valid",
+  "base": "minimal",
+  "patch": {
+   "trigger": {
+    "kind": "schedule",
+    "value": "weekdays-09-00"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "input names are unique",
+  "base": "review",
+  "patch": {
+   "trigger": {
+    "inputs": [
+     {
+      "name": "change_id",
+      "type": "id"
+     },
+     {
+      "name": "change_id",
+      "type": "url"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "duplicate trigger.inputs[1].name"
+  ]
+ },
+ {
+  "name": "the input type is from the list",
+  "base": "review",
+  "patch": {
+   "trigger": {
+    "inputs": [
+     {
+      "name": "change_id",
+      "type": "object"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "not_in_list trigger.inputs[0].type"
+  ]
+ },
+ {
+  "name": "the trigger is an object",
+  "base": "minimal",
+  "patch": {
+   "trigger": "command"
+  },
+  "errors": [
+   "not_object trigger"
+  ]
+ },
+ {
+  "name": "a run condition needs a collect script",
+  "base": "review",
+  "patch": {
+   "collect": null
+  },
+  "errors": [
+   "run_if_without_collect run_if"
+  ]
+ },
+ {
+  "name": "the run condition is a flag of the collect script",
+  "base": "review",
+  "patch": {
+   "run_if": "has_changes"
+  },
+  "errors": [
+   "unknown_flag run_if"
+  ]
+ },
+ {
+  "name": "the run condition is a name, not an expression",
+  "base": "review",
+  "patch": {
+   "run_if": "has_new_commits && open"
+  },
+  "errors": [
+   "bad_name run_if"
+  ]
+ },
+ {
+  "name": "the script reference stays inside the pack",
+  "base": "review",
+  "patch": {
+   "collect": {
+    "script": "../collect/change"
+   }
+  },
+  "errors": [
+   "bad_ref collect.script"
+  ]
+ },
+ {
+  "name": "an absolute script path is refused",
+  "base": "review",
+  "patch": {
+   "collect": {
+    "script": "/usr/bin/env"
+   }
+  },
+  "errors": [
+   "bad_ref collect.script"
+  ]
+ },
+ {
+  "name": "collect names its results",
+  "base": "review",
+  "patch": {
+   "collect": {
+    "outputs": []
+   }
+  },
+  "errors": [
+   "empty collect.outputs"
+  ]
+ },
+ {
+  "name": "collect limits are positive integers",
+  "base": "review",
+  "patch": {
+   "collect": {
+    "max_bytes": 0,
+    "timeout_s": 1.5
+   }
+  },
+  "errors": [
+   "not_positive collect.max_bytes",
+   "not_integer collect.timeout_s"
+  ]
+ },
+ {
+  "name": "the model level is from the list",
+  "base": "review",
+  "patch": {
+   "model": {
+    "level": "max"
+   }
+  },
+  "errors": [
+   "not_in_list model.level"
+  ]
+ },
+ {
+  "name": "the raise level is not below the level",
+  "base": "review",
+  "patch": {
+   "model": {
+    "level": "strong",
+    "raise_to": "medium"
+   }
+  },
+  "errors": [
+   "raise_below_level model.raise_to"
+  ]
+ },
+ {
+  "name": "an executor count is positive",
+  "base": "review",
+  "patch": {
+   "model": {
+    "executors": [
+     {
+      "role": "reviewer",
+      "count": 0
+     }
+    ]
+   }
+  },
+  "errors": [
+   "not_positive model.executors[0].count"
+  ]
+ },
+ {
+  "name": "the token limit is an integer",
+  "base": "review",
+  "patch": {
+   "model": {
+    "token_limit": "200k"
+   }
+  },
+  "errors": [
+   "not_integer model.token_limit"
+  ]
+ },
+ {
+  "name": "a write target cannot be everything",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "*",
+      "env": "work",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "target_unbounded permissions.write[0].target"
+  ]
+ },
+ {
+  "name": "a write target needs a fixed part",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "{change_id}",
+      "env": "work",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "target_unbounded permissions.write[0].target"
+  ]
+ },
+ {
+  "name": "a wildcard inside the target is refused",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/*",
+      "env": "work",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "target_unbounded permissions.write[0].target"
+  ]
+ },
+ {
+  "name": "a target placeholder is a trigger input",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{id}",
+      "env": "work",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "unknown_input permissions.write[0].target"
+  ]
+ },
+ {
+  "name": "the confirmation is from the list",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 20,
+      "confirm": "always"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "not_in_list permissions.write[0].confirm"
+  ]
+ },
+ {
+  "name": "the write limit is positive",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 0,
+      "confirm": "none"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "not_positive permissions.write[0].limit"
+  ]
+ },
+ {
+  "name": "a write entry has fixed fields",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 20,
+      "confirm": "none",
+      "if": "approved"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "unknown_field permissions.write[0].if"
+  ]
+ },
+ {
+  "name": "a write entry needs every field",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "missing permissions.write[0].target",
+   "missing permissions.write[0].env",
+   "missing permissions.write[0].limit",
+   "missing permissions.write[0].confirm"
+  ]
+ },
+ {
+  "name": "the read list is an array",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "read": "all"
+   }
+  },
+  "errors": [
+   "not_array permissions.read"
+  ]
+ },
+ {
+  "name": "the same write is named once",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 20,
+      "confirm": "once"
+     },
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 5,
+      "confirm": "none"
+     }
+    ]
+   }
+  },
+  "errors": [
+   "duplicate permissions.write[1]"
+  ]
+ },
+ {
+  "name": "the done kind is from the list",
+  "base": "review",
+  "patch": {
+   "done": {
+    "kind": "vote"
+   }
+  },
+  "errors": [
+   "not_in_list done.kind"
+  ]
+ },
+ {
+  "name": "a command check names the check",
+  "base": "review",
+  "patch": {
+   "done": {
+    "kind": "command"
+   }
+  },
+  "errors": [
+   "missing done.check"
+  ]
+ },
+ {
+  "name": "a command check with a name is valid",
+  "base": "review",
+  "patch": {
+   "done": {
+    "kind": "command",
+    "check": "tests"
+   }
+  },
+  "pack": "default",
+  "errors": []
+ },
+ {
+  "name": "a citation check takes no check name",
+  "base": "review",
+  "patch": {
+   "done": {
+    "check": "tests"
+   }
+  },
+  "errors": [
+   "not_allowed done.check"
+  ]
+ },
+ {
+  "name": "the number of send-backs has a floor",
+  "base": "review",
+  "patch": {
+   "done": {
+    "retries": -1
+   }
+  },
+  "errors": [
+   "not_in_range done.retries"
+  ]
+ },
+ {
+  "name": "the number of send-backs has a ceiling",
+  "base": "review",
+  "patch": {
+   "done": {
+    "retries": 9
+   }
+  },
+  "errors": [
+   "not_in_range done.retries"
+  ]
+ },
+ {
+  "name": "the output format is from the list",
+  "base": "review",
+  "patch": {
+   "output": {
+    "format": "findings"
+   }
+  },
+  "errors": [
+   "not_in_list output.format"
+  ]
+ },
+ {
+  "name": "the output has a size limit",
+  "base": "review",
+  "patch": {
+   "output": {
+    "max_items": null
+   }
+  },
+  "errors": [
+   "missing_limit output"
+  ]
+ },
+ {
+  "name": "the output receiver is from the list",
+  "base": "review",
+  "patch": {
+   "output": {
+    "to": "channel"
+   }
+  },
+  "errors": [
+   "not_in_list output.to"
+  ]
+ },
+ {
+  "name": "the output sections are one-line names",
+  "base": "review",
+  "patch": {
+   "output": {
+    "sections": [
+     "Находки",
+     "a\nb"
+    ]
+   }
+  },
+  "errors": [
+   "not_one_line output.sections[1]"
+  ]
+ },
+ {
+  "name": "a memory record type is from the list",
+  "base": "review",
+  "patch": {
+   "memory": {
+    "write": [
+     "note"
+    ]
+   }
+  },
+  "errors": [
+   "not_in_list memory.write[0]"
+  ]
+ },
+ {
+  "name": "a memory write names its class",
+  "base": "review",
+  "patch": {
+   "memory": {
+    "class": null
+   }
+  },
+  "errors": [
+   "missing memory.class"
+  ]
+ },
+ {
+  "name": "the memory class is from the list",
+  "base": "review",
+  "patch": {
+   "memory": {
+    "class": "human"
+   }
+  },
+  "errors": [
+   "not_in_list memory.class"
+  ]
+ },
+ {
+  "name": "a read connector comes from the pack",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "read": [
+     "code-host",
+     "wiki"
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "not_in_pack permissions.read[1]"
+  ]
+ },
+ {
+  "name": "a write action comes from the pack",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "merge",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 1,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "not_in_pack permissions.write[0].action"
+  ]
+ },
+ {
+  "name": "an envelope cannot name a production environment",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "live",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "envelope_production permissions.write[0].env"
+  ]
+ },
+ {
+  "name": "an unknown environment counts as production",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "stage9",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "envelope_production permissions.write[0].env"
+  ]
+ },
+ {
+  "name": "the write limit stays within the pack",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 50,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "above_pack permissions.write[0].limit"
+  ]
+ },
+ {
+  "name": "the raise level stays within the pack",
+  "base": "review",
+  "pack": {
+   "maxLevel": "medium",
+   "envs": [
+    "work"
+   ]
+  },
+  "errors": [
+   "above_pack model.raise_to"
+  ]
+ },
+ {
+  "name": "the token limit stays within the pack",
+  "base": "review",
+  "patch": {
+   "model": {
+    "token_limit": 500000
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "above_pack model.token_limit"
+  ]
+ },
+ {
+  "name": "the number of executors stays within the pack",
+  "base": "review",
+  "patch": {
+   "model": {
+    "executors": [
+     {
+      "role": "reviewer",
+      "count": 3
+     }
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "above_pack model.executors"
+  ]
+ },
+ {
+  "name": "the collect script comes from the pack",
+  "base": "review",
+  "patch": {
+   "collect": {
+    "script": "collect/other"
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "not_in_pack collect.script"
+  ]
+ },
+ {
+  "name": "an executor role comes from the pack",
+  "base": "review",
+  "patch": {
+   "model": {
+    "executors": [
+     {
+      "role": "tester",
+      "count": 1
+     }
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "not_in_pack model.executors[0].role"
+  ]
+ },
+ {
+  "name": "the check comes from the pack",
+  "base": "review",
+  "patch": {
+   "done": {
+    "kind": "command",
+    "check": "lint"
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "not_in_pack done.check"
+  ]
+ },
+ {
+  "name": "a memory record type comes from the pack",
+  "base": "review",
+  "patch": {
+   "memory": {
+    "write": [
+     "decision"
+    ]
+   }
+  },
+  "pack": "default",
+  "errors": [
+   "not_in_pack memory.write[0]"
+  ]
+ },
+ {
+  "name": "an environment outside the production list is still unknown without a list of environments",
+  "base": "review",
+  "patch": {
+   "permissions": {
+    "write": [
+     {
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "prod",
+      "limit": 20,
+      "confirm": "once"
+     }
+    ]
+   }
+  },
+  "pack": {
+   "productionEnvs": [
+    "live"
+   ]
+  },
+  "errors": [
+   "envelope_production permissions.write[0].env"
+  ]
+ },
+ {
+  "name": "a pack without environments allows no write envelope",
+  "base": "review",
+  "pack": {
+   "maxLevel": "strong"
+  },
+  "errors": [
+   "envelope_production permissions.write[0].env"
+  ]
+ },
+ {
+  "name": "every fault is reported, not only the first",
+  "base": "review",
+  "patch": {
+   "name": "X",
+   "package": "team",
+   "done": {
+    "kind": "vote"
+   },
+   "extra": 1
+  },
+  "errors": [
+   "bad_name name",
+   "not_in_list package",
+   "not_in_list done.kind",
+   "unknown_field extra"
+  ]
+ }
+]
