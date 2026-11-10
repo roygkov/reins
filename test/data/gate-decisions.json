@@ -1,0 +1,2042 @@
+[
+ {
+  "repo": "clean",
+  "command": "git -C <tmp>/dirty reset --hard",
+  "expect": "ask git.discard.reset"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch --delete --force topic",
+  "expect": "ask git.discard.branch"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch -D \"$b\"",
+  "expect": "ask git.discard.branch"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch -D merged",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch -D nosuchbranch",
+  "expect": "ask git.discard.branch"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch -D pushed",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch -D topic",
+  "expect": "ask git.discard.branch"
+ },
+ {
+  "repo": "clean",
+  "command": "git branch -d topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git checkout -- \"$f\"",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "clean",
+  "command": "git checkout --pathspec-from-file=list.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "clean",
+  "command": "git checkout -f topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git checkout .",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git clean -fd",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git clean -fd \"$dir\"",
+  "expect": "ask git.discard.clean"
+ },
+ {
+  "repo": "clean",
+  "command": "git diff --name-only | xargs git checkout --",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "clean",
+  "command": "git diff --name-only | xargs git restore",
+  "expect": "ask git.discard.restore"
+ },
+ {
+  "repo": "clean",
+  "command": "git fetch --all",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git gc",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git gc --prune=now",
+  "expect": "ask git.discard.reflog"
+ },
+ {
+  "repo": "clean",
+  "command": "git prune",
+  "expect": "ask git.discard.reflog"
+ },
+ {
+  "repo": "clean",
+  "command": "git reflog expire --expire=now --all",
+  "expect": "ask git.discard.reflog"
+ },
+ {
+  "repo": "clean",
+  "command": "git reflog show",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git reset --hard",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git reset --hard HEAD~1",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git restore $(git diff --name-only)",
+  "expect": "ask git.discard.restore"
+ },
+ {
+  "repo": "clean",
+  "command": "git restore a.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git stash clear",
+  "expect": "ask git.discard.stash"
+ },
+ {
+  "repo": "clean",
+  "command": "git stash drop",
+  "expect": "ask git.discard.stash"
+ },
+ {
+  "repo": "clean",
+  "command": "git stash list",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git update-ref -d refs/heads/topic",
+  "expect": "ask git.discard.ref"
+ },
+ {
+  "repo": "clean",
+  "command": "git update-ref refs/heads/x HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "clean",
+  "command": "git worktree remove --force ../clean-wt-clean",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "bash -c \"git reset --hard\"",
+  "expect": "ask git.discard.reset"
+ },
+ {
+  "repo": "dirty",
+  "command": "git -C <tmp>/clean reset --hard",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout -- a.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout -- b.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout -b newone",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout -f topic",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout -q -- a.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout .",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout HEAD~0 -- a.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout a.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git checkout topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git clean --force",
+  "expect": "ask git.discard.clean"
+ },
+ {
+  "repo": "dirty",
+  "command": "git clean -fd",
+  "expect": "ask git.discard.clean"
+ },
+ {
+  "repo": "dirty",
+  "command": "git clean -fd b.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git clean -fdn",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git clean -ffdx",
+  "expect": "ask git.discard.clean"
+ },
+ {
+  "repo": "dirty",
+  "command": "git clean -n",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git reset --hard",
+  "expect": "ask git.discard.reset"
+ },
+ {
+  "repo": "dirty",
+  "command": "git reset --hard HEAD~1",
+  "expect": "ask git.discard.reset"
+ },
+ {
+  "repo": "dirty",
+  "command": "git reset --keep HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git reset --merge",
+  "expect": "ask git.discard.reset"
+ },
+ {
+  "repo": "dirty",
+  "command": "git reset --soft HEAD~1",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git reset a.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git restore --staged --worktree a.txt",
+  "expect": "ask git.discard.restore"
+ },
+ {
+  "repo": "dirty",
+  "command": "git restore --staged a.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git restore -s HEAD b.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git restore .",
+  "expect": "ask git.discard.restore"
+ },
+ {
+  "repo": "dirty",
+  "command": "git restore a.txt",
+  "expect": "ask git.discard.restore"
+ },
+ {
+  "repo": "dirty",
+  "command": "git stash push -m wip",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git status && git checkout -- a.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git switch --discard-changes topic",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "dirty",
+  "command": "git switch topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "dirty",
+  "command": "git worktree remove --force ../dirty-wt-dirty",
+  "expect": "ask git.discard.worktree"
+ },
+ {
+  "repo": "dirty",
+  "command": "git worktree remove ../dirty-wt-dirty",
+  "expect": "allow"
+ },
+ {
+  "repo": "localorigin",
+  "command": "git fetch\ngit status",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "localorigin",
+  "command": "git pull;ls",
+  "expect": "ask git.remote-ref.pull"
+ },
+ {
+  "repo": "norepo",
+  "command": "git checkout -- a.txt",
+  "expect": "ask git.discard.checkout"
+ },
+ {
+  "repo": "norepo",
+  "command": "git reset --hard",
+  "expect": "ask git.discard.reset"
+ },
+ {
+  "repo": "proj",
+  "command": "./gradlew publishToMavenCentral",
+  "expect": "ask publish.gradle"
+ },
+ {
+  "repo": "proj",
+  "command": "./gradlew test",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "./mvnw -q test",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "./mvnw deploy",
+  "expect": "ask publish.mvn"
+ },
+ {
+  "repo": "proj",
+  "command": "AWS_PROFILE=dev aws s3 ls s3://bucket",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "AWS_PROFILE=prod aws s3 rm s3://bucket --recursive",
+  "expect": "ask infra.aws"
+ },
+ {
+  "repo": "proj",
+  "command": "LIQUIBASE_COMMAND_URL=jdbc:postgresql://db-dev/app liquibase update",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "LIQUIBASE_COMMAND_URL=jdbc:postgresql://db-prod/app liquibase update",
+  "expect": "ask data.liquibase"
+ },
+ {
+  "repo": "proj",
+  "command": "PGHOST=db-dev psql -c \"select 1\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "PGHOST=db-prod psql -c \"select 1\"",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "TF_WORKSPACE=prod terraform apply -auto-approve",
+  "expect": "ask infra.terraform"
+ },
+ {
+  "repo": "proj",
+  "command": "argocd app delete api --server argocd.prod.example.com",
+  "expect": "ask infra.argocd"
+ },
+ {
+  "repo": "proj",
+  "command": "argocd app get prod-api",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "argocd app history api-production",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "argocd app rollback api-production 3",
+  "expect": "ask infra.argocd"
+ },
+ {
+  "repo": "proj",
+  "command": "argocd app sync dev-api",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "argocd app sync prod-api",
+  "expect": "ask infra.argocd"
+ },
+ {
+  "repo": "proj",
+  "command": "aws --profile production ec2 describe-instances",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "aws --profile production ec2 terminate-instances --instance-ids i-1",
+  "expect": "ask infra.aws"
+ },
+ {
+  "repo": "proj",
+  "command": "bash -c \"terraform destroy\"",
+  "expect": "ask infra.terraform-destroy"
+ },
+ {
+  "repo": "proj",
+  "command": "bash -c \"terraform plan\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "cargo test",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "cargo yank --vers 1.0.0",
+  "expect": "ask publish.cargo"
+ },
+ {
+  "repo": "proj",
+  "command": "cqlsh localhost -e \"select 1\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "cqlsh prod-cassandra -e \"select 1\"",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "curl -X DELETE https://api.heroku.com/apps/x",
+  "expect": "ask http.prod-write"
+ },
+ {
+  "repo": "proj",
+  "command": "curl -d @body.json https://api.vercel.com/v1/deploy",
+  "expect": "ask http.prod-write"
+ },
+ {
+  "repo": "proj",
+  "command": "curl -sL https://api.vercel.com/v1/deploy",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "curl https://api.example.com/users/1",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "curl https://api.heroku.com/apps/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "dbt run --target dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "dbt run --target prod",
+  "expect": "ask data.dbt"
+ },
+ {
+  "repo": "proj",
+  "command": "docker --context prod push app:1",
+  "expect": "ask infra.image-push"
+ },
+ {
+  "repo": "proj",
+  "command": "docker build -t prod-app .",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "docker image push prod-registry.example.com/app",
+  "expect": "ask infra.image-push"
+ },
+ {
+  "repo": "proj",
+  "command": "docker push \"$IMAGE\"",
+  "expect": "ask infra.image-push"
+ },
+ {
+  "repo": "proj",
+  "command": "docker push ghcr.io/o/app:latest",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "docker push localhost:5000/app:dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "docker push registry.prod.example.com/app:1.0",
+  "expect": "ask infra.image-push"
+ },
+ {
+  "repo": "proj",
+  "command": "docker run --rm -v x:/x img",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "docker run --rm app:1",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "echo kubectl delete ns x --context prod",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "echo start\nkubectl delete pod y --context prod",
+  "expect": "ask infra.kubectl"
+ },
+ {
+  "repo": "proj",
+  "command": "echo start\nkubectl get pod y --context prod",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "firebase deploy",
+  "expect": "ask deploy.firebase"
+ },
+ {
+  "repo": "proj",
+  "command": "firebase emulators:start",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "flux bootstrap github --owner o --repository r --context production",
+  "expect": "ask infra.flux"
+ },
+ {
+  "repo": "proj",
+  "command": "flux check --context production",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "flux delete source git app --context prd",
+  "expect": "ask infra.flux"
+ },
+ {
+  "repo": "proj",
+  "command": "flux get kustomizations --context prod-eu",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "flux reconcile kustomization apps --context prod-eu",
+  "expect": "ask infra.flux"
+ },
+ {
+  "repo": "proj",
+  "command": "flux reconcile source git app --context dev --dry-run",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "flux suspend helmrelease api --context dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "flux suspend helmrelease api -n live",
+  "expect": "ask infra.flux"
+ },
+ {
+  "repo": "proj",
+  "command": "fly deploy",
+  "expect": "ask deploy.fly"
+ },
+ {
+  "repo": "proj",
+  "command": "fly status",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "gh -R o/r api -X DELETE repos/o/r",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "proj",
+  "command": "gh -R o/r pr list",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "gh api -X PUT repos/o/r/pulls/1/merge",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "proj",
+  "command": "gh api repos/o/r/pulls/1",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "gh pr merge 12 --squash",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "proj",
+  "command": "gh pr view 12",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "gh release create v1.0",
+  "expect": "ask release.gh"
+ },
+ {
+  "repo": "proj",
+  "command": "gh release list",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "gh repo delete o/r --yes",
+  "expect": "ask hosting.repo-delete"
+ },
+ {
+  "repo": "proj",
+  "command": "gh repo view o/r",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git commit --no-verify -m wip",
+  "expect": "ask git.no-verify"
+ },
+ {
+  "repo": "proj",
+  "command": "git commit -m \"deploy to prod\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git fetch heroku",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git push --force origin feature/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git push --force origin main",
+  "expect": "ask git.force-protected"
+ },
+ {
+  "repo": "proj",
+  "command": "git push -f origin master",
+  "expect": "ask git.force-protected"
+ },
+ {
+  "repo": "proj",
+  "command": "git push -u origin feature/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git push heroku main",
+  "expect": "ask git.push-prod-remote"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin --delete feature/old",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin --delete main",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin HEAD:release/2.0",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin feature/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin main",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "proj",
+  "command": "git push origin v1.2.0",
+  "expect": "ask git.push-tag"
+ },
+ {
+  "repo": "proj",
+  "command": "glab api --method DELETE projects/1",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "proj",
+  "command": "glab api projects/1",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "glab mr merge 5",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "proj",
+  "command": "glab mr view 5",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "helm template api ./chart",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "helm upgrade api ./chart --kube-context prod",
+  "expect": "ask infra.helm"
+ },
+ {
+  "repo": "proj",
+  "command": "https PUT api.netlify.com/sites/x",
+  "expect": "ask http.prod-write"
+ },
+ {
+  "repo": "proj",
+  "command": "https api.netlify.com/sites/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "kubectl -n x delete pod y --context prod",
+  "expect": "ask infra.kubectl"
+ },
+ {
+  "repo": "proj",
+  "command": "kubectl -n x get pod y --context prod",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "kubectl apply -f k8s.yaml --context production",
+  "expect": "ask infra.kubectl"
+ },
+ {
+  "repo": "proj",
+  "command": "kubectl delete pod x --context dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "kubectl delete pod x --context prod-eu",
+  "expect": "ask infra.kubectl"
+ },
+ {
+  "repo": "proj",
+  "command": "kubectl get pods --context production",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase --url=jdbc:postgresql://db.prod.example.com/app rollback-count 1",
+  "expect": "ask data.liquibase"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase clear-checksums --url \"$DB_URL\"",
+  "expect": "ask data.liquibase"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase drop-all --url jdbc:mysql://prd-db/app",
+  "expect": "ask data.liquibase"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase history --url \"$DB_URL\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase status --url jdbc:mysql://prd-db/app",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase update --contexts prod",
+  "expect": "ask data.liquibase"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase update --url jdbc:postgresql://db-prod:5432/app",
+  "expect": "ask data.liquibase"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase update --url jdbc:postgresql://localhost:5432/app",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase update-sql --url jdbc:postgresql://db-prod:5432/app",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "liquibase validate --contexts prod",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "mongosh \"mongodb://localhost:27017/app\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "mongosh \"mongodb://mongo-live:27017/app\"",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "mysql -h mysql-dev -e \"select 1\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "mysql -h mysql-prod -e \"select 1\"",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "npm --prefix web publish",
+  "expect": "ask publish.npm"
+ },
+ {
+  "repo": "proj",
+  "command": "npm publish",
+  "expect": "ask publish.npm"
+ },
+ {
+  "repo": "proj",
+  "command": "npm publish --dry-run",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "npm run build",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "npm run deploy:prod",
+  "expect": "ask script.prod"
+ },
+ {
+  "repo": "proj",
+  "command": "npm run release",
+  "expect": "ask script.prod"
+ },
+ {
+  "repo": "proj",
+  "command": "npm test",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "pg_dump -h db-prod.internal app > dump.sql",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "pg_dump -h localhost app > dump.sql",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "pg_restore -h 127.0.0.1 -d app dump.tar",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "pg_restore -h prod-db -d app dump.tar",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "pnpm install",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "pnpm run deploy",
+  "expect": "ask script.prod"
+ },
+ {
+  "repo": "proj",
+  "command": "podman pull registry.example.com/live/app:1",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "podman push app registry.example.com/live/app:1",
+  "expect": "ask infra.image-push"
+ },
+ {
+  "repo": "proj",
+  "command": "psql \"$DEV_URL\" -c \"select 1\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "psql \"$PROD_URL\" -c \"DROP TABLE users\"",
+  "expect": "ask data.destructive-sql"
+ },
+ {
+  "repo": "proj",
+  "command": "psql -h api.example.com -c \"select 1\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "psql -h api.heroku.com -c \"select 1\"",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "psql -h db-prod.internal -U app -c \"select count(*) from users\"",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "psql -h localhost -U app -c \"select count(*) from users\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "psql postgres://app@db.production.example.com/app",
+  "expect": "ask data.prod-db"
+ },
+ {
+  "repo": "proj",
+  "command": "psql postgres://app@localhost/app",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "python scripts/send_invoices.py --env dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "python scripts/send_invoices.py --env prod",
+  "expect": "ask env.prod-write"
+ },
+ {
+  "repo": "proj",
+  "command": "rm --force ~/notes.txt",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "rm --rec /",
+  "expect": "ask blast.rm-outside"
+ },
+ {
+  "repo": "proj",
+  "command": "rm --recur ~/Documents",
+  "expect": "ask blast.rm-outside"
+ },
+ {
+  "repo": "proj",
+  "command": "rm --recursive node_modules",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf \"$DIR\"",
+  "expect": "ask blast.rm-unresolved"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf /",
+  "expect": "ask blast.rm-outside"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf /tmp/build-cache",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf node_modules",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf ~/.cache/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf ~/Documents",
+  "expect": "ask blast.rm-outside"
+ },
+ {
+  "repo": "proj",
+  "command": "rm -rf ~/projects/old",
+  "expect": "ask blast.rm-outside"
+ },
+ {
+  "repo": "proj",
+  "command": "sqlite3 dev.db \"select 1\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "sqlite3 prod.db \"drop table users\"",
+  "expect": "ask data.destructive-sql"
+ },
+ {
+  "repo": "proj",
+  "command": "sudo kubectl delete ns x --context prod",
+  "expect": "ask infra.kubectl"
+ },
+ {
+  "repo": "proj",
+  "command": "terraform apply -auto-approve",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "terraform destroy",
+  "expect": "ask infra.terraform-destroy"
+ },
+ {
+  "repo": "proj",
+  "command": "terraform plan",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "vercel --prod",
+  "expect": "ask deploy.vercel"
+ },
+ {
+  "repo": "proj",
+  "command": "vercel dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "wget --post-data x https://api.netlify.com/sites",
+  "expect": "ask http.prod-write"
+ },
+ {
+  "repo": "proj",
+  "command": "wget https://api.netlify.com/sites",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "wrangler deploy",
+  "expect": "ask deploy.wrangler"
+ },
+ {
+  "repo": "proj",
+  "command": "wrangler dev",
+  "expect": "allow"
+ },
+ {
+  "repo": "proj",
+  "command": "xh DELETE api.heroku.com/apps/x",
+  "expect": "ask http.prod-write"
+ },
+ {
+  "repo": "proj",
+  "command": "xh api.heroku.com/apps/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "/usr/libexec/git-core/git-update-ref refs/heads/m HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "/usr/libexec/git-core/git-update-ref refs/remotes/o/m HEAD",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "GIT_DIR=/tmp/c/.git git log",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "GIT_DIR=/tmp/c/.git git push \"$PWD\" origin/x",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "X=. git --config-env=remote.origin.url=X fetch origin",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c \"alias.u=!sh x.sh\" u",
+  "expect": "ask git.alias"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c \"remote.../clean.fetch=+refs/heads/*:refs/remotes/origin/*\" fetch ../clean",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c \"remote.../clean.fetch=+refs/heads/*:refs/remotes/origin/*\" push ../clean topic",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c alias.u=update-ref u refs/remotes/o/m HEAD",
+  "expect": "ask git.alias"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c core.pager=cat log",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c fetch.prune=true fetch --prune origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c fetch.prune=true fetch origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c remote.origin.url=. fetch origin",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git -c url.<tmp>/clean.insteadOf=https://example.com/r.git fetch origin",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fast-import < stream",
+  "expect": "ask git.remote-ref.fast-import"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch\ngit status",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"$src\" topic:refs/remotes/o/topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"file://<tmp>/clean\" topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"file://<tmp>/clean\" topic:refs/remotes/origin/topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"ssh://[0:0:0:0:0:0:0:1]/srv/r\" a:refs/remotes/o/a",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"ssh://[0::1]/r\" a:refs/remotes/o/a",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"ssh://[2001:db8::1]/r\" a:refs/remotes/o/a",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"ssh://[::ffff:127.0.0.1]/r\" a:refs/remotes/x/y",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch \"ssh://[::ffff:7f00:1]/r\" a:refs/remotes/o/a",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch --all",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch --multiple origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch --multiple origin self",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch --prune --depth 1 origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch --refmap=\"refs/heads/*:refs/remotes/o/*\" . topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch --stdin . < specs",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch . +topic:remotes/origin/topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch . topic:origin/topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch . topic:refs/heads/topic2",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch . topic:refs/remotes/origin/topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch ../clean \"refs/heads/*:refs/remotes/origin/*\"",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch ../clean topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch both",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch git://0x7f.1/r a:refs/remotes/x/y",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch git://140.82.112.3/r a:refs/remotes/x/y",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch git://2130706433/r a:refs/remotes/x/y",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch git@example.com:o/r.git topic:refs/remotes/o/topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch https://example.com/r.git a:refs/remotes/o/a",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch localhost:/srv/r.git topic:refs/remotes/o/topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch origin \"$branch\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch origin main:refs/remotes/origin/main",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch self",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch self topic",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch ssh://git@127.0.0.1:22/srv/r.git a:refs/remotes/o/a",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch ssh://localhost./r a:refs/remotes/o/a",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git fetch up",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git filter-branch --tree-filter true -- --all",
+  "expect": "ask git.remote-ref.filter-branch"
+ },
+ {
+  "repo": "remotes",
+  "command": "git pull",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git pull --rebase origin main",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git pull -s ours . topic:refs/remotes/o/topic",
+  "expect": "ask git.remote-ref.pull"
+ },
+ {
+  "repo": "remotes",
+  "command": "git pull self topic",
+  "expect": "ask git.remote-ref.pull"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push . HEAD:refs/heads/y",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push . HEAD:refs/remotes/origin/main",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean \"refs/*\"",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean \"refs/*:refs/*\"",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean +HEAD:refs/remotes/x/y",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean origin/pushed",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean refs/heads/topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean refs/remotes/origin/pushed",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push ../clean topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push origin \"refs/heads/*:refs/heads/*\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push origin HEAD:refs/remotes/origin/main",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push origin topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push self topic",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push self topic:origin/pushed",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git push up HEAD:refs/heads/x",
+  "expect": "ask git.remote-ref.push"
+ },
+ {
+  "repo": "remotes",
+  "command": "git receive-pack . < input",
+  "expect": "ask git.remote-ref.receive-pack"
+ },
+ {
+  "repo": "remotes",
+  "command": "git remote -v",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git remote add --fetch mine2 https://example.com/x.git",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git remote add -f mine .",
+  "expect": "ask git.remote-ref.remote"
+ },
+ {
+  "repo": "remotes",
+  "command": "git remote add mine .",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git remote update",
+  "expect": "ask git.remote-ref.remote"
+ },
+ {
+  "repo": "remotes",
+  "command": "git remote update origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git send-pack . topic:refs/remotes/x/topic",
+  "expect": "ask git.remote-ref.send-pack"
+ },
+ {
+  "repo": "remotes",
+  "command": "git symbolic-ref -d refs/remotes/origin/HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git symbolic-ref -m x refs/heads/a \"$t\"",
+  "expect": "ask git.remote-ref.symbolic-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git symbolic-ref HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git symbolic-ref HEAD refs/heads/topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git symbolic-ref HEAD refs/remotes/origin/pushed",
+  "expect": "ask git.remote-ref.symbolic-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git symbolic-ref refs/remotes/origin/HEAD refs/heads/topic",
+  "expect": "ask git.remote-ref.symbolic-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref \"$ref\" HEAD",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref --stdin < ops.txt",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref -m refs/remotes/x refs/heads/y topic",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref -m sync --no-deref refs/remotes/x/y topic",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref refs//remotes/origin/main HEAD",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref refs/Remotes/origin/main HEAD",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref refs/heads/main2 HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref refs/heads/x \"$(git rev-parse HEAD)\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "remotes",
+  "command": "git update-ref refs/remotes/origin/main HEAD",
+  "expect": "ask git.remote-ref.update-ref"
+ },
+ {
+  "repo": "remotes",
+  "command": "git-fetch . a:refs/remotes/o/a",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "crossfetch",
+  "command": "git fetch",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "crossfetch",
+  "command": "git fetch origin feature/x",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh -R o/r pr merge 3",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api --method DELETE repos/o/r",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api -X GET search/issues -f q=x",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api -X PUT repos/o/r/pulls/1/merge",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api -XDELETE repos/o/r",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api -XGET repos/o/r",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api graphql --input q.json",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api graphql -F query=@merge.graphql",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api graphql -f query=\"mutation { mergePullRequest(input:{}) { clientMutationId } }\"",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api graphql -f query=\"query { viewer { login } }\"",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api graphql -f query=@q.graphql",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api repos/o/r/git/refs --input ref.json",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api repos/o/r/issues --jq .[0]",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api repos/o/r/issues -f title=x",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api repos/o/r/issues -ftitle=x",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh api repos/o/r/pulls/1",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr checks",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr create --fill",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr list",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr merge --auto --squash",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr merge 12",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr merge 12 --squash",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr view 12",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh repo delete o/r --yes",
+  "expect": "ask hosting.repo-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh repo view o/r",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch --stdin origin",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin +feature/x:remotes/origin/main",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin +refs/heads/x/*:refs/remotes/origin/*",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin +refs/heads/x/*:refs/remotes/origin/release/*",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin --refmap=+refs/heads/x:refs/remotes/origin/main main",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin feature/x:refs/remotes/origin/feature/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin feature/x:refs/remotes/origin/main",
+  "expect": "ask git.remote-ref.fetch"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git fetch origin main:refs/remotes/origin/main",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git merge main",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git pull origin feature/x:refs/remotes/origin/release/1",
+  "expect": "ask git.remote-ref.pull"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push --all origin",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push --force origin main",
+  "expect": "ask git.force-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push --force-with-lease origin feature/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push -u origin HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin HEAD:main",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin feature/x",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin feature/x:refs/heads/main",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin main",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push upstream release/1.2",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git remote set-head origin -a",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git remote set-head origin feature/x",
+  "expect": "ask git.remote-ref.set-head"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab api --method DELETE projects/1",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab api -X POST projects/1/merge_requests/2/merge",
+  "expect": "ask hosting.api-write"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab api projects/1",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr merge 5",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr view 5",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab repo delete o/r",
+  "expect": "ask hosting.repo-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab repo view o/r",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git merge --abort",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git merge --continue",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git merge --ff-only origin/main",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git merge --no-ff topic",
+  "expect": "ask git.merge-protected"
+ },
+ {
+  "repo": "onmain",
+  "command": "git merge feature/x",
+  "expect": "ask git.merge-protected"
+ },
+ {
+  "repo": "onmain",
+  "command": "git merge-base main HEAD",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git pull",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git pull --rebase",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git pull origin feature/x",
+  "expect": "ask git.merge-protected"
+ },
+ {
+  "repo": "onmain",
+  "command": "git pull origin main",
+  "expect": "allow"
+ },
+ {
+  "repo": "onmain",
+  "command": "git push",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onmain",
+  "command": "git push -u origin main",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onmain",
+  "command": "git push origin HEAD",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onmain",
+  "command": "git push origin HEAD:feature/y",
+  "expect": "allow"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git merge topic",
+  "expect": "ask git.merge-protected"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git push",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git push origin --delete feature/old",
+  "expect": "allow"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git push origin --delete trunk",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git push origin trunk",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git remote -v",
+  "expect": "allow"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git remote add other https://example.invalid/x.git",
+  "expect": "allow"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git remote remove origin",
+  "expect": "ask git.remote-ref.remote"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git remote rename origin old",
+  "expect": "ask git.remote-ref.remote"
+ },
+ {
+  "repo": "ontrunk",
+  "command": "git remote set-head origin -d",
+  "expect": "ask git.remote-ref.set-head"
+ },
+ {
+  "repo": "prfetch",
+  "command": "git fetch",
+  "expect": "allow"
+ },
+ {
+  "repo": "prfetch",
+  "command": "git pull",
+  "expect": "allow"
+ }
+]
