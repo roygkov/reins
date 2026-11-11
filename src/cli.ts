@@ -7,16 +7,12 @@
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { ConfigError, loadRuntime } from './client/config.ts';
 import { taskInput } from './client/input.ts';
-import { isObj } from './contracts/shape.ts';
 import { loadTask, openScenario, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
-import { openJournal } from './journal/writer.ts';
-import { PACK_LEVELS, loadPacks, type PackLevel } from './packs/packs.ts';
 
 type Out = Record<string, unknown>;
 class Stop extends Error {
@@ -27,38 +23,13 @@ class Stop extends Error {
   }
 }
 
-function readConfig(): { packs: Partial<Record<PackLevel, string>>; stateDir: string } {
-  const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
-  let text: string;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch {
-    throw new Stop('no_config', { file });
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Stop('bad_config', { file });
-  }
-  const bad = new Stop('bad_config', { file });
-  if (!isObj(value) || !isObj(value.packs)) throw bad;
-  if (Object.keys(value).some((k) => k !== 'packs' && k !== 'state_dir')) throw bad;
-  const packs: Partial<Record<PackLevel, string>> = {};
-  for (const [level, dir] of Object.entries(value.packs)) {
-    if (!(PACK_LEVELS as readonly string[]).includes(level) || typeof dir !== 'string' || !path.isAbsolute(dir)) throw bad;
-    packs[level as PackLevel] = dir;
-  }
-  const stateDir = value.state_dir ?? path.join(os.homedir(), '.local', 'state', 'reins');
-  if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) throw bad;
-  return { packs, stateDir };
-}
-
 function runtime(): Runtime {
-  const config = readConfig();
-  // The project of a row of the journal: a token of the directory where the client works.
-  const project = `p${crypto.createHash('sha1').update(process.cwd()).digest('hex').slice(0, 8)}`;
-  return { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project };
+  try {
+    return loadRuntime();
+  } catch (e) {
+    if (e instanceof ConfigError) throw new Stop(e.code, { file: e.file });
+    throw e;
+  }
 }
 
 const INLINE_BYTES = 2000;

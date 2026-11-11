@@ -26,6 +26,11 @@ export type Rejected = { level: PackLevel; file: string; errors: Fault<RejectCod
 // `instructions`: the text for the model, from the file `<manifest name>.md` beside the manifest.
 export type Scenario = { name: string; level: PackLevel; file: string; manifest: Manifest; instructions?: string };
 
+// What a tool of a connector does, by the name that the client gives to the tool. A name can end
+// with `*`. A read tool only reads. A write tool performs a named action on a target in an
+// environment; `{field}` in the target is a field of the input of the tool.
+export type ToolRule = { kind: 'read' } | { kind: 'write'; action: string; target: string; env: string };
+
 // What one pack says. Absent fields say nothing.
 export type PackSettings = {
   name: string;
@@ -35,6 +40,7 @@ export type PackSettings = {
   roles?: string[];
   checks?: string[];
   memory?: { types?: string[] };
+  tools?: Record<string, ToolRule>;
 };
 
 export type LoadedPack = {
@@ -54,6 +60,7 @@ export type Merged = {
   scenarios: Scenario[];
   rejected: Rejected[];
   scriptFiles: Record<string, string>; // the scripts of the connected packs: reference -> file
+  tools: Record<string, ToolRule>; // the tools of the connectors, from the organization pack
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -63,7 +70,7 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -204,7 +211,50 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     const types = names(errors, memory.types, 'memory.types', RECORD_TYPES);
     settings.memory = { ...(types !== undefined && { types }) };
   }
+  if (value.tools !== undefined) {
+    // Only the organization says what a tool does: a lower level could turn a write into a read.
+    if (level !== 'organization') errors.push({ code: 'not_allowed', path: 'tools' });
+    else if (!isObj(value.tools)) errors.push({ code: 'not_object', path: 'tools' });
+    else settings.tools = toolRules(errors, value.tools, settings.connectors?.write ?? [], settings.envs?.known ?? []);
+  }
   return { settings: errors.length === 0 ? settings : null, errors };
+}
+
+const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,118}\*?$/;
+const TARGET = /^(?:[A-Za-z0-9_.:\/@%!+-]|\{[a-z_][a-z0-9_]{0,39}\})+$/;
+
+function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], envs: readonly string[]): Record<string, ToolRule> {
+  const out: Record<string, ToolRule> = {};
+  for (const [name, rule] of Object.entries(tools)) {
+    const at = `tools.${name}`;
+    if (!TOOL_NAME.test(name)) {
+      errors.push({ code: 'bad_name', path: at });
+      continue;
+    }
+    if (!isObj(rule)) {
+      errors.push({ code: 'not_object', path: at });
+      continue;
+    }
+    if (rule.kind !== 'read' && rule.kind !== 'write') {
+      errors.push({ code: rule.kind === undefined ? 'missing' : 'not_in_list', path: `${at}.kind` });
+      continue;
+    }
+    const allowed = rule.kind === 'read' ? ['kind'] : ['kind', 'action', 'target', 'env'];
+    for (const key of Object.keys(rule)) if (!allowed.includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+    if (rule.kind === 'read') {
+      out[name] = { kind: 'read' };
+      continue;
+    }
+    const { action, target, env } = rule;
+    if (action === undefined) errors.push({ code: 'missing', path: `${at}.action` });
+    else if (typeof action !== 'string' || !actions.includes(action)) errors.push({ code: 'not_in_list', path: `${at}.action` });
+    if (target === undefined) errors.push({ code: 'missing', path: `${at}.target` });
+    else if (typeof target !== 'string' || !TARGET.test(target)) errors.push({ code: 'bad_name', path: `${at}.target` });
+    if (env === undefined) errors.push({ code: 'missing', path: `${at}.env` });
+    else if (typeof env !== 'string' || !envs.includes(env)) errors.push({ code: 'not_in_list', path: `${at}.env` });
+    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env };
+  }
+  return out;
 }
 
 // The scripts of a pack: regular files under collect/ and check/. A symbolic link is skipped,
@@ -318,6 +368,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
     if (before === undefined || before.length !== list.length || before.some((x) => !list.includes(x))) m.origin[key] = pack.level;
     c[key] = list;
   };
+  if (s.tools !== undefined) m.tools = s.tools;
   narrow('readConnectors', s.connectors?.read);
   narrow('writeActions', s.connectors?.write);
   narrow('memoryTypes', s.memory?.types);
@@ -353,7 +404,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
 
 // Merges packs that are already read, upper level first. Pure except for reading the manifest files.
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {} };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {} };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();

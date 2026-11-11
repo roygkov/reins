@@ -24,6 +24,9 @@ export type Runtime = {
   collectTimeoutMs?: number; // for a manifest that sets no time limit
   lockWaitMs?: number; // how long a call waits for the lock of a task
   checkTimeoutMs?: number; // the deadline of a done check that the core runs
+  configFile?: string; // the file that names the packs: an agent must not change it
+  gateConfig?: Record<string, unknown>; // the rule data of the gate; absent: the gate loads its own layers
+  harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };
 
 // Who sends an event. The agent can report and ask. Only the harness gives a check answer,

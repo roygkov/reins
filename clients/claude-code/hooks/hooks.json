@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": ".*", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\" pre", "timeout": 10, "onFailure": "block" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "mcp__.*", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\" post", "timeout": 10 } ] }
+    ]
+  }
+}

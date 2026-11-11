@@ -1,0 +1,60 @@
+// The config of the harness on a machine: the directories of the packs and of the state.
+// $REINS_CONFIG or ~/.config/reins/config.json. The gate reads its own keys from the same file.
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { isObj } from '../contracts/shape.ts';
+import type { Runtime } from '../core/runtime.ts';
+import { openJournal } from '../journal/writer.ts';
+import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
+
+// The keys of the file: of the harness, and of the gate (src/gate/config.cjs).
+const KEYS = ['packs', 'state_dir', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+
+export class ConfigError extends Error {
+  code: 'no_config' | 'bad_config';
+  file: string;
+  constructor(code: 'no_config' | 'bad_config', file: string) {
+    super(code);
+    this.code = code;
+    this.file = file;
+  }
+}
+
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string } {
+  const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
+  let text: string;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    throw new ConfigError('no_config', file);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new ConfigError('bad_config', file);
+  }
+  const bad = new ConfigError('bad_config', file);
+  if (!isObj(value) || !isObj(value.packs)) throw bad;
+  // A key that nothing reads is a mistake: `state-dir` would silently mean the default directory.
+  if (Object.keys(value).some((k) => !KEYS.includes(k))) throw bad;
+  const packs: Partial<Record<PackLevel, string>> = {};
+  for (const [level, dir] of Object.entries(value.packs)) {
+    if (!(PACK_LEVELS as readonly string[]).includes(level) || typeof dir !== 'string' || !path.isAbsolute(dir)) throw bad;
+    packs[level as PackLevel] = dir;
+  }
+  const stateDir = value.state_dir ?? path.join(os.homedir(), '.local', 'state', 'reins');
+  if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) throw bad;
+  return { file, packs, stateDir };
+}
+
+// The runtime of one call of a client. `cwd` is the directory where the client works: its token
+// is the project of the rows of the journal.
+export function loadRuntime(cwd: string = process.cwd()): Runtime {
+  const config = readConfig();
+  const project = `p${crypto.createHash('sha1').update(cwd).digest('hex').slice(0, 8)}`;
+  return { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file };
+}
