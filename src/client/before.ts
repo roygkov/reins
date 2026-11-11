@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
 import { confirm, decideAction, loadTask, type Runtime } from '../core/runtime.ts';
+import { pausedUntil } from '../core/pause.ts';
 import { sessionTask } from './session.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { shellAction } from '../gate/index.ts';
@@ -97,6 +98,7 @@ function protectedBy(rt: Runtime, file: string): { outcome: 'deny' | 'ask'; rule
   if (inside(target, real(rt.stateDir))) return { outcome: 'deny', rule: 'protect.state' };
   if (rt.configFile !== undefined && target === real(rt.configFile)) return { outcome: 'deny', rule: 'protect.config' };
   if (rt.merged.packs.some((p) => inside(target, real(p.dir)))) return { outcome: 'ask', rule: 'protect.packs' };
+  if ((rt.clientPaths ?? []).some((source) => new RegExp(source).test(target))) return { outcome: 'ask', rule: 'protect.client' };
   // `.reins` of any repository is a pack directory, also before it exists and in another repository.
   if ((rt.projectPackDir !== undefined && inside(target, real(rt.projectPackDir))) || /(^|\/)\.reins(\/|$)/.test(target)) return { outcome: 'ask', rule: 'protect.packs' };
   if ((rt.harnessDirs ?? []).some((d) => inside(target, real(d)))) return { outcome: 'ask', rule: 'protect.harness' };
@@ -126,6 +128,9 @@ function namedInCommand(rt: Runtime, command: string): string | null {
   if (rt.configFile !== undefined && names(rt.configFile)) return 'protect.config';
   if (rt.merged.packs.some((p) => names(p.dir)) || (rt.projectPackDir !== undefined && names(rt.projectPackDir)) || /(^|[\s\/="'])\.reins(\/|[\s"']|$)/.test(command)) return 'protect.packs';
   if ((rt.harnessDirs ?? []).some(names)) return 'protect.harness';
+  // Every word of the command is tested as a path: a relative path after a space or a redirect too.
+  const words = command.replace(/['"\\]/g, '').split(/[\s;&|<>()=]+/);
+  if ((rt.clientPaths ?? []).some((source) => words.some((w) => new RegExp(source).test(w)))) return 'protect.client';
   return null;
 }
 
@@ -149,7 +154,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|memory\s+(veto|decide)|craft\s+(accept|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|memory\s+(veto|decide)|craft\s+(accept|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
     if (named !== null) return { guard: { outcome: 'ask', rule: named } };
     return { action: shell.action, layers: shell.layers, command };
@@ -227,6 +232,14 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   }
   const { action } = read;
   const layers = [...read.layers, ...packLayers(rt, call, action, read.command)];
+  // A pause of the human: a question passes without the question. A refusal holds.
+  if (pausedUntil(rt) !== null && decide({ action, layers }).outcome === 'ask') {
+    record(rt, call, [
+      { kind: 'policy.decision', data: { outcome: 'allow', action_kind: action.kind, env: action.env.name } },
+      { kind: 'policy.basis', data: { layer: 'core', rule: 'paused' } },
+    ]);
+    return { outcome: 'allow', rule: 'paused', layer: 'core', envelope: 'none' };
+  }
   if (action.via === 'tool' && action.kind === 'write') {
     const key = grantKey(action.name, action.target, action.env.name);
     const id = taskFor(rt, key);

@@ -15,6 +15,9 @@ import type { Runtime } from '../../../src/core/runtime.ts';
 import { fileURLToPath } from 'node:url';
 
 const TOOLS = JSON.parse(fs.readFileSync(new URL('../tools.json', import.meta.url), 'utf8')) as ClientTools;
+// The settings of Claude Code that register hooks and plugins: a change of them can turn the
+// harness off, so the human decides it.
+const CLIENT_PATHS = ['(^|/)\\.claude/(settings[^/]*\\.json|plugins(/|$))'];
 // The code of the harness and of this adapter: a change of it changes every decision.
 const HARNESS_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -44,7 +47,7 @@ function readEvent(): ToolCall | null {
 
 function runtime(cwd?: string): Runtime | null {
   try {
-    return { ...loadRuntime(cwd), harnessDirs: [HARNESS_ROOT] };
+    return { ...loadRuntime(cwd), harnessDirs: [HARNESS_ROOT], clientPaths: CLIENT_PATHS };
   } catch {
     return null;
   }
@@ -114,7 +117,13 @@ function session(mode: string): void {
       const { context } = sessionStart(rt, e);
       process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context.join('\n') } }));
     } else if (mode === 'prompt') humanRequest(rt, e);
-    else if (mode === 'stop') agentStopped(rt, e);
+    else if (mode === 'stop') {
+      // The label of the result goes to the human when the request changed the work tree. A request
+      // that changed nothing is a question: it has no result to label.
+      if (agentStopped(rt, e).changed === true) {
+        process.stdout.write(JSON.stringify({ systemMessage: 'reins: this request changed the work tree and no check judged the result: not verified. A scenario with a done check gives a verified result (`reins scenarios`).' }));
+      }
+    }
     else if (mode === 'session-end') sessionEnd(rt, e);
   } catch {
     // no output: the client goes on

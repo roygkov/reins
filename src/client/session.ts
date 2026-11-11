@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, loadTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
 import { sweep } from '../core/sweep.ts';
+import { workState } from '../core/work.ts';
+import { readJournal } from '../journal/writer.ts';
 import { listProposals, propose } from '../craft/craft.ts';
 import { listRecords } from '../memory/store.ts';
 
@@ -18,16 +20,22 @@ const nameOf = (session: string | undefined): string =>
   session !== undefined && SESSION.test(session) ? session : crypto.createHash('sha256').update(session ?? '').digest('hex').slice(0, 16);
 const fileOf = (rt: Runtime, session: string | undefined): string => path.join(rt.stateDir, 'sessions', `${nameOf(session)}.json`);
 
-// The free task that the session file names, when it still executes.
-function current(rt: Runtime, session: string | undefined): { id?: string; stale: boolean } {
+type SessionFile = { task?: string; work?: string | null; requests?: number };
+function readSession(rt: Runtime, session: string | undefined): SessionFile | null {
   try {
     const known: unknown = JSON.parse(fs.readFileSync(fileOf(rt, session), 'utf8'));
-    const id = known !== null && typeof known === 'object' ? (known as { task?: unknown }).task : undefined;
-    if (typeof id === 'string' && loadTask(rt, id)?.state === 'executing') return { id, stale: false };
-    return { stale: true };
+    return known !== null && typeof known === 'object' ? (known as SessionFile) : null;
   } catch {
-    return { stale: false };
+    return null;
   }
+}
+
+// The free task that the session file names, when it still executes.
+function current(rt: Runtime, session: string | undefined): { id?: string; stale: boolean } {
+  const known = readSession(rt, session);
+  if (known === null) return { stale: false };
+  if (typeof known.task === 'string' && loadTask(rt, known.task)?.state === 'executing') return { id: known.task, stale: false };
+  return { stale: true };
 }
 
 // The free task of a session: an action outside a scenario belongs to it, so every decision of
@@ -54,6 +62,38 @@ export function sessionTask(rt: Runtime, session: string | undefined): string {
   }
 }
 
+// The handoff: what a session leaves for the next one. Facts of the journal and of the task
+// store, no words of the human or of the agent. One handoff for one project, the last session.
+type Handoff = { ended: string; requests: number; questions: number; refusals: number; open: string[] };
+const handoffFile = (rt: Runtime): string => path.join(rt.stateDir, 'handoff', `${rt.project}.json`);
+
+function writeHandoff(rt: Runtime, session: string | undefined): void {
+  const requests = readSession(rt, session)?.requests ?? 0;
+  if (requests === 0) return;
+  const name = nameOf(session);
+  // A decision of the policy and an attempt on the harness itself both end in a question or a refusal.
+  const decisions = readJournal(rt.journal.file).filter((r) => r.session === name && (r.kind === 'policy.decision' || r.kind === 'policy.protected_attempt'));
+  const handoff: Handoff = {
+    ended: new Date().toISOString(), requests,
+    questions: decisions.filter((r) => r.data?.outcome === 'ask').length,
+    refusals: decisions.filter((r) => r.data?.outcome === 'deny').length,
+    open: openTasks(rt).filter((t) => t.kind === 'scenario').map((t) => `${t.id} (${t.scenario ?? ''}, ${t.state})`),
+  };
+  fs.mkdirSync(path.dirname(handoffFile(rt)), { recursive: true });
+  fs.writeFileSync(handoffFile(rt), JSON.stringify(handoff));
+}
+
+function readHandoff(rt: Runtime): Handoff | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(handoffFile(rt), 'utf8')) as Handoff;
+    return typeof value.ended === 'string' && Array.isArray(value.open) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 // The start of a session: what the agent must know before it acts.
 export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] } {
   // Housekeeping that needs no human: tasks past their term end, new patterns become proposals.
@@ -61,6 +101,11 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   propose(rt);
   rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level: 'full' } });
   const context = ['reins: the harness of this workspace. It decides before every action and checks the result of a scenario.'];
+  const last = readHandoff(rt);
+  if (last !== null) {
+    context.push(`Last session in this project ended ${last.ended}: ${count(last.requests, 'request')}, ${count(last.questions, 'question')} to the human, ${count(last.refusals, 'refusal')}.`);
+    if (last.open.length > 0) context.push(`It left open: ${last.open.join('; ')}.`);
+  }
   const scenarios = rt.merged.scenarios.filter((s) => s.manifest.state !== 'disabled');
   if (scenarios.length > 0) {
     context.push('Scenarios (start one with `reins open <name> name=value`):');
@@ -90,21 +135,30 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
 export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
   const before = current(rt, e.session).id;
   if (before !== undefined) applyEvent(rt, before, { type: 'expire' }, 'harness');
+  const requests = (readSession(rt, e.session)?.requests ?? 0) + 1;
   const task = openFreeTask(rt);
   const file = fileOf(rt, e.session);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ task: task.id }));
+  // The state of the work tree at the request: at the stop it says whether the request changed the work.
+  fs.writeFileSync(file, JSON.stringify({ task: task.id, work: workState(e.cwd), requests }));
   return { task: task.id };
 }
 
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result
 // is "not verified" (harness-core, page 2, rule 4).
-export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; label?: string } {
+export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; label?: string; changed?: boolean } {
   const id = current(rt, e.session).id;
   if (id === undefined) return {};
+  const before = readSession(rt, e.session)?.work;
   const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000' }, 'agent');
   if (!('task' in r) || r.error !== undefined) return {};
-  return r.task.label === undefined ? { task: id } : { task: id, label: r.task.label };
+  // A fact, not the words of the agent: the work tree is not what it was at the request.
+  const now = workState(e.cwd);
+  const out: { task: string; label?: string; changed?: boolean } = { task: id };
+  if (r.task.label !== undefined) out.label = r.task.label;
+  // Outside a repository there is no fact about the work: nothing is said.
+  if (typeof before === 'string' && now !== null) out.changed = now !== before;
+  return out;
 }
 
 // The end of a session: its free task ends and the session is forgotten.
@@ -115,6 +169,7 @@ export function sessionEnd(rt: Runtime, e: SessionEvent): { closed: string[] } {
     const r = applyEvent(rt, id, { type: 'expire' }, 'harness');
     if ('task' in r && r.error === undefined) closed.push(id);
   }
+  writeHandoff(rt, e.session);
   fs.rmSync(fileOf(rt, e.session), { force: true });
   return { closed };
 }
