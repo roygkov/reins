@@ -141,8 +141,13 @@ function scenarios(rt: Runtime): Out {
       return row;
     }),
     rejected: rt.merged.rejected,
+    // A pack with a mistake is not connected: its rules and its scenarios do not act. The human must see it.
+    ...(broken(rt).length > 0 ? { not_connected: broken(rt) } : {}),
   };
 }
+
+const broken = (rt: Runtime): { level: string; errors: unknown[] }[] =>
+  rt.merged.packs.filter((p) => !p.connected && p.errors.length > 0).map((p) => ({ level: p.level, errors: p.errors.slice(0, 10) }));
 
 // The done checks that this client can bring to an end: the core runs the citation check, the human approves.
 const RUNNABLE: readonly string[] = ['citations', 'human', 'command', 'artifact', 'external'];

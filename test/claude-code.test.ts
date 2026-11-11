@@ -20,6 +20,7 @@ const files = loadCases<{ name: string; files: Record<string, unknown> }>('packs
 const TOOLS = {
   'mcp__tracker__get_*': { kind: 'read' },
   'mcp__tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' },
+  'mcp__tracker__editIssue': { kind: 'write', action: 'comment', target: 'issue/{issueIdOrKey}', env: 'work' },
 };
 
 type Box = { root: string; config: string; state: string; cwd: string };
@@ -199,6 +200,31 @@ test('claude-code: an installed copy of the plugin finds the core through the ke
   // A source that has no adapter: the human decides.
   fs.writeFileSync(b.config, JSON.stringify({ ...good, source: path.join(SB, 'nothing-here') }));
   assert.equal(run(hook, b, ['pre'], ls).json.hookSpecificOutput.permissionDecision, 'ask');
+});
+
+test('claude-code: a target of a tool can name an input field in any letter case', () => {
+  // Tools of connectors name their fields as they like: `issueIdOrKey` is a field as `change` is.
+  const b = box();
+  const r = pre(b, 'mcp__tracker__editIssue', { issueIdOrKey: 'ABC-1' });
+  assert.equal(decision(r), 'ask');
+  assert.match(r.json.hookSpecificOutput.permissionDecisionReason, /default\.write/, 'a known write, not an unknown tool');
+  assert.match(pre(b, 'mcp__tracker__editIssue', {}).json.hookSpecificOutput.permissionDecisionReason, /unknown-tool/, 'without the field the target is not known');
+});
+
+test('claude-code: a pack with a mistake is named at the start of the session and by the command line', () => {
+  const b = box();
+  const file = path.join(b.root, 'packs', 'organization', 'pack.json');
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__x__y': { kind: 'write', action: 'comment', target: 'a b', env: 'work' } } }));
+  const start = run(HOOK, b, ['session-start'], JSON.stringify({ session_id: 's-broken', cwd: b.cwd, hook_event_name: 'SessionStart' }));
+  assert.match(start.json.hookSpecificOutput.additionalContext, /organization pack is NOT connected: 1 mistake\(s\), the first is bad_name at tools\.mcp__x__y\.target/);
+  const listed = run(CLI, b, ['scenarios'], '').json;
+  // The packs under a pack with a mistake are not connected either: all of them are named.
+  assert.equal(listed.not_connected[0].level, 'organization');
+  assert.equal(listed.not_connected[0].errors[0].path, 'tools.mcp__x__y.target');
+  // Packs without a mistake are not named.
+  const good = box();
+  assert.equal(run(CLI, good, ['scenarios'], '').json.not_connected, undefined);
 });
 
 test('claude-code: a change of the adapter itself asks the human', () => {

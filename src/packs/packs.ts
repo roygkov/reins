@@ -378,7 +378,8 @@ function packRules(errors: PackError[], rules: unknown[]): PackRule[] {
 }
 
 const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,118}\*?$/;
-const TARGET = /^(?:[A-Za-z0-9_.:\/@%!+-]|\{[a-z_][a-z0-9_]{0,39}\})+$/;
+// A field of the input of a tool is named as the tool names it: `change`, `issueIdOrKey`.
+const TARGET = /^(?:[A-Za-z0-9_.:\/@%!+-]|\{[A-Za-z_][A-Za-z0-9_]{0,39}\})+$/;
 
 function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], envs: readonly string[]): Record<string, ToolRule> {
   const out: Record<string, ToolRule> = {};

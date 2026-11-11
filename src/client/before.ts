@@ -63,7 +63,7 @@ function packRule(tools: Record<string, ToolRule>, name: string): ToolRule | und
 // a plain value. Then nothing says what the write touches, and the action counts as unknown.
 function fillTarget(template: string, input: Record<string, unknown>): string | null {
   let ok = true;
-  const out = template.replace(/\{([a-z_][a-z0-9_]*)\}/g, (_, name: string) => {
+  const out = template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => {
     const value = Object.hasOwn(input, name) ? input[name] : undefined;
     let text = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
     if (typeof text === 'string') text = plainValue(text);

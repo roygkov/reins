@@ -106,6 +106,11 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push(`Last session in this project ended ${last.ended}: ${count(last.requests, 'request')}, ${count(last.questions, 'question')} to the human, ${count(last.refusals, 'refusal')}.`);
     if (last.open.length > 0) context.push(`It left open: ${last.open.join('; ')}.`);
   }
+  // A pack with a mistake is not connected: its rules, its tools and its scenarios do not act.
+  for (const p of rt.merged.packs) {
+    const first = p.errors[0];
+    if (!p.connected && first !== undefined) context.push(`The ${p.level} pack is NOT connected: ${p.errors.length} mistake(s), the first is ${first.code} at ${first.path}. Say this to the human: \`reins scenarios\` lists the mistakes.`);
+  }
   const scenarios = rt.merged.scenarios.filter((s) => s.manifest.state !== 'disabled');
   if (scenarios.length > 0) {
     context.push('Scenarios (start one with `reins open <name> name=value`):');
