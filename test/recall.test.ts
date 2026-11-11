@@ -13,7 +13,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import type { Runtime } from '../src/core/runtime.ts';
 import { beforeAction } from '../src/client/before.ts';
 import { sessionStart } from '../src/client/session.ts';
-import { addRecord, findRecords, listRecords, memoryDir, recordsForInput, restoreRecord, shareRecord, vetoRecord, wrongRecord } from '../src/memory/store.ts';
+import { addRecord, findRecords, listRecords, memoryDir, recordsForInput, restoreRecord, searchRecords, shareRecord, vetoRecord, wrongRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -165,4 +165,50 @@ test('recall: a session in a subdirectory of a repository is in the project of t
   assert.equal(deep, top, 'the record of the repository is seen from its subdirectory');
   run(sub, ['memory', 'decide', 'we log in UTC', 'because=the servers are in three zones']);
   assert.deepEqual(run(b.cwd, ['memory']).records.map((r: any) => r.project), [top, top]);
+});
+
+test('recall: the command line finds records by words, in every project', () => {
+  const b = box();
+  spawnSync('git', ['init', '-q'], { cwd: b.cwd });
+  const other = path.join(b.root, 'other');
+  fs.mkdirSync(other);
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const run = (cwd: string, args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd, env }).stdout);
+  run(b.cwd, ['memory', 'decide', 'Релиз Solr идёт во вторник', 'because=в один день два релиза мешают друг другу']);
+  run(b.cwd, ['memory', 'decide', 'we keep one cache', 'because=two caches went out of step', 'path=src/cache.ts']);
+  run(other, ['memory', 'decide', 'the cache of the other project lives one hour', 'because=the data changes daily']);
+  // Every word must be in the record; the case of the letters does not matter.
+  const found = run(b.cwd, ['memory', 'find', 'CACHE']);
+  assert.equal(found.ok, true);
+  assert.deepEqual(found.records.map((r: any) => r.text).sort(), ['the cache of the other project lives one hour', 'we keep one cache']);
+  assert.deepEqual(run(b.cwd, ['memory', 'find', 'cache', 'hour']).records.map((r: any) => r.text), ['the cache of the other project lives one hour']);
+  // The reason, the place and words in another script are searched too.
+  assert.equal(run(b.cwd, ['memory', 'find', 'out of step']).records.length, 1);
+  assert.equal(run(b.cwd, ['memory', 'find', 'src/cache.ts']).records.length, 1);
+  assert.equal(run(b.cwd, ['memory', 'find', 'solr', 'вторник']).records.length, 1);
+  assert.deepEqual(run(b.cwd, ['memory', 'find', 'nothing-like-this']), { ok: true, records: [], more: 0 });
+  // A record that is out of use is not found.
+  const id = found.records.find((r: any) => r.text === 'we keep one cache').id;
+  run(b.cwd, ['memory', 'veto', id]);
+  assert.deepEqual(run(b.cwd, ['memory', 'find', 'one cache']).records, []);
+});
+
+test('recall: a search gives only records in use, a limited count of them, and writes the read down', () => {
+  const b = box();
+  const draft = note(b, 'a draft about the gateway that waits for a veto');
+  // A draft in its veto window: the human has not let it pass yet.
+  const file = path.join(memoryDir(b.rt), 'pitfall', `${draft}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('state: active', 'state: pending'));
+  assert.equal(listRecords(b.rt, NOW).find((r) => r.id === draft)?.state, 'pending');
+  assert.deepEqual(searchRecords(b.rt, ['gateway'], 20, NOW), { records: [], more: 0 });
+  assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.read').length, 0, 'a search that found nothing is no read');
+  // The newest first, the count has a limit, and the rest is counted.
+  for (let i = 0; i < 5; i += 1) note(b, `gateway note ${i}`, [], NOW - 10_000 + i);
+  const found = searchRecords(b.rt, ['gateway', 'note'], 3, NOW);
+  assert.deepEqual([found.records.map((r) => r.text), found.more], [['gateway note 4', 'gateway note 3', 'gateway note 2'], 2]);
+  const reads = readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.read');
+  assert.deepEqual(reads.map((r) => r.data), [{ n: 3 }], 'the journal counts the records that the agent got');
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+  // No word is no search.
+  assert.deepEqual(searchRecords(b.rt, ['  '], 20, NOW), { records: [], more: 0 });
 });

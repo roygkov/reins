@@ -169,6 +169,21 @@ test('runtime: a collect script does not get the environment of the harness', ()
   }
 });
 
+test('runtime: a script of a pack gets the path of the config of the harness', () => {
+  // A script can call the command line of the harness: it must reach the same config and state.
+  const before = process.env.REINS_CONFIG;
+  process.env.REINS_CONFIG = '/some/where/config.json';
+  try {
+    const rt = runtime(script(`printf '{"outputs":{"diff":"%s","task":1,"discussion":[],"worktree":"/nonexistent"},"flags":{"has_new_commits":true}}' "\${REINS_CONFIG:-none}"`));
+    const opened = openScenario(rt, 'change-review', { change_id: '7' });
+    assert.ok(opened.ok);
+    assert.deepEqual(readCollected(rt, opened.task.id)?.diff, '/some/where/config.json');
+  } finally {
+    if (before === undefined) delete process.env.REINS_CONFIG;
+    else process.env.REINS_CONFIG = before;
+  }
+});
+
 test('runtime: a scenario without a collect script starts at once', () => {
   const rt = runtime();
   const opened = openScenario(rt, 'draft-message', {});

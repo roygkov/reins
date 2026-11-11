@@ -18,7 +18,8 @@ export type CollectResult =
 // `env`: the names of more variables that the script gets: those of its read connectors.
 export type CollectOptions = { outputs: string[]; flags: string[]; timeoutMs: number; maxBytes: number; env?: string[] };
 
-const PASSED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR'] as const;
+// `REINS_CONFIG`: a script that calls the command line of the harness reaches the same config.
+const PASSED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'REINS_CONFIG'] as const;
 const SUPERVISOR = fileURLToPath(new URL('./collect-child.ts', import.meta.url));
 const BACKSTOP_MS = 5000; // the supervisor enforces the limits; this is for a supervisor that hangs
 

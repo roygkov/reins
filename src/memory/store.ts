@@ -353,6 +353,24 @@ export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Dat
   return { lines, more: found.length - lines.length };
 }
 
+// The records that hold every one of these words, in every project. A word is matched as it is
+// written, without the case of its letters, in the text of a record, its reason, what was rejected,
+// its places and its source. Only records in use are found: no draft, no stale or removed record.
+export function searchRecords(rt: Runtime, words: string[], limit = 20, now: number = Date.now()): { records: MemoryRecord[]; more: number } {
+  const wanted = words.map((w) => w.trim().toLowerCase()).filter((w) => w !== '');
+  if (wanted.length === 0) return { records: [], more: 0 };
+  const found = listRecords(rt, now).filter((r) => {
+    // A draft in its veto window is not given: the human has not let it pass yet.
+    if (r.state !== 'active') return false;
+    const hay = [r.text, r.because ?? '', r.rejected ?? '', r.revisit ?? '', r.source ?? '', ...r.paths].join('\n').toLowerCase();
+    return wanted.every((w) => hay.includes(w));
+  }).sort(byWeight);
+  const records = found.slice(0, limit);
+  // The journal counts the records that the agent got: the share of used records rests on it.
+  if (records.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: records.length } });
+  return { records, more: Math.max(0, found.length - limit) };
+}
+
 // The human shares a record: it is a record of every project from now on.
 export function shareRecord(rt: Runtime, id: string, _now: number = Date.now()): boolean {
   const record = stored(rt).find((r) => r.id === id);
