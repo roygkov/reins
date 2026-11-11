@@ -945,6 +945,24 @@
   ]
  },
  {
+  "name": "a scenario can carry its version",
+  "base": "review",
+  "patch": {
+   "version": 3
+  },
+  "errors": []
+ },
+ {
+  "name": "the version of a scenario is a positive integer",
+  "base": "review",
+  "patch": {
+   "version": 0
+  },
+  "errors": [
+   "not_positive version"
+  ]
+ },
+ {
   "name": "every fault is reported, not only the first",
   "base": "review",
   "patch": {

@@ -41,6 +41,7 @@ export type LoadedPack = {
   dir: string;
   settings: PackSettings | null;
   scripts: string[]; // references: the path inside the pack without the extension
+  scriptFiles: Record<string, string>; // reference -> absolute path of the file
   manifestFiles: string[]; // absolute paths
   errors: PackError[];
 };
@@ -51,6 +52,7 @@ export type Merged = {
   packs: { level: PackLevel; dir: string; name: string | null; connected: boolean; errors: PackError[] }[];
   scenarios: Scenario[];
   rejected: Rejected[];
+  scriptFiles: Record<string, string>; // the scripts of the connected packs: reference -> file
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -186,7 +188,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
 
 // The scripts of a pack: regular files under collect/ and check/. A symbolic link is skipped,
 // so a script cannot point outside the pack.
-function scriptRefs(dir: string, errors: PackError[]): string[] {
+function scriptRefs(dir: string, errors: PackError[], files: Record<string, string>): string[] {
   const out: string[] = [];
   const walk = (rel: string, depth: number): void => {
     let entries: fs.Dirent[];
@@ -204,7 +206,10 @@ function scriptRefs(dir: string, errors: PackError[]): string[] {
         if (!REF.test(ref)) continue;
         // Two files that differ only by the extension give one reference: nothing says which one runs.
         if (out.includes(ref)) errors.push({ code: 'duplicate', path: ref });
-        else out.push(ref);
+        else {
+          out.push(ref);
+          files[ref] = path.join(dir, child);
+        }
       }
     }
   };
@@ -236,7 +241,7 @@ function manifestFiles(dir: string): string[] {
 }
 
 export function loadPack(dir: string, level: PackLevel): LoadedPack {
-  const pack: LoadedPack = { level, dir, settings: null, scripts: [], manifestFiles: [], errors: [] };
+  const pack: LoadedPack = { level, dir, settings: null, scripts: [], scriptFiles: {}, manifestFiles: [], errors: [] };
   const read = readJson(path.join(dir, 'pack.json'));
   if ('error' in read) {
     pack.errors.push({ code: read.error, path: 'pack.json' });
@@ -246,7 +251,7 @@ export function loadPack(dir: string, level: PackLevel): LoadedPack {
   pack.errors.push(...checked.errors);
   pack.settings = checked.settings;
   if (pack.settings !== null) {
-    pack.scripts = scriptRefs(dir, pack.errors);
+    pack.scripts = scriptRefs(dir, pack.errors, pack.scriptFiles);
     pack.manifestFiles = manifestFiles(dir);
     if (pack.errors.length > 0) pack.settings = null;
   }
@@ -327,7 +332,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
 
 // Merges packs that are already read, upper level first. Pure except for reading the manifest files.
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [] };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {} };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();
@@ -340,6 +345,7 @@ export function mergePacks(loaded: LoadedPack[]): Merged {
     if (ok && pack.settings !== null) {
       apply(m, pack, pack.settings);
       for (const ref of pack.scripts) allScripts.add(ref);
+      Object.assign(m.scriptFiles, pack.scriptFiles);
       connected.push(pack);
     } else {
       broken = true;

@@ -1,0 +1,834 @@
+[
+ {
+  "name": "work is found: the task starts and its envelope opens",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1"
+   ]
+  }
+ },
+ {
+  "name": "no work: the task closes without the model",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": false,
+    "flag": "has_new_commits"
+   }
+  ],
+  "expect": {
+   "state": "skipped",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.skipped flag=has_new_commits"
+   ]
+  }
+ },
+ {
+  "name": "a failed collect closes the task as not verified",
+  "task": "review",
+  "events": [
+   {
+    "type": "collect_failed",
+    "reason": "timeout"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "harness.failure reason=timeout where=collect",
+    "task.closed label=not_verified reason=collect_failed"
+   ]
+  }
+ },
+ {
+  "name": "a report goes to the check, PASS closes the task with the label of the check",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS",
+    "policy.envelope_closed",
+    "task.closed label=verified_form"
+   ]
+  }
+ },
+ {
+  "name": "FAIL sends the report back, the next PASS closes the task",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "verified_form",
+   "returns": 1,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=1 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS",
+    "policy.envelope_closed",
+    "task.closed label=verified_form"
+   ]
+  }
+ },
+ {
+  "name": "FAIL past the limit of send-backs waits for the human",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   }
+  ],
+  "expect": {
+   "state": "waiting_human",
+   "waiting": "check",
+   "returns": 2,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=1 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=2 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "check.retries_exceeded n=2",
+    "task.waiting_human reason=check"
+   ]
+  }
+ },
+ {
+  "name": "the human accepts a result that the check did not pass",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "human",
+    "decision": "accept"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "approved_by_human",
+   "returns": 2,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=1 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=2 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "check.retries_exceeded n=2",
+    "task.waiting_human reason=check",
+    "task.human_decision decision=accept",
+    "policy.envelope_closed",
+    "task.closed label=approved_by_human"
+   ]
+  }
+ },
+ {
+  "name": "the human stops a task that the check did not pass",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 2,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=1 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=2 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "check.retries_exceeded n=2",
+    "task.waiting_human reason=check",
+    "task.human_decision decision=stop",
+    "policy.envelope_closed",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "the human gives one more try after the limit",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "human",
+    "decision": "return"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 2,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=1 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "task.returned n=2 reason=check_fail",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=FAIL",
+    "check.retries_exceeded n=2",
+    "task.waiting_human reason=check",
+    "task.human_decision decision=return",
+    "task.returned n=2 reason=human"
+   ]
+  }
+ },
+ {
+  "name": "a check without an answer is not a success",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "none"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 1,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.no_answer check_kind=citations",
+    "task.returned n=1 reason=check_fail"
+   ]
+  }
+ },
+ {
+  "name": "a check by the human: the report waits for the approval",
+  "task": "minimal",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 0,
+    "bytes": 0
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   }
+  ],
+  "expect": {
+   "state": "waiting_human",
+   "waiting": "approval",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=0 outputs=0",
+    "task.started level=weak",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "task.waiting_human reason=approval"
+   ]
+  }
+ },
+ {
+  "name": "the approval of the human closes the task",
+  "task": "minimal",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 0,
+    "bytes": 0
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "human",
+    "decision": "accept"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "approved_by_human",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=0 outputs=0",
+    "task.started level=weak",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "task.waiting_human reason=approval",
+    "task.human_decision decision=accept",
+    "task.closed label=approved_by_human"
+   ]
+  }
+ },
+ {
+  "name": "the human sends the report back",
+  "task": "minimal",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 0,
+    "bytes": 0
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "human",
+    "decision": "return"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 1,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=0 outputs=0",
+    "task.started level=weak",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "task.waiting_human reason=approval",
+    "task.human_decision decision=return",
+    "task.returned n=1 reason=human"
+   ]
+  }
+ },
+ {
+  "name": "a question of the gate pauses the task until the human answers",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "ask"
+   },
+   {
+    "type": "human",
+    "decision": "answered"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.waiting_human reason=gate",
+    "task.human_decision decision=answered"
+   ]
+  }
+ },
+ {
+  "name": "the agent cannot report before the task executes",
+  "task": "review",
+  "events": [
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   }
+  ],
+  "expect": {
+   "state": "preparing",
+   "returns": 0,
+   "errors": 1,
+   "rows": []
+  }
+ },
+ {
+  "name": "a check answer without a report is refused",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 0,
+   "errors": 1,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1"
+   ]
+  }
+ },
+ {
+  "name": "nothing moves a closed task",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   },
+   {
+    "type": "human",
+    "decision": "accept"
+   },
+   {
+    "type": "expire"
+   },
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 5,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS",
+    "policy.envelope_closed",
+    "task.closed label=verified_form"
+   ]
+  }
+ },
+ {
+  "name": "an answer to the gate is not an approval of the result",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "ask"
+   },
+   {
+    "type": "human",
+    "decision": "accept"
+   }
+  ],
+  "expect": {
+   "state": "waiting_human",
+   "waiting": "gate",
+   "returns": 0,
+   "errors": 1,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.waiting_human reason=gate"
+   ]
+  }
+ },
+ {
+  "name": "an approval is not an answer to the gate",
+  "task": "minimal",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 0,
+    "bytes": 0
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "human",
+    "decision": "answered"
+   }
+  ],
+  "expect": {
+   "state": "waiting_human",
+   "waiting": "approval",
+   "returns": 0,
+   "errors": 1,
+   "rows": [
+    "task.prepared bytes=0 outputs=0",
+    "task.started level=weak",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "task.waiting_human reason=approval"
+   ]
+  }
+ },
+ {
+  "name": "a task without actions past its term closes as not verified",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "expire"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "policy.envelope_closed",
+    "task.closed label=not_verified reason=expired"
+   ]
+  }
+ },
+ {
+  "name": "a task that expires before it starts had no envelope",
+  "task": "review",
+  "events": [
+   {
+    "type": "expire"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.closed label=not_verified reason=expired"
+   ]
+  }
+ },
+ {
+  "name": "a free task has no check: the result is not verified",
+  "task": "free",
+  "events": [
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "task.closed label=not_verified"
+   ]
+  }
+ },
+ {
+  "name": "a free task takes no check answer",
+  "task": "free",
+  "events": [
+   {
+    "type": "check",
+    "result": "PASS"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 0,
+   "errors": 1,
+   "rows": []
+  }
+ }
+]

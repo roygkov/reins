@@ -30,6 +30,7 @@ export type WriteGrant = { action: string; target: string; env: string; limit: n
 
 export type Manifest = {
   manifest: 1;
+  version?: number; // the version of the scenario, 1 when absent
   name: string;
   title: string;
   package: Package;
@@ -77,7 +78,7 @@ const IDENT = /^[a-z][a-z0-9_]{0,62}$/; // input, output, flag
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/; // an object of the pack, relative, no ".."
 const PLACEHOLDER = /\{([^{}]*)\}/g;
 
-const TOP = ['manifest', 'name', 'title', 'package', 'state', 'description', 'trigger', 'collect', 'run_if', 'model', 'permissions', 'done', 'output', 'memory'] as const;
+const TOP = ['manifest', 'version', 'name', 'title', 'package', 'state', 'description', 'trigger', 'collect', 'run_if', 'model', 'permissions', 'done', 'output', 'memory'] as const;
 const TOP_REQUIRED = ['manifest', 'name', 'title', 'package', 'trigger', 'model', 'permissions', 'done', 'output'] as const;
 
 // The label of the result that the human sees follows the kind of the check, not the manifest text.
@@ -339,6 +340,7 @@ export function validateManifest(value: unknown, pack: PackContext = STRUCTURE_O
   if (m === null) return r.errors;
 
   if (m.manifest !== undefined && m.manifest !== MANIFEST_VERSION) r.add('version_unsupported', 'manifest');
+  positive(r, m.version, 'version');
   named(r, m.name, 'name', NAME);
   text(r, m.title, 'title');
   choice(r, m.package, 'package', PACKAGES);
