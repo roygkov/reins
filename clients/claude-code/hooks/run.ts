@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { afterAction, beforeAction, type ClientTools, type Reply, type ToolCall } from '../../../src/client/before.ts';
 import { loadRuntime } from '../../../src/client/config.ts';
 import { executorReported, executorStarted } from '../../../src/client/executors.ts';
-import { agentStopped, humanRequest, sessionEnd, sessionStart, type SessionEvent } from '../../../src/client/session.ts';
+import { agentStopped, beforeCompaction, humanRequest, sessionEnd, sessionStart, type SessionEvent } from '../../../src/client/session.ts';
 import { isObj } from '../../../src/contracts/shape.ts';
 import type { Runtime } from '../../../src/core/runtime.ts';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,10 @@ function readEvent(): ToolCall | null {
   skipsQuestions = typeof value.permission_mode === 'string' && !['default', 'acceptEdits', 'plan'].includes(value.permission_mode);
   const call: ToolCall = { cwd: value.cwd, tool: value.tool_name, input: value.tool_input };
   if (typeof value.session_id === 'string' && value.session_id !== '') call.session = value.session_id;
+  // A call of a subordinate executor carries its identifier and its type.
+  if (typeof value.agent_id === 'string' && value.agent_id !== '') call.sub = typeof value.agent_type === 'string' && value.agent_type !== '' ? value.agent_type : 'general-purpose';
+  // A run without a window is named by the command that starts it: nobody answers a question there.
+  if (process.env.REINS_HEADLESS === '1') call.headless = true;
   return call;
 }
 
@@ -137,6 +141,7 @@ function session(mode: string): void {
       }
     }
     else if (mode === 'session-end') sessionEnd(rt, e);
+    else if (mode === 'pre-compact') beforeCompaction(rt, e);
     else if (mode === 'subagent-stop') {
       const role = typeof value.agent_type === 'string' ? value.agent_type : undefined;
       executorReported(rt, { cwd: e.cwd, ...(e.session !== undefined ? { session: e.session } : {}), ...(role !== undefined ? { role } : {}) });
@@ -149,5 +154,5 @@ function session(mode: string): void {
 export function main(mode: string | undefined): void {
   if (mode === 'pre') pre();
   else if (mode === 'post') post();
-  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end', 'subagent-stop'].includes(mode)) session(mode);
+  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end', 'subagent-stop', 'pre-compact'].includes(mode)) session(mode);
 }

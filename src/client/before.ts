@@ -14,15 +14,18 @@ import { decide, grantKey, plainValue, type Action, type Decision, type Envelope
 import { confirm, decideAction, loadTask, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
-import { currentScenario } from '../core/sessions.ts';
+import { currentScenario, readSession } from '../core/sessions.ts';
 import { touchedPlaces } from './places.ts';
 import { sessionTask } from './session.ts';
+import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { findRoot, loadConfig, shellAction, type GateConfig } from '../gate/index.ts';
 import type { ToolRule } from '../packs/packs.ts';
 
 // `session`: the session of the client, when the client names it.
-export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string };
+// `sub`: the role of the subordinate executor that makes the call. `headless`: the client runs
+// without a window, so nobody can answer a question.
+export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; headless?: boolean };
 
 // A tool of the client: it reads, it changes a file (the input field `path` names the file),
 // or it runs a shell command (the input field `command` holds it).
@@ -270,9 +273,21 @@ function taskFor(rt: Runtime, key: string, session: string | undefined): string 
   return undefined;
 }
 
+// The subordinate executor that makes the call: its role, and the task that it started under.
+// An executor keeps its parent when the free task of the session changes; one that the harness
+// did not see start works under the task of the call.
+function subOf(rt: Runtime, call: ToolCall, task: string): { role: string; parent: string } | undefined {
+  if (call.sub === undefined) return undefined;
+  const role = roleOf(call.sub);
+  const started = (readSession(rt, call.session)?.executors ?? []).findLast((x) => x.role === role);
+  return { role, parent: started?.task ?? task };
+}
+
 function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data'>[]): void {
   const task = sessionTask(rt, call.session);
-  for (const row of rows) rt.journal.write({ ...row, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
+  const by = subOf(rt, call, task);
+  const sub = by === undefined ? {} : { executor: 'sub' as const, ...by };
+  for (const row of rows) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 
 const pendingFile = (rt: Runtime, call: ToolCall): string =>
@@ -287,7 +302,21 @@ function reply(d: Decision, more: { task?: string; grant?: string } = {}): Reply
 }
 
 export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
-  const r = decideBefore(rt, call, clientTools);
+  let r = decideBefore(rt, call, clientTools);
+  // Without a window nobody answers a question: the action waits in the queue of the human.
+  if (call.headless === true && r.outcome === 'ask') {
+    // The human sees the command of a shell tool, and only the name of any other tool: the input
+    // of a tool can hold the text of a file.
+    const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
+    const command = own?.kind === 'shell' ? call.input[own.command] : undefined;
+    const d = deferCall(rt, call, { rule: r.rule, what: typeof command === 'string' ? command : call.tool, task: sessionTask(rt, call.session) });
+    if (d.pass) {
+      // The approval of the human is a fact of the journal. It lets this one call pass; it does
+      // not confirm a grant of a task envelope.
+      record(rt, call, [{ kind: 'policy.decision', data: { outcome: 'allow', action_kind: 'unknown', env: 'unknown' } }, { kind: 'policy.basis', data: { layer: 'core', rule: 'queue.approved' } }]);
+      r = { outcome: 'allow', rule: 'queue.approved', layer: 'core', envelope: 'none' };
+    } else r = { ...r, outcome: 'defer', queued: d.id };
+  }
   const file = pendingFile(rt, call);
   // A question waits for its answer: a run of the same call is the "yes" of the human. A question
   // for a whole task already wrote what it waits for. Any other outcome waits for nothing.
@@ -318,7 +347,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   if (action.via === 'tool' && action.kind === 'write') {
     const key = grantKey(action.name, action.target, action.env.name);
     const id = taskFor(rt, key, call.session);
-    const decision = id === undefined ? null : decideAction(rt, id, action, layers);
+    const decision = id === undefined ? null : decideAction(rt, id, action, layers, subOf(rt, call, id));
     if (id !== undefined && decision !== null) {
       // The question for the whole task: the answer of the human comes back as "the tool ran".
       if (decision.outcome === 'ask' && decision.envelope === 'confirm') {

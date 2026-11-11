@@ -6,14 +6,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
-import { forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, withSession } from '../core/sessions.ts';
+import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, withSession } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, measure, propose } from '../craft/craft.ts';
 import { listRecords } from '../memory/store.ts';
 
-export type SessionEvent = { session?: string; cwd: string; client?: string };
+// `capabilities`: what the client can do. `before`: it tells the core before an action.
+// `choice`: it can show the human a question with a choice. Absent: the client can.
+export type SessionEvent = { session?: string; cwd: string; client?: string; capabilities?: { before?: boolean; choice?: boolean } };
+export type ClientLevel = 'full' | 'no_choice' | 'no_before';
+
+// The level of a client (harness-client, page 3). Without the event before an action the harness
+// is no barrier; without a question with a choice the question goes as text.
+export const levelOf = (c: SessionEvent['capabilities']): ClientLevel => (c?.before === false ? 'no_before' : c?.choice === false ? 'no_choice' : 'full');
 
 const nameOf = sessionName;
 const fileOf = sessionFile;
@@ -78,8 +85,18 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   sweep(rt);
   propose(rt);
   measure(rt);
-  rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level: 'full' } });
-  const context = ['reins: the harness of this workspace. It decides before every action and checks the result of a scenario.'];
+  const level = levelOf(e.capabilities);
+  rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level } });
+  // The harness does not pretend to protect: a client without the event before an action gets the words.
+  const context = level === 'no_before'
+    ? ['reins: the harness of this workspace. This client does not tell the harness before an action: the barriers do not act here. Say this to the human.']
+    : ['reins: the harness of this workspace. It decides before every action and checks the result of a scenario.'];
+  // The task that the session holds: after a compaction of the context the agent finds it here.
+  const held = currentScenario(rt, e.session);
+  const heldTask = held === undefined ? null : loadTask(rt, held);
+  if (heldTask !== null && heldTask.session === e.session && heldTask.state !== 'closed' && heldTask.state !== 'skipped') {
+    context.push(`this session holds the task ${heldTask.id} (${heldTask.scenario ?? ''}, ${heldTask.state}): \`reins input ${heldTask.id}\` prints its input again.`);
+  }
   const last = readHandoff(rt);
   if (last !== null) {
     context.push(`Last session in this project ended ${last.ended}: ${count(last.requests, 'request')}, ${count(last.questions, 'question')} to the human, ${count(last.refusals, 'refusal')}.`);
@@ -108,6 +125,16 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     for (const p of proposals.slice(0, 10)) context.push(`- ${p.id}: ${p.pattern} of "${p.key}", seen ${p.n} times`);
   }
   return { context };
+}
+
+// Before the client compacts the context: the state of the task is on the disk already, so the
+// harness only notes the time and says which task the session holds.
+export function beforeCompaction(rt: Runtime, e: SessionEvent): { task?: string; state?: string } {
+  const id = currentScenario(rt, e.session);
+  const task = id === undefined ? null : loadTask(rt, id);
+  if (task === null || task.session !== e.session || task.state === 'closed' || task.state === 'skipped') return {};
+  patchSession(rt, e.session, { compacted: new Date().toISOString() });
+  return { task: task.id, state: task.state };
 }
 
 // A request of the human: the free task of the request before it ends, a new one opens.

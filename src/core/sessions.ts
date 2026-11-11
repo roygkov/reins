@@ -9,7 +9,8 @@ import type { Runtime } from './runtime.ts';
 
 // `executors`: the subordinate executors of the session that run now, each with its role, the task
 // that it belongs to and the time of its start.
-export type SessionFile = { task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
+// `compacted`: the last time the client compacted the context of the session.
+export type SessionFile = { compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
 
 const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
 export const sessionName = (session: string | undefined): string =>

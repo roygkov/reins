@@ -1,0 +1,195 @@
+// The client contract past one client: the level of a client, the event before a compaction, the
+// actions of a subordinate executor, a run without a window, and a second client on the same core.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadPacks } from '../src/packs/packs.ts';
+import { openJournal, readJournal } from '../src/journal/writer.ts';
+import { validateRow } from '../src/contracts/journal.ts';
+import { openScenario, type Runtime } from '../src/core/runtime.ts';
+import { resolveQueued } from '../src/core/queue.ts';
+import { beforeAction, type ClientTools } from '../src/client/before.ts';
+import { executorStarted } from '../src/client/executors.ts';
+import { beforeCompaction, humanRequest, sessionStart } from '../src/client/session.ts';
+import { loadCases } from './cases.ts';
+
+const CLAUDE = fileURLToPath(new URL('../clients/claude-code/hooks/hook.ts', import.meta.url));
+const STDIO = fileURLToPath(new URL('../clients/stdio/hook.ts', import.meta.url));
+const SRC = fileURLToPath(new URL('../src', import.meta.url));
+const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'client-'));
+after(() => fs.rmSync(SB, { recursive: true, force: true }));
+const manifests = new Map(loadCases<{ name: string; manifest: unknown }>('manifest-bases').map((b) => [b.name, b.manifest]));
+const files = loadCases<{ name: string; files: Record<string, unknown> }>('packs-bases').find((b) => b.name === 'three')?.files ?? {};
+const CLIENT: ClientTools = { shell: { kind: 'shell', command: 'command' }, read_file: { kind: 'read' } };
+
+type Box = { rt: Runtime; root: string; cwd: string; config: string; env: Record<string, string> };
+let n = 0;
+function box(): Box {
+  n += 1;
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(SB, `${n}-`)));
+  const cwd = path.join(root, 'work');
+  fs.mkdirSync(cwd, { recursive: true });
+  const out = JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [], worktree: cwd }, flags: { has_new_commits: true } });
+  for (const [rel, value] of Object.entries(files)) {
+    const file = path.join(root, 'packs', rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (rel.endsWith('.sh')) fs.writeFileSync(file, `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${out}'\n`, { mode: 0o755 });
+    else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
+    else fs.writeFileSync(file, JSON.stringify(value));
+  }
+  const packs = { organization: path.join(root, 'packs/organization'), project: path.join(root, 'packs/project'), person: path.join(root, 'packs/person') };
+  const merged = loadPacks(packs);
+  assert.deepEqual(merged.packs.map((p) => p.errors), [[], [], []]);
+  const stateDir = path.join(root, 'state');
+  const config = path.join(root, 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000, configFile: config }, root, cwd, config, env: { PATH: process.env.PATH ?? '', HOME: root, REINS_CONFIG: config } };
+}
+const levels = (b: Box) => readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.client_level_detected').map((r) => r.data?.level);
+
+// ---- The level of a client.
+
+test('client: the harness names the level of a client at the start from what the client can do', () => {
+  const b = box();
+  sessionStart(b.rt, { session: 's1', cwd: b.cwd, client: 'one' });
+  sessionStart(b.rt, { session: 's2', cwd: b.cwd, client: 'two', capabilities: { choice: false } });
+  const none = sessionStart(b.rt, { session: 's3', cwd: b.cwd, client: 'three', capabilities: { before: false } });
+  assert.deepEqual(levels(b), ['full', 'no_choice', 'no_before']);
+  assert.match(none.context.join('\n'), /barriers do not act/);
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+});
+
+// ---- Before a compaction.
+
+test('client: before a compaction the task of the session is kept, and the next start names it', () => {
+  const b = box();
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  assert.deepEqual(beforeCompaction(b.rt, { session: 's1', cwd: b.cwd }), { task: opened.task.id, state: 'executing' });
+  const context = sessionStart(b.rt, { session: 's1', cwd: b.cwd }).context.join('\n');
+  assert.match(context, new RegExp(`this session holds the task ${opened.task.id}`));
+  assert.match(context, new RegExp(`reins input ${opened.task.id}`));
+  assert.deepEqual(beforeCompaction(b.rt, { session: 's9', cwd: b.cwd }), {}, 'a session without a task keeps nothing');
+});
+
+// ---- The actions of a subordinate executor.
+
+test('client: an action of a subordinate executor is written with its role and its parent task', () => {
+  const b = box();
+  const task = humanRequest(b.rt, { session: 's1', cwd: b.cwd }).task;
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'unknown__tool', input: {}, session: 's1', sub: 'Plugin:Reviewer' }, CLIENT);
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind.startsWith('policy.'));
+  assert.deepEqual(rows.map((r) => [r.executor, r.parent, r.role]), [['sub', task, 'plugin-reviewer'], ['sub', task, 'plugin-reviewer']]);
+  for (const r of rows) assert.deepEqual(validateRow(r), []);
+});
+
+// ---- Without a window.
+
+test('client: without a window a question becomes a place in the queue, and a refusal stays a refusal', () => {
+  const b = box();
+  const call = { cwd: b.cwd, tool: 'unknown__tool', input: { a: 1 }, session: 's1', headless: true };
+  const r = beforeAction(b.rt, call, CLIENT);
+  assert.deepEqual([r.outcome, r.rule], ['defer', 'default.unknown-tool']);
+  assert.match(r.queued ?? '', /^q[0-9a-f]{10}$/);
+  assert.equal(resolveQueued(b.rt, r.queued ?? '', 'approved'), true);
+  assert.deepEqual([beforeAction(b.rt, call, CLIENT).outcome, beforeAction(b.rt, call, CLIENT).outcome], ['allow', 'defer']);
+  const denied = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: `echo x > ${b.rt.stateDir}/pause.json` }, session: 's1', headless: true }, CLIENT);
+  assert.deepEqual([denied.outcome, denied.queued], ['deny', undefined]);
+  assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1', headless: true }, CLIENT).outcome, 'allow');
+});
+
+// ---- A second client.
+
+const stdio = (b: Box, event: Record<string, unknown>) => {
+  const p = spawnSync(process.execPath, [STDIO], { input: JSON.stringify({ cwd: b.cwd, session: 'other-1', ...event }), env: b.env, encoding: 'utf8' });
+  return p.stdout === '' ? {} : JSON.parse(p.stdout);
+};
+
+test('client: a second client drives the same core through its own codec', () => {
+  const b = box();
+  const start = stdio(b, { event: 'session_start' });
+  assert.match(start.context.join('\n'), /change-review/);
+  assert.equal(typeof stdio(b, { event: 'request' }).task, 'string');
+  assert.deepEqual(stdio(b, { event: 'before', tool: 'read_file', input: { path: 'a' } }), { outcome: 'allow', rule: 'default.read' });
+  const denied = stdio(b, { event: 'before', tool: 'run_command', input: { command: `echo x > ${b.rt.stateDir}/pause.json` } });
+  assert.deepEqual([denied.outcome, denied.rule], ['deny', 'protect.state']);
+  const asked = stdio(b, { event: 'before', tool: 'some_connector_tool', input: {} });
+  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'default.unknown-tool']);
+  assert.deepEqual(stdio(b, { event: 'after', tool: 'some_connector_tool', input: {} }), {});
+  assert.equal(stdio(b, { event: 'executor_start', role: 'helper' }).outcome, 'allow');
+  assert.equal(typeof stdio(b, { event: 'executor_report', role: 'helper' }).task, 'string');
+  assert.deepEqual(Object.keys(stdio(b, { event: 'before_compaction' })), []);
+  assert.equal(typeof stdio(b, { event: 'stop' }).task, 'string');
+  assert.deepEqual(stdio(b, { event: 'session_end' }).closed, []);
+  const rows = readJournal(b.rt.journal.file);
+  for (const r of rows) assert.deepEqual(validateRow(r), []);
+  assert.ok(rows.some((r) => r.kind === 'harness.client_level_detected' && r.data?.client === 'stdio'));
+  assert.ok(rows.some((r) => r.kind === 'task.human_decision' && r.data?.decision === 'answered'));
+});
+
+test('client: an event of a second client with a broken form asks about a write and never fails', () => {
+  const b = box();
+  const p = spawnSync(process.execPath, [STDIO], { input: 'not json', env: b.env, encoding: 'utf8' });
+  assert.equal(p.status, 0);
+  assert.deepEqual(JSON.parse(p.stdout).outcome, 'ask');
+  assert.deepEqual(stdio(b, { event: 'before', tool: 7 }).outcome, 'ask');
+});
+
+test('client: the core names no client', () => {
+  const found: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, e.name);
+      if (e.isDirectory()) walk(file);
+      else if (/claude|anthropic|cursor|codex/i.test(fs.readFileSync(file, 'utf8'))) found.push(path.relative(SRC, file));
+    }
+  };
+  walk(SRC);
+  assert.deepEqual(found, []);
+});
+
+// ---- The first client.
+
+test('client: the Claude Code adapter passes the compaction, the subordinate and the run without a window', () => {
+  const b = box();
+  const hook = (mode: string, event: Record<string, unknown>, env: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [CLAUDE, mode], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, ...event }), env: { ...b.env, ...env }, encoding: 'utf8' }).stdout;
+  hook('prompt', { hook_event_name: 'UserPromptSubmit' });
+  assert.equal(hook('pre-compact', { hook_event_name: 'PreCompact' }), '');
+  hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'mcp__x__y', tool_input: {}, agent_id: 'a1', agent_type: 'reviewer' });
+  assert.ok(readJournal(b.rt.journal.file).some((r) => r.kind === 'policy.decision' && r.executor === 'sub' && r.role === 'reviewer'));
+  const out = JSON.parse(hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'mcp__x__z', tool_input: {} }, { REINS_HEADLESS: '1' })).hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'deny');
+  assert.match(out.permissionDecisionReason, /reins queue approve q[0-9a-f]{10}/);
+  const hooks = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url)), 'utf8')).hooks;
+  assert.ok(Object.hasOwn(hooks, 'PreCompact'));
+});
+
+// ---- Cases of the review.
+
+test('client: a subordinate that started under a scenario keeps that task as its parent, also for a write of the envelope', () => {
+  const b = box();
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  assert.equal(executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer' }).outcome, 'allow');
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'unknown__tool', input: {}, session: 's1', sub: 'reviewer' }, CLIENT);
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision');
+  assert.deepEqual(rows.map((r) => [r.executor, r.parent, r.role]), [['sub', opened.task.id, 'reviewer']]);
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+});
+
+test('client: an approval from the queue in a run without a window is a row of the journal', () => {
+  const b = box();
+  const call = { cwd: b.cwd, tool: 'shell', input: { command: `cat ${b.rt.stateDir}/journal.jsonl`, description: 'a long text of the agent' }, session: 's1', headless: true };
+  const r = beforeAction(b.rt, call, CLIENT);
+  assert.equal(r.outcome, 'defer');
+  const queued = JSON.parse(fs.readFileSync(path.join(b.rt.stateDir, 'queue', `${r.queued}.json`), 'utf8'));
+  assert.equal(queued.what, `cat ${b.rt.stateDir}/journal.jsonl`);
+  resolveQueued(b.rt, r.queued ?? '', 'approved');
+  assert.equal(beforeAction(b.rt, call, CLIENT).rule, 'queue.approved');
+  assert.ok(readJournal(b.rt.journal.file).some((x) => x.kind === 'policy.basis' && x.data?.rule === 'queue.approved'));
+});

@@ -18,7 +18,7 @@ export type ExecutorReply = { outcome: 'allow' | 'deny'; rule: string; task: str
 const STALE_MS = 60 * 60 * 1000; // an executor that did not report for this long has no place any more
 
 // The role in the form of the packs: lower case, a dash for every other character.
-const roleOf = (role: string | undefined): string => (role ?? 'general').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63) || 'general';
+export const roleOf = (role: string | undefined): string => (role ?? 'general').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63) || 'general';
 
 // The task that a new executor belongs to: the current scenario task of the session while it is
 // open, else the free task of the session.

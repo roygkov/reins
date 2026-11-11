@@ -1,0 +1,8 @@
+{
+  "read_file": { "kind": "read" },
+  "list_files": { "kind": "read" },
+  "search_files": { "kind": "read" },
+  "write_file": { "kind": "local", "path": "path" },
+  "edit_file": { "kind": "local", "path": "path" },
+  "run_command": { "kind": "shell", "command": "command" }
+}

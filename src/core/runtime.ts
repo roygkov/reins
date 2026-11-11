@@ -131,9 +131,10 @@ export function readCollected(rt: Runtime, id: string): Record<string, unknown> 
   return readObject(taskFile(rt, id, '.collect'));
 }
 
-function record(rt: Runtime, task: Task, rows: RowDraft[]): void {
+// `sub`: the rows are about an action of a subordinate executor: its role and its parent task.
+function record(rt: Runtime, task: Task, rows: RowDraft[], sub?: { role: string; parent: string }): void {
   for (const r of rows) {
-    const row: RowInput = { kind: r.kind, project: rt.project, task: task.id };
+    const row: RowInput = { kind: r.kind, project: rt.project, task: task.id, ...(sub !== undefined ? { executor: 'sub' as const, role: sub.role, parent: sub.parent } : {}) };
     const session = task.session ?? rt.session;
     if (session !== undefined) row.session = session;
     if (task.scenario !== undefined) {
@@ -145,10 +146,10 @@ function record(rt: Runtime, task: Task, rows: RowDraft[]): void {
   }
 }
 
-function commit(rt: Runtime, s: Step): Step {
+function commit(rt: Runtime, s: Step, sub?: { role: string; parent: string }): Step {
   if (s.error === undefined) {
     writeAtomic(taskFile(rt, s.task.id), s.task);
-    record(rt, s.task, s.rows);
+    record(rt, s.task, s.rows, sub);
   }
   return s;
 }
@@ -375,13 +376,13 @@ export function openTasks(rt: Runtime): Task[] {
 
 // The policy decision for one action of a task; null when the task is unknown or its lock is busy.
 // A caller that gets null has no envelope: it decides the action as an action outside a task.
-export function decideAction(rt: Runtime, id: string, action: Action, layers: LayerDecision[]): Decision | null {
+export function decideAction(rt: Runtime, id: string, action: Action, layers: LayerDecision[], sub?: { role: string; parent: string }): Decision | null {
   if (!TASK_ID.test(id)) return null;
   const r = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return null;
     const d = decideFor(task, action, layers);
-    commit(rt, { task: d.task, rows: d.rows });
+    commit(rt, { task: d.task, rows: d.rows }, sub);
     return d.decision;
   });
   return r === 'busy' ? null : r;
