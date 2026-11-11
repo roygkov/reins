@@ -169,6 +169,37 @@ test('claude-code: an adapter that cannot start asks the human before an action'
   assert.deepEqual([q.status, q.stdout], [0, '']);
 });
 
+test('claude-code: an installed copy of the plugin finds the core through the key `source` of the config', () => {
+  // A client copies only the directory of the plugin into its cache: the core is not in the copy.
+  const copy = path.join(SB, 'installed-plugin');
+  fs.cpSync(path.dirname(path.dirname(HOOK)), copy, { recursive: true });
+  const hook = path.join(copy, 'hooks/hook.ts');
+  const b = box();
+  const good = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  const source = fileURLToPath(new URL('..', import.meta.url));
+  fs.writeFileSync(b.config, JSON.stringify({ ...good, source }));
+  const ls = event(b, 'PreToolUse', 'Bash', { command: 'ls' });
+  assert.equal(run(hook, b, ['pre'], ls).stdout, run(HOOK, b, ['pre'], ls).stdout, 'the copy answers as the plugin in the repository');
+  assert.ok(!run(hook, b, ['pre'], ls).stdout.includes('did not start'));
+  const write = event(b, 'PreToolUse', 'Bash', { command: `echo x >> ${path.join(b.state, 'journal.jsonl')}` });
+  assert.equal(run(hook, b, ['pre'], write).json.hookSpecificOutput.permissionDecision, 'deny');
+  // The command line reads the same config: the key is a known one, and it is an absolute path.
+  assert.equal(run(CLI, b, ['scenarios'], '').json.ok, true);
+  fs.writeFileSync(b.config, JSON.stringify({ ...good, source: 'reins' }));
+  assert.equal(run(CLI, b, ['scenarios'], '').json.error, 'bad_config');
+  assert.equal(run(hook, b, ['pre'], ls).json.hookSpecificOutput.permissionDecision, 'ask', 'a source that is no absolute path loads nothing');
+  // A core that is beside the entry and does not load is a failure: the source does not take its place.
+  const half = path.join(SB, 'half', 'clients', 'claude-code');
+  fs.cpSync(path.dirname(path.dirname(HOOK)), half, { recursive: true });
+  fs.mkdirSync(path.join(SB, 'half', 'src', 'client'), { recursive: true });
+  fs.writeFileSync(path.join(SB, 'half', 'src', 'client', 'before.ts'), 'export {};\n');
+  fs.writeFileSync(b.config, JSON.stringify({ ...good, source }));
+  assert.equal(run(path.join(half, 'hooks/hook.ts'), b, ['pre'], ls).json.hookSpecificOutput.permissionDecision, 'ask');
+  // A source that has no adapter: the human decides.
+  fs.writeFileSync(b.config, JSON.stringify({ ...good, source: path.join(SB, 'nothing-here') }));
+  assert.equal(run(hook, b, ['pre'], ls).json.hookSpecificOutput.permissionDecision, 'ask');
+});
+
 test('claude-code: a change of the adapter itself asks the human', () => {
   const b = box();
   const r = pre(b, 'Edit', { file_path: fileURLToPath(new URL('../clients/claude-code/tools.json', import.meta.url)), old_string: 'a', new_string: 'b' });

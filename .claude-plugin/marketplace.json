@@ -1,0 +1,11 @@
+{
+  "name": "reins",
+  "owner": { "name": "reins" },
+  "plugins": [
+    {
+      "name": "reins",
+      "source": "./clients/claude-code",
+      "description": "The reins harness for Claude Code: the policy before an action, the events of the session, the scenarios."
+    }
+  ]
+}

@@ -12,9 +12,11 @@ import { findRoot } from '../gate/index.ts';
 import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 
 // The keys of the file: of the harness, and of the gate (src/gate/config.cjs).
+// `source`: the directory of the source of the harness. A plugin that a client copied into its
+// cache has no core beside it: its entry loads the adapter from this directory.
 // `runner`: the command that starts a client without a window, as a list of words; `{task}` and
 // `{prompt}` in a word are filled in. `runner_timeout_s`: the time limit of one run.
-const KEYS = ['packs', 'state_dir', 'memory_dir', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -52,6 +54,7 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   const stateDir = value.state_dir ?? path.join(os.homedir(), '.local', 'state', 'reins');
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) throw bad;
   if (value.repo_packs !== undefined && typeof value.repo_packs !== 'boolean') throw bad;
+  if (value.source !== undefined && (typeof value.source !== 'string' || !path.isAbsolute(value.source))) throw bad;
   // The memory records can live in a directory of the instance, for example a repository with history.
   if (value.memory_dir !== undefined && (typeof value.memory_dir !== 'string' || !path.isAbsolute(value.memory_dir))) throw bad;
   // The runner is a command that the harness starts: a list of words, never one line for a shell.

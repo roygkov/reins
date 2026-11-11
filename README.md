@@ -55,6 +55,16 @@
 
 Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, затем `/reins:run <сценарий> имя=значение`.
 
+Постоянная установка, в том числе для приложения Claude на рабочем столе:
+
+1. Добавь в `~/.config/reins/config.json` ключ `"source"` с абсолютным путём к этому репозиторию. Клиент копирует в свой кэш только папку плагина: вход хука берёт ядро из `source`.
+2. `claude plugin marketplace add ~/IdeaProjects/reins`
+3. `claude plugin install reins@reins`
+
+Адаптер и ядро копия берёт из `source` при каждом вызове. Сам вход `hooks/hook.ts` и файл `hooks/hooks.json` в копии не меняются: после их правки подними `version` в `plugin.json` и запусти `claude plugin update reins@reins`.
+
+Без ключа `source` установленная копия на каждое действие задаёт вопрос «the adapter did not start».
+
 Плагин регистрирует хук перед каждым инструментом. Вместе с плагином `agentic` вопросы о записи удваиваются: барьеры должен держать один из двух.
 
 ## Правка схем
