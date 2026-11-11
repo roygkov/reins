@@ -73,8 +73,8 @@ test('cli: the scenarios of the packs are listed with their inputs', () => {
   const r = reins(box(), ['scenarios']);
   assert.equal(r.code, 0);
   assert.deepEqual(r.json.scenarios, [
-    { name: 'change-review', title: 'Ревью изменения', level: 'project', description: 'Review of one change', inputs: [{ name: 'change_id', type: 'id' }] },
-    { name: 'draft-message', title: 'Черновик сообщения', level: 'person', inputs: [] },
+    { name: 'change-review', title: 'Ревью изменения', level: 'project', description: 'Review of one change', inputs: [{ name: 'change_id', type: 'id' }], trigger: { kind: 'command' } },
+    { name: 'draft-message', title: 'Черновик сообщения', level: 'person', inputs: [], trigger: { kind: 'command' } },
   ]);
   assert.deepEqual(r.json.rejected, []);
 });

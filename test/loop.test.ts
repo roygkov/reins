@@ -161,7 +161,7 @@ for (const [name, change, errors] of [
   ['cannot name a write that the packs do not have', (m: any) => void (m.permissions.write = [{ action: 'deploy', target: 'app/x', env: 'work', limit: 1, confirm: 'once' }]), ['not_in_pack permissions.write[0].action']],
   ['cannot take the name of a scenario', (m: any) => void (m.name = 'change-review'), ['duplicate name']],
   ['belongs to the person', (m: any) => void (m.package = 'organization'), ['not_allowed package']],
-  ['is started by a command', (m: any) => void (m.trigger = { kind: 'schedule', value: '0 9 * * 1' }), ['not_allowed trigger.kind']],
+  ['is started by a command', (m: any) => void (m.trigger = { kind: 'schedule', value: 'weekly mon 09:00' }), ['not_allowed trigger.kind']],
 ] as const) {
   test(`loop: a contract ${name}`, () => {
     const b = box();

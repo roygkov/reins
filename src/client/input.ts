@@ -42,6 +42,8 @@ const ITEM: Record<string, string> = {
 };
 
 // The input of a scenario task that executes or publishes its result; null for any other task.
+const LEVEL_ORDER: readonly string[] = ['weak', 'medium', 'strong'];
+
 export function taskInput(task: Task, collected: Record<string, unknown> | null, command = 'reins', models: Partial<Record<string, string>> = {}): TaskInput | null {
   const m = task.manifest;
   if (m === undefined || (task.state !== 'executing' && task.state !== 'publishing')) return null;
@@ -68,11 +70,12 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
     'Write to no system before the report passes. When the answer says `state: "publishing"`, the writes of `writes` can be made on the word of the human; no other write.',
     `After the publication, or when the human wants none, run: ${command} finish ${task.id}.`,
   );
-  const level = task.level ?? m.model.level;
+  // A task has its level from the manifest or from the packs; the middle level is the last word.
+  const level = task.level ?? m.model.level ?? 'medium';
   const model: TaskInput['model'] = { level };
   const name = models[level];
   if (name !== undefined) model.name = name;
-  if (m.model.raise_to !== undefined && task.raised !== true && m.model.raise_to !== level) {
+  if (m.model.raise_to !== undefined && task.raised !== true && LEVEL_ORDER.indexOf(m.model.raise_to) > LEVEL_ORDER.indexOf(level)) {
     model.raise_to = m.model.raise_to;
     protocol.push(`When the work needs the higher level of the model, run once: ${command} raise ${task.id}.`);
   }

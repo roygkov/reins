@@ -2,6 +2,7 @@
 // no branches, no code. A manifest that fails this validator is never connected.
 // Specification: docs/spec/harness-manifest, pages 1, 3, 4 and 7.
 
+import { parseSchedule } from './schedule.ts';
 import { at, inList, isInt, isObj, oneLine, type Fault, type Obj } from './shape.ts';
 
 export const MANIFEST_VERSION = 1;
@@ -39,7 +40,7 @@ export type Manifest = {
   trigger: { kind: (typeof TRIGGER_KINDS)[number]; value?: string; inputs?: { name: string; type: (typeof INPUT_TYPES)[number] }[] };
   collect?: { script: string; outputs: string[]; flags?: string[]; max_bytes?: number; timeout_s?: number };
   run_if?: string;
-  model: { level: Level; raise_to?: Level; executors?: { role: string; count: number }[]; token_limit?: number };
+  model: { level?: Level; raise_to?: Level; executors?: { role: string; count: number }[]; token_limit?: number };
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
@@ -66,7 +67,7 @@ export type PackContext = {
 };
 
 export type ManifestErrorCode =
-  | 'not_object' | 'not_array' | 'not_string' | 'not_integer' | 'not_positive' | 'not_in_range'
+  | 'bad_form' | 'not_object' | 'not_array' | 'not_string' | 'not_integer' | 'not_positive' | 'not_in_range'
   | 'not_one_line' | 'not_in_list' | 'not_allowed' | 'missing' | 'missing_limit' | 'empty' | 'duplicate'
   | 'unknown_field' | 'version_unsupported' | 'bad_name' | 'bad_ref' | 'bad_target'
   | 'run_if_without_collect' | 'unknown_flag' | 'raise_below_level'
@@ -185,7 +186,12 @@ function trigger(r: Report, value: unknown): Set<string> {
   const kind = choice(r, t.kind, 'trigger.kind', TRIGGER_KINDS);
   text(r, t.value, 'trigger.value');
   if (kind !== null && kind !== 'command' && t.value === undefined) r.add('missing', 'trigger.value');
+  // A schedule has one of the known forms. An event has a name.
+  if (kind === 'schedule' && typeof t.value === 'string' && parseSchedule(t.value) === null) r.add('bad_form', 'trigger.value');
+  if (kind === 'event' && typeof t.value === 'string' && !NAME.test(t.value)) r.add('bad_form', 'trigger.value');
   const items = list(r, t.inputs, 'trigger.inputs') ?? [];
+  // Nobody gives inputs to a schedule.
+  if (kind === 'schedule' && items.length > 0) r.add('not_allowed', 'trigger.inputs');
   items.forEach((item, i) => {
     const path = `trigger.inputs[${i}]`;
     const input = fields(r, item, path, ['name', 'type'], ['name', 'type']);
@@ -218,7 +224,8 @@ function collect(r: Report, value: unknown, pack: PackContext): Set<string> | nu
 }
 
 function model(r: Report, value: unknown, pack: PackContext): void {
-  const m = fields(r, value, 'model', ['level', 'raise_to', 'executors', 'token_limit'], ['level']);
+  // A manifest without a level takes the level that the packs give.
+  const m = fields(r, value, 'model', ['level', 'raise_to', 'executors', 'token_limit'], []);
   if (m === null) return;
   const rank = (l: Level): number => LEVELS.indexOf(l);
   const level = choice(r, m.level, 'model.level', LEVELS);

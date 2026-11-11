@@ -51,6 +51,7 @@ export type PackSettings = {
   rules?: PackRule[];
   models?: Partial<Record<ModelLevel, string>>; // the name of the model of the client for a level
   gate?: GateData;
+  defaults?: { level?: ModelLevel }; // the level of the model for a manifest that names none
   journal?: { keep_days?: number }; // how long the archive of the journal is kept
 };
 
@@ -85,6 +86,7 @@ export type Merged = {
   models: Partial<Record<ModelLevel, string>>; // level -> name of the model; a lower pack replaces a name
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
   gate: GateData; // the rule data of the gate that the packs add, upper pack first
+  defaultLevel?: ModelLevel; // the level of the model for a manifest that names none: the lowest pack that gives one
   journalKeepDays?: number; // the term of the archive of the journal: the longest that a pack names
   connectorEnv: Record<string, string[]>; // read connector -> its environment variables, from the organization pack
 };
@@ -101,7 +103,7 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 // Variables that decide what a script runs and where: a pack does not set them.
 const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP'];
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'defaults'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -285,6 +287,11 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   if (value.rules !== undefined) {
     if (!Array.isArray(value.rules)) errors.push({ code: 'not_array', path: 'rules' });
     else settings.rules = packRules(errors, value.rules);
+  }
+  const defaults = section(errors, value.defaults, 'defaults', ['level']);
+  if (defaults !== null) {
+    if (defaults.level !== undefined && !inList(LEVELS, defaults.level)) errors.push({ code: 'not_in_list', path: 'defaults.level' });
+    else settings.defaults = defaults.level === undefined ? {} : { level: defaults.level };
   }
   const journal = section(errors, value.journal, 'journal', ['keep_days']);
   if (journal !== null) {
@@ -497,6 +504,9 @@ function against(context: PackContext, allScripts: Set<string>, pack: LoadedPack
       if (!upper.includes(item)) errors.push({ code, path: `${at}[${i}]` });
     });
   };
+  // The human chooses a level among those that the levels above allow.
+  const given = s.defaults?.level;
+  if (given !== undefined && context.maxLevel !== undefined && LEVELS.indexOf(given) > LEVELS.indexOf(context.maxLevel)) errors.push({ code: 'widens', path: 'defaults.level' });
   if (pack.level !== 'organization') {
     // Connectors come from the organization. Without it a lower level has nothing to narrow.
     within(s.connectors?.read, context.readConnectors ?? [], 'connectors.read', 'widens');
@@ -536,6 +546,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
     if (list !== undefined) m.gate[key] = [...(m.gate[key] ?? []), ...list.filter((x) => !(m.gate[key] ?? []).includes(x))];
   }
   if (s.gate?.forms !== undefined) m.gate.forms = [...(m.gate.forms ?? []), ...s.gate.forms];
+  if (s.defaults?.level !== undefined) m.defaultLevel = s.defaults.level;
   const keep = s.journal?.keep_days;
   if (keep !== undefined && (m.journalKeepDays === undefined || keep > m.journalKeepDays)) m.journalKeepDays = keep;
   const veto = s.memory?.veto_days;

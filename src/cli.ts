@@ -7,6 +7,8 @@
 //   reins finish <task>                  ends the publication of an accepted result, closes the task
 //   reins stop <task>                    the human stops a task in any open state
 //   reins tasks                          the tasks that are not closed
+//   reins tick                           opens the tasks of the scenarios whose schedule came
+//   reins fire <event> [name=value]      opens the tasks of the scenarios that wait for this event
 //   reins queue [approve|reject <id>]    the actions that a rule deferred; the human answers
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
@@ -24,6 +26,7 @@ import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
 import { sweep } from './core/sweep.ts';
+import { fire, tick } from './core/triggers.ts';
 import { listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { eight, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
@@ -104,6 +107,8 @@ function scenarios(rt: Runtime): Out {
       const row: Out = { name: s.name, title: s.manifest.title, level: s.level };
       if (s.manifest.description !== undefined) row.description = s.manifest.description;
       row.inputs = s.manifest.trigger.inputs ?? [];
+      // What starts the scenario: a command, a schedule or an event.
+      row.trigger = { kind: s.manifest.trigger.kind, ...(s.manifest.trigger.value !== undefined ? { value: s.manifest.trigger.value } : {}) };
       return row;
     }),
     rejected: rt.merged.rejected,
@@ -206,6 +211,17 @@ function main(args: string[]): Out {
     return { ok: true, until: pause(runtime(), Number(first)) };
   }
   if (command === 'sweep' && first === undefined) return { ok: true, closed: sweep(runtime()) };
+  // Triggers without a human. A timer of the system runs `tick`; a system that saw an event runs `fire`.
+  if (command === 'tick' && first === undefined) return { ok: true, ...tick(runtime()) };
+  if (command === 'fire' && first !== undefined) {
+    const inputs: Record<string, string> = {};
+    for (const pair of rest) {
+      const at = pair.indexOf('=');
+      if (at < 1) throw new Stop('usage');
+      inputs[pair.slice(0, at)] = pair.slice(at + 1);
+    }
+    return { ok: true, ...fire(runtime(), first, inputs) };
+  }
   if (command === 'craft') {
     const rt = runtime();
     if (first === undefined) {
@@ -320,7 +336,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
 }
 
 let out: Out;

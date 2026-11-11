@@ -158,7 +158,7 @@
   "patch": {
    "trigger": {
     "kind": "schedule",
-    "value": "weekdays-09-00"
+    "value": "weekdays 09:00"
    }
   },
   "errors": []

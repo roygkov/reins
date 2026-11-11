@@ -8,7 +8,7 @@ import path from 'node:path';
 import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
-import { validateManifest, type Manifest } from '../contracts/manifest.ts';
+import { LEVELS, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
 import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
 import { patchSession } from './sessions.ts';
@@ -154,6 +154,14 @@ function commit(rt: Runtime, s: Step, sub?: { role: string; parent: string }): S
   return s;
 }
 
+// The level of the model for a manifest that names none: the level that the lowest pack gives,
+// never above the limit of the packs. No pack names one: the middle level.
+function defaultLevel(rt: Runtime): Level {
+  const level = rt.merged.defaultLevel ?? 'medium';
+  const max = rt.merged.context.maxLevel;
+  return max !== undefined && LEVELS.indexOf(level) > LEVELS.indexOf(max) ? max : level;
+}
+
 // Opens a task of a scenario by its name. The trigger is refused before any task exists when
 // the scenario is unknown or disabled or the inputs do not fit.
 export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { session?: string } = {}): Opened {
@@ -165,6 +173,7 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   const made = newScenarioTask(newId(), manifest, { ...inputs });
   if ('errors' in made) return { ok: false, error: 'bad_inputs', details: made.errors };
   if (scenario.instructions !== undefined) made.task.instructions = scenario.instructions;
+  made.task.level ??= defaultLevel(rt);
   hold(rt, made.task, opts.session);
   commit(rt, { task: made.task, rows: made.rows });
   return { ok: true, ...prepareTask(rt, made.task) };
@@ -274,6 +283,8 @@ export function proposeContract(rt: Runtime, value: unknown, opts: { session?: s
   // The proposal knows its session, but it is not the current task of the session yet: a
   // proposal that the human refuses must not suspend the task before it.
   if (opts.session !== undefined) made.task.session = opts.session;
+  // A contract without a level takes the level of the packs, as a scenario does.
+  made.task.level ??= defaultLevel(rt);
   commit(rt, { task: made.task, rows: made.rows });
   return { ok: true, task: made.task };
 }
@@ -299,7 +310,8 @@ export function raiseLevel(rt: Runtime, id: string): { task: Task } | { error: '
     const task = loadTask(rt, id);
     if (task === null) return 'unknown_task' as const;
     const to = task.manifest?.model.raise_to;
-    if (task.state !== 'executing' || to === undefined || task.raised === true || to === task.level) return 'not_allowed' as const;
+    // A raise goes up: a level that is not above the level of the task is no raise.
+    if (task.state !== 'executing' || to === undefined || task.raised === true || LEVELS.indexOf(to) <= LEVELS.indexOf(task.level ?? 'medium')) return 'not_allowed' as const;
     const next: Task = { ...task, level: to, raised: true };
     writeAtomic(taskFile(rt, id), next);
     const row: RowInput = { kind: 'executor.level_raised', project: rt.project, task: id, level: to };

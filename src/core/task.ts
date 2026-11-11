@@ -110,7 +110,7 @@ export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs):
     envelope: grantsOf(manifest, inputs),
     use: { confirmed: [], used: {} },
     returns: 0,
-    level: manifest.model.level,
+    ...(manifest.model.level !== undefined ? { level: manifest.model.level } : {}),
   };
   return { task, rows: [{ kind: 'task.opened' }, { kind: 'task.kind_decided', data: { kind: 'scenario', reason: 'scenario_name' } }] };
 }
@@ -120,7 +120,7 @@ export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs):
 export function newContractTask(id: string, manifest: Manifest): { task: Task; rows: RowDraft[] } {
   const task: Task = {
     id, kind: 'contract', state: 'waiting_human', waiting: 'contract', scenario: manifest.name, version: manifest.version ?? 1,
-    manifest, inputs: {}, envelope: grantsOf(manifest, {}), use: { confirmed: [], used: {} }, returns: 0, level: manifest.model.level,
+    manifest, inputs: {}, envelope: grantsOf(manifest, {}), use: { confirmed: [], used: {} }, returns: 0, ...(manifest.model.level !== undefined ? { level: manifest.model.level } : {}),
   };
   return {
     task,
