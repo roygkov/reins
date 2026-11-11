@@ -4,6 +4,7 @@
 // Specification: docs/spec/harness-client, pages 1, 2 and 4.
 
 import { afterAction, beforeAction, type ClientTools, type ToolCall } from './before.ts';
+import { noteCost } from './cost.ts';
 import { executorReported, executorStarted } from './executors.ts';
 import { agentStopped, beforeCompaction, humanRequest, sessionEnd, sessionStart, type SessionEvent } from './session.ts';
 import { isObj } from '../contracts/shape.ts';
@@ -48,7 +49,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       return { outcome: r.outcome, rule: r.rule, task: r.task };
     }
     case 'executor_report':
-      return executorReported(rt, { cwd: head.cwd, ...session, ...(typeof value.role === 'string' ? { role: value.role } : {}), ...(typeof value.size === 'number' ? { size: value.size } : {}) });
+      return executorReported(rt, { cwd: head.cwd, ...session, ...(typeof value.role === 'string' ? { role: value.role } : {}), ...(typeof value.size === 'number' ? { size: value.size } : {}), ...(typeof value.report === 'string' ? { report: value.report } : {}) });
     case 'before':
     case 'after': {
       if (typeof value.tool !== 'string' || value.tool === '' || !isObj(value.input)) return head.event === 'before' ? UNREADABLE : {};
@@ -57,6 +58,8 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       if (value.headless === true) call.headless = true;
       if (head.event === 'after') {
         afterAction(rt, call, tools, value.asked !== false);
+        // What the model spent since the event before, when the client knows it.
+        if (typeof value.tokens === 'number') noteCost(rt, { ...session, tokens: value.tokens });
         return {};
       }
       const r = beforeAction(rt, call, tools);

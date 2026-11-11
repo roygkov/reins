@@ -45,7 +45,7 @@ export type Origin = 'agent' | 'human' | 'harness';
 const ALLOWED: Record<Origin, readonly TaskEvent['type'][]> = {
   agent: ['report', 'ask', 'finish'],
   human: ['human', 'finish'],
-  harness: ['prepared', 'collect_failed', 'check', 'expire', 'invalidate'],
+  harness: ['prepared', 'collect_failed', 'check', 'expire', 'invalidate', 'limit', 'scope'],
 };
 
 export type Opened =
@@ -362,7 +362,15 @@ export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Or
     if (coreChecks(task) && (event.type === 'report' || event.type === 'check')) return 'not_allowed' as const;
     // The approval of a contract starts a preparation: only `approveContract` does both.
     if (task.waiting === 'contract' && event.type === 'human' && event.decision === 'accept') return 'not_allowed' as const;
-    return commit(rt, step(task, event));
+    const s = step(task, event);
+    if (s.error === undefined && event.type === 'human' && event.decision === 'return') {
+      // The human lets a stopped task go on: one more budget of the size of its limit, or the
+      // work past the contract.
+      const limit = task.manifest?.model.token_limit ?? rt.merged.context.maxTokens;
+      if (task.waiting === 'limit' && limit !== undefined) s.task.budget = Math.max(task.budget ?? limit, task.cost?.tokens ?? 0) + limit; // on top of what the task spent while it waited
+      if (task.waiting === 'scope') s.task.widened = true;
+    }
+    return commit(rt, s);
   });
   if (r === 'busy') return { error: 'busy' };
   if (r === 'not_allowed') return { error: 'not_allowed' };

@@ -7,12 +7,14 @@
 // the free task of a session changes at every request, and an executor that is still running
 // must keep its place and its parent.
 
-import { loadTask, type Runtime } from '../core/runtime.ts';
+import { checkCitations } from '../check/citations.ts';
+import { loadTask, readCollected, type Runtime } from '../core/runtime.ts';
 import { currentScenario, withSession } from '../core/sessions.ts';
 import type { Task } from '../core/task.ts';
 import { sessionTask } from './session.ts';
 
-export type ExecutorEvent = { session?: string; cwd: string; role?: string; size?: number };
+// `report`: the text of the report of a subordinate, when the client gives it.
+export type ExecutorEvent = { session?: string; cwd: string; role?: string; size?: number; report?: string };
 export type ExecutorReply = { outcome: 'allow' | 'deny'; rule: string; task: string };
 
 const STALE_MS = 60 * 60 * 1000; // an executor that did not report for this long has no place any more
@@ -64,7 +66,7 @@ export function executorStarted(rt: Runtime, e: ExecutorEvent, now: number = Dat
 
 // The subordinate ended. The place that it took is free again, and the report is written to the
 // task that it started under. A report that names no running role frees nothing.
-export function executorReported(rt: Runtime, e: ExecutorEvent, now: number = Date.now()): { task?: string } {
+export function executorReported(rt: Runtime, e: ExecutorEvent, now: number = Date.now()): { task?: string; judged?: 'PASS' | 'FAIL' } {
   const role = e.role === undefined ? undefined : roleOf(e.role);
   const ended = withSession(rt, e.session, (file) => {
     // An executor that is too old has no place any more: the report is of the newest one that runs.
@@ -74,6 +76,21 @@ export function executorReported(rt: Runtime, e: ExecutorEvent, now: number = Da
     return { next: { ...file, executors: running.filter((_, i) => i !== at) }, result: running[at] };
   });
   if (ended === undefined) return {};
-  row(rt, 'executor.report_received', loadTask(rt, ended.task), ended.task, ended.role, e.session, e.size === undefined ? undefined : { size: e.size });
-  return { task: ended.task };
+  const parent = loadTask(rt, ended.task);
+  row(rt, 'executor.report_received', parent, ended.task, ended.role, e.session, e.size === undefined ? undefined : { size: e.size });
+  // The report is a claim. Where the task has a source, the code judges the citations of the
+  // report against it, as it judges the report of the task itself. Without a source or without
+  // the text nothing is judged.
+  const done = parent?.manifest?.done;
+  const root = done?.kind === 'citations' && done.source !== undefined ? readCollected(rt, ended.task)?.[done.source] : undefined;
+  if (e.report === undefined || parent === null || typeof root !== 'string') return { task: ended.task };
+  const answer = checkCitations(e.report, { root, ...(parent.manifest?.output.fields !== undefined ? { fields: parent.manifest.output.fields } : {}) });
+  if (answer.result === 'none') return { task: ended.task };
+  rt.journal.write({
+    kind: 'executor.report_judged', project: rt.project, task: ended.task, parent: ended.task, executor: 'sub', role: ended.role,
+    ...(e.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(e.session) ? { session: e.session } : {}),
+    ...(parent.scenario !== undefined ? { scenario: parent.scenario, scenario_v: parent.version ?? 1 } : {}),
+    data: { result: answer.result },
+  });
+  return { task: ended.task, judged: answer.result };
 }

@@ -9,6 +9,8 @@
 import fs from 'node:fs';
 import { afterAction, beforeAction, type ClientTools, type Reply, type ToolCall } from '../../../src/client/before.ts';
 import { loadRuntime } from '../../../src/client/config.ts';
+import { noteCost } from '../../../src/client/cost.ts';
+import { withSession } from '../../../src/core/sessions.ts';
 import { executorReported, executorStarted } from '../../../src/client/executors.ts';
 import { agentStopped, beforeCompaction, humanRequest, sessionEnd, sessionStart, type SessionEvent } from '../../../src/client/session.ts';
 import { isObj } from '../../../src/contracts/shape.ts';
@@ -28,6 +30,7 @@ function say(decision: 'allow' | 'ask' | 'deny', reason: string): void {
 
 // The fields of the hook input that the adapter relies on, checked at every event.
 let skipsQuestions = false; // the permission mode of the client that shows no question
+let transcript: string | undefined; // the file where the client keeps the session, with what the model spent
 
 function readEvent(): ToolCall | null {
   let value: unknown;
@@ -41,6 +44,7 @@ function readEvent(): ToolCall | null {
   // The modes of the client where the human answers a question. In the other modes (`auto`,
   // `dontAsk`, `bypassPermissions`) the documentation does not say that "ask" shows a question.
   skipsQuestions = typeof value.permission_mode === 'string' && !['default', 'acceptEdits', 'plan'].includes(value.permission_mode);
+  transcript = typeof value.transcript_path === 'string' && value.transcript_path.startsWith('/') ? value.transcript_path : undefined;
   const call: ToolCall = { cwd: value.cwd, tool: value.tool_name, input: value.tool_input };
   if (typeof value.session_id === 'string' && value.session_id !== '') call.session = value.session_id;
   // A call of a subordinate executor carries its identifier and its type.
@@ -108,13 +112,61 @@ function pre(): void {
   else if (r.envelope === 'applied') say('allow', reason(r));
 }
 
+// What the model spent since the last look: the new lines of the transcript of the session. A
+// line of the model carries its usage; the tokens that were read from the cache are not counted.
+function spent(rt: Runtime, session: string | undefined): void {
+  if (transcript === undefined) return;
+  const file = transcript;
+  // The part of the file that this look counts is taken under the lock of the session file: two
+  // hooks that run together never count the same lines.
+  const part = withSession(rt, session, (now) => {
+    const size = fs.statSync(file).size;
+    // Another file, or a file that became shorter: the count starts from its beginning.
+    const from = now.costFile === file && (now.costMark ?? 0) <= size ? (now.costMark ?? 0) : 0;
+    if (size <= from) return { next: null, result: null };
+    const fd = fs.openSync(file, 'r');
+    const chunk = Buffer.alloc(Math.min(size - from, 8 * 1024 * 1024));
+    fs.readSync(fd, chunk, 0, chunk.length, from);
+    fs.closeSync(fd);
+    // Only whole lines: a line that the client still writes waits for the next look. A part
+    // without an end of a line is one line that is too long: it is skipped.
+    const last = chunk.lastIndexOf(10);
+    const end = last < 0 ? (chunk.length === 8 * 1024 * 1024 ? chunk.length - 1 : -1) : last;
+    if (end < 0) return { next: null, result: null };
+    return { next: { ...now, costFile: file, costMark: from + end + 1 }, result: chunk.subarray(0, end) };
+  });
+  if (part === null) return;
+  const buffer = part;
+  const end = buffer.length;
+  let tokens = 0;
+  let last: unknown;
+  for (const line of buffer.subarray(0, end).toString('utf8').split('\n')) {
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const message = isObj(value) && isObj(value.message) ? value.message : null;
+    const usage = message !== null && isObj(message.usage) ? message.usage : null;
+    if (message === null || usage === null) continue;
+    // One answer of the model can stand in several lines: it is counted once.
+    if (message.id !== undefined && message.id === last) continue;
+    last = message.id;
+    for (const key of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens']) if (typeof usage[key] === 'number') tokens += usage[key];
+  }
+  noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens });
+}
+
 function post(): void {
   try {
     const call = readEvent();
     if (call === null) return;
     const rt = runtime(call.cwd);
     // In the mode that skips permission questions the human saw no question: no approval.
-    if (rt !== null) afterAction(rt, call, TOOLS, !skipsQuestions);
+    if (rt === null) return;
+    afterAction(rt, call, TOOLS, !skipsQuestions);
+    spent(rt, call.session);
   } catch {
     // "after" never blocks the client
   }
@@ -144,7 +196,9 @@ function session(mode: string): void {
     else if (mode === 'pre-compact') beforeCompaction(rt, e);
     else if (mode === 'subagent-stop') {
       const role = typeof value.agent_type === 'string' ? value.agent_type : undefined;
-      executorReported(rt, { cwd: e.cwd, ...(e.session !== undefined ? { session: e.session } : {}), ...(role !== undefined ? { role } : {}) });
+      // The last words of the subordinate are its report, when the client gives them.
+      const report = typeof value.last_assistant_message === 'string' && value.last_assistant_message !== '' ? value.last_assistant_message : undefined;
+      executorReported(rt, { cwd: e.cwd, ...(e.session !== undefined ? { session: e.session } : {}), ...(role !== undefined ? { role } : {}), ...(report !== undefined ? { report } : {}) });
     }
   } catch {
     // no output: the client goes on

@@ -195,8 +195,24 @@ function main(args: string[]): Out {
   // The word of the human: the contract is approved and the work starts.
   if (command === 'approve' && first !== undefined && rest.length === 0) {
     const rt = runtime();
+    // The approval of the human: of a contract, or of a result that waits for it.
+    const waits = loadTask(rt, first);
+    if (waits !== null && waits.kind !== 'contract' || waits?.waiting === 'approval' || waits?.waiting === 'check') {
+      const accepted = applyEvent(rt, first, { type: 'human', decision: 'accept' }, 'human');
+      if (!('task' in accepted)) throw new Stop(accepted.error);
+      if (accepted.error !== undefined) throw new Stop(accepted.error, { state: accepted.task.state });
+      return view(rt, accepted.task);
+    }
     const r = approveContract(rt, first);
     if ('error' in r) throw new Stop(r.error);
+    return view(rt, r.task);
+  }
+  // The human gives a task that waits one more try: after a report, a limit, or the edge of a contract.
+  if (command === 'retry' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    const r = applyEvent(rt, first, { type: 'human', decision: 'return' }, 'human');
+    if (!('task' in r)) throw new Stop(r.error);
+    if (r.error !== undefined) throw new Stop(r.error, { state: r.task.state });
     return view(rt, r.task);
   }
   if (command === 'raise' && first !== undefined && rest.length === 0) {
@@ -336,7 +352,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
 }
 
 let out: Out;

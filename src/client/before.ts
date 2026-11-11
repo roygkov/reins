@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
-import { confirm, decideAction, loadTask, verifyWork, type Runtime } from '../core/runtime.ts';
+import { applyEvent, confirm, decideAction, loadTask, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, readSession } from '../core/sessions.ts';
@@ -208,7 +208,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|approve|memory\s+(veto|decide|restore|import)|craft\s+(accept|reject)|queue\s+(approve|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|approve|memory\s+(veto|decide|restore|import)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     if (shell.result?.decision !== 'deny') {
       // The parse of the command says which places it changes: a change of the state, of the memory
       // or of the config is refused, as for a file tool. The match of the text is the second barrier.
@@ -357,6 +357,20 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
       }
       return queued(rt, call, action, read.command, reply(decision, { task: id, grant: key }));
     }
+  }
+  // A contract does not change after its approval. This holds for a write of a tool and for a
+  // shell command that the gate reads as a write. A contract task that needs a write that the
+  // contract does not name stops: the human gives a new contract, lets it go on, or ends it.
+  const held = currentScenario(rt, call.session);
+  const contract = held === undefined ? null : loadTask(rt, held);
+  if (action.kind === 'write' && contract !== null && contract.kind === 'contract' && contract.session === call.session && contract.state === 'executing' && contract.widened !== true) {
+    applyEvent(rt, contract.id, { type: 'scope' }, 'harness');
+    record(rt, call, [
+      { kind: 'policy.decision', data: { outcome: 'deny', action_kind: action.kind, env: action.env.name } },
+      { kind: 'policy.basis', data: { layer: 'core', rule: 'contract.scope' } },
+    ]);
+    // No envelope names this write: the reply names no task.
+    return { outcome: 'deny', rule: 'contract.scope', layer: 'core', envelope: 'none' };
   }
   const decision = decide({ action, layers });
   record(rt, call, [

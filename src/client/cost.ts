@@ -1,0 +1,43 @@
+// What a task spends. A client reports the tokens that the model used; the core adds them to the
+// task of the session and stops a task that went past its limit. The limit of a task is the
+// limit of its manifest, else the limit of the packs. A free task has no limit.
+// Specification: docs/spec/harness-core, page 4, rule 4; page 5, rule 4.
+
+import { applyEvent, loadTask, mutateTask, type Runtime } from '../core/runtime.ts';
+import { currentScenario } from '../core/sessions.ts';
+import type { RowInput } from '../journal/writer.ts';
+import { sessionTask } from './session.ts';
+
+export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number };
+export type CostReply = { task?: string; tokens?: number; over?: boolean };
+
+// The limit of tokens of a task now: what the human gave on top of the first limit counts.
+export function tokenLimit(rt: Runtime, id: string): number | undefined {
+  const task = loadTask(rt, id);
+  if (task === null || task.manifest === undefined) return undefined;
+  return task.budget ?? task.manifest.model.token_limit ?? rt.merged.context.maxTokens;
+}
+
+export function noteCost(rt: Runtime, e: CostEvent): CostReply {
+  // The task that spends: the scenario task that the session holds while it is open, else the free task.
+  const held = currentScenario(rt, e.session);
+  const scenario = held === undefined ? null : loadTask(rt, held);
+  const id = scenario !== null && scenario.session === e.session && scenario.state !== 'closed' && scenario.state !== 'skipped' ? scenario.id : sessionTask(rt, e.session);
+  const tokens = Number.isFinite(e.tokens) && e.tokens > 0 ? Math.round(e.tokens) : 0;
+  if (tokens === 0) return { task: id, tokens: loadTask(rt, id)?.cost?.tokens ?? 0, over: false };
+  const task = mutateTask(rt, id, (t) => ({ ...t, cost: { tokens: (t.cost?.tokens ?? 0) + tokens } }));
+  if (task === null) return {};
+  const row: RowInput = { kind: 'executor.cost', project: rt.project, task: id, executor: 'main', data: { tokens, ms: e.ms ?? 0, calls: e.calls ?? 1 } };
+  if (e.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(e.session)) row.session = e.session;
+  if (task.scenario !== undefined) {
+    row.scenario = task.scenario;
+    row.scenario_v = task.version ?? 1;
+  }
+  rt.journal.write(row);
+  const limit = tokenLimit(rt, id);
+  const total = task.cost?.tokens ?? tokens;
+  const over = limit !== undefined && total > limit;
+  // A task past its limit does no more work until the human says so.
+  if (over && task.state === 'executing') applyEvent(rt, id, { type: 'limit' }, 'harness');
+  return { task: id, tokens: total, over };
+}

@@ -14,7 +14,9 @@ export const TASK_STATES = ['preparing', 'executing', 'checking', 'waiting_human
 export type TaskState = (typeof TASK_STATES)[number];
 // Why a task waits: the gate asked, the check failed past the limit, or the result needs an approval.
 // contract: the task has a contract that the human has not approved yet.
-export type WaitReason = 'gate' | 'check' | 'approval' | 'contract';
+// limit: the task spent more tokens than its limit. scope: a contract task needs a write that
+// its contract does not name.
+export type WaitReason = 'gate' | 'check' | 'approval' | 'contract' | 'limit' | 'scope';
 export type Inputs = Record<string, string | number>;
 
 export type Task = {
@@ -35,6 +37,9 @@ export type Task = {
   level?: Level;
   label?: ResultLabel;
   work?: string; // the fingerprint of the work that the accepted result holds for
+  cost?: { tokens: number }; // what the model spent on the task, as the client reported it
+  budget?: number; // the limit of tokens after the human gave more
+  widened?: boolean; // the human let a contract task go on past its contract
 };
 
 export type TaskEvent =
@@ -44,7 +49,9 @@ export type TaskEvent =
   // `detail`: counts and a reason code of the check for the journal, never text.
   // `work`: the fingerprint of the work that the check saw.
   | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string }
-  | { type: 'invalidate' } // the work changed after the check: the answer does not hold any more
+  | { type: 'invalidate' }
+  | { type: 'limit' } // the task went past its limit of tokens
+  | { type: 'scope' } // a contract task needs a write that its contract does not name // the work changed after the check: the answer does not hold any more
   | { type: 'ask' }
   | { type: 'human'; decision: 'answered' | 'accept' | 'return' | 'stop' }
   | { type: 'finish' } // the publication is over: nothing more will be written
@@ -207,6 +214,12 @@ export function step(task: Task, event: TaskEvent): Step {
       if (task.state !== 'executing') return refuse(task);
       return { task: { ...task, state: 'waiting_human', waiting: 'gate' }, rows: [{ kind: 'task.waiting_human', data: { reason: 'gate' } }] };
     }
+    case 'limit':
+    case 'scope': {
+      // The task does no more work until the human decides: one more budget, or the end.
+      if (task.state !== 'executing') return refuse(task);
+      return { task: { ...task, state: 'waiting_human', waiting: event.type }, rows: [{ kind: 'task.waiting_human', data: { reason: event.type } }] };
+    }
     case 'invalidate': {
       // An accepted result holds for the work that the check saw. The work is not that any more:
       // what would be published now was not checked.
@@ -236,6 +249,12 @@ export function step(task: Task, event: TaskEvent): Step {
         if (event.decision !== 'answered') return refuse(task);
         const { waiting: _, ...rest } = task;
         return { task: { ...rest, state: 'executing' }, rows: [decided] };
+      }
+      // A task that stopped at a limit or at the edge of its contract has no result to accept:
+      // the human lets it go on, or stops it.
+      if (task.waiting === 'limit' || task.waiting === 'scope') {
+        if (event.decision !== 'return') return refuse(task);
+        return back(task, [decided], 'human', false);
       }
       if (event.decision === 'accept') return accept(task, 'approved_by_human', [decided]);
       // One more try: after a human check it counts as a send-back, after the limit it does not.

@@ -87,7 +87,8 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'task.prepared': { outputs: 'number', bytes: 'number' },
   'task.report_submitted': { size: 'number' },
   'task.returned': { n: 'number', reason: ['check_fail', 'human'] },
-  'task.waiting_human': { reason: ['gate', 'check', 'approval', 'contract'] },
+  'task.waiting_human': { reason: ['gate', 'check', 'approval', 'contract', 'limit', 'scope'] },
+  'executor.report_judged': { result: CHECK_RESULTS },
   // answered: the human said "yes" to a question about one action. confirm: the one approval of a task.
   'task.human_decision': { decision: ['answered', 'accept', 'return', 'stop', 'confirm'] },
   'policy.envelope_opened': { grants: 'number' },
