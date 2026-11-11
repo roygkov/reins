@@ -41,6 +41,8 @@ export type MemoryRecord = {
   history: { at: string; state: RecordState }[];
   uses: number; // how many reports cited the record; from the working state
   last_use?: string; // the time of the last report that cited the record
+  scope?: 'common'; // the record is for every project, not only for the project that wrote it
+  wrong?: number; // how many times the human said "this was wrong"
 };
 
 export type NewRecord = {
@@ -58,7 +60,7 @@ const MAX_TEXT = 2000;
 const MAX_PATHS = 20;
 const ID = /^m[0-9a-f]{10}$/;
 const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 'vetoed'];
-const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes'] as const;
+const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong'] as const;
 const ENCODED = ['paths', 'anchor', 'because', 'rejected', 'revisit', 'source', 'history'] as const;
 
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
@@ -107,6 +109,12 @@ function parse(text: string): Omit<MemoryRecord, 'uses'> | null {
   if (typeof id !== 'string' || !ID.test(id) || typeof type !== 'string' || !(RECORD_TYPES as readonly string[]).includes(type)) return null;
   if (typeof state !== 'string' || typeof project !== 'string' || typeof created !== 'string' || (by !== 'agent' && by !== 'human')) return null;
   if (fields.paths !== undefined && !Array.isArray(fields.paths)) return null;
+  if (fields.scope !== undefined && fields.scope !== 'common') delete fields.scope;
+  if (fields.wrong !== undefined) {
+    const wrong = Number(fields.wrong);
+    if (Number.isInteger(wrong) && wrong > 0) fields.wrong = wrong;
+    else delete fields.wrong;
+  }
   const body = lines.slice(end + 1).join('\n').replace(/\n+$/, '');
   return { ...(fields as object), paths: (fields.paths as string[] | undefined) ?? [], history: Array.isArray(fields.history) ? fields.history : [], text: body } as Omit<MemoryRecord, 'uses'>;
 }
@@ -292,6 +300,8 @@ export function restoreRecord(rt: Runtime, id: string, now: number = Date.now())
   if (state !== 'vetoed' && state !== 'stale') return false;
   const next = { ...record, state: 'active' as RecordState, verified: new Date(now).toISOString() };
   delete next.veto_until;
+  // The human says that the record holds: the marks "this was wrong" are gone.
+  delete next.wrong;
   if (next.anchor !== undefined) {
     const fp = fingerprint(next.anchor.root, next.anchor.path);
     // The place is gone and the human says that the record holds: it is no longer tied to the place.
@@ -309,18 +319,68 @@ const about = (r: MemoryRecord, paths: string[]): boolean =>
 
 // The active records of a project about these places. A record is about a place when the place
 // ends with a path of the record or lies under it. A record without paths is about the whole project.
-export function findRecords(rt: Runtime, query: { paths: string[]; project?: string }, now: number = Date.now()): MemoryRecord[] {
+// `all`: every record of the project, whatever its place. A record that the human shared is a
+// record of every project.
+// `silent`: the caller writes the read to the journal itself, with the count that the agent got.
+export function findRecords(rt: Runtime, query: { paths: string[]; project?: string; all?: boolean; silent?: boolean }, now: number = Date.now()): MemoryRecord[] {
   const project = query.project ?? rt.project;
-  const found = listRecords(rt, now).filter((r) => r.state === 'active' && r.project === project && about(r, query.paths));
+  const found = listRecords(rt, now).filter((r) => r.state === 'active' && (r.project === project || r.scope === 'common') && (query.all === true || about(r, query.paths)));
   // A read that found nothing is no event: only a read that gave records is written down.
-  if (found.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: found.length } });
+  if (found.length > 0 && query.silent !== true) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: found.length } });
   return found;
+}
+
+// The order of the records for the agent: a record that the human marked as wrong goes after the
+// others, then the most cited first, then the newest.
+const byWeight = (a: MemoryRecord, b: MemoryRecord): number =>
+  (a.wrong ?? 0) - (b.wrong ?? 0) || b.uses - a.uses || b.created.localeCompare(a.created) || a.id.localeCompare(b.id);
+
+// The records of the project for the start of a session: one line for a record, within a size
+// limit. `more`: how many records did not fit.
+export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Date.now()): { lines: string[]; more: number } {
+  const found = findRecords(rt, { paths: [], all: true, silent: true }, now).sort(byWeight);
+  const lines: string[] = [];
+  let size = 0;
+  for (const r of found) {
+    const where = [r.type, ...(r.paths[0] !== undefined ? [r.paths[0]] : []), ...(r.scope === 'common' ? ['common'] : [])].join(', ');
+    const line = `- ${r.id} (${where}): ${r.text.replace(/\s+/g, ' ').slice(0, 160)}`;
+    if (size + Buffer.byteLength(line) + 1 > maxBytes) break;
+    size += Buffer.byteLength(line) + 1;
+    lines.push(line);
+  }
+  // The journal counts the records that the agent got, not those that did not fit.
+  if (lines.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: lines.length } });
+  return { lines, more: found.length - lines.length };
+}
+
+// The human shares a record: it is a record of every project from now on.
+export function shareRecord(rt: Runtime, id: string, _now: number = Date.now()): boolean {
+  const record = stored(rt).find((r) => r.id === id);
+  if (record === undefined || record.scope === 'common' || record.state === 'vetoed' || record.state === 'replaced') return false;
+  // The term of the record does not start again: a record that nobody cited stays as old as it is.
+  write(rt, { ...record, scope: 'common' });
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: record.state, scope: 'common' } });
+  return true;
+}
+
+const WRONG_LIMIT = 2; // a record that was wrong this many times is out of use
+
+// The human says "this was wrong" about a record. The record loses its place among the others;
+// at the second mark it is out of use. A decision takes no mark: another decision replaces it.
+export function wrongRecord(rt: Runtime, id: string, now: number = Date.now()): boolean {
+  const record = stored(rt).find((r) => r.id === id);
+  if (record === undefined || record.type === 'decision' || at(record, now, readUses(rt)[id]).state !== 'active') return false;
+  const wrong = (record.wrong ?? 0) + 1;
+  const state: RecordState = wrong >= WRONG_LIMIT ? 'stale' : 'active';
+  write(rt, { ...record, wrong, state, ...(state === 'stale' ? { history: [...record.history, { at: new Date(now).toISOString(), state }] } : {}) });
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state, wrong } });
+  return true;
 }
 
 // The records that go into the input of a task: with their ids, the most cited first, then the
 // newest, and only as many as fit the size limit.
 export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes: number }, now: number = Date.now()): { id: string; type: RecordType; text: string }[] {
-  const found = findRecords(rt, { paths: query.paths }, now).sort((a, b) => b.uses - a.uses || b.created.localeCompare(a.created) || a.id.localeCompare(b.id));
+  const found = findRecords(rt, { paths: query.paths }, now).sort(byWeight);
   const out: { id: string; type: RecordType; text: string }[] = [];
   let size = 0;
   for (const r of found) {

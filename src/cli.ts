@@ -30,7 +30,7 @@ import { fire, tick } from './core/triggers.ts';
 import { listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { eight, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
-import { addRecord, brokenRecords, countUses, importRecords, listRecords, recordsForInput, restoreRecord, vetoRecord } from './memory/store.ts';
+import { addRecord, brokenRecords, countUses, importRecords, listRecords, recordsForInput, restoreRecord, shareRecord, vetoRecord, wrongRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
 class Stop extends Error {
@@ -276,6 +276,15 @@ function main(args: string[]): Out {
       if (!vetoRecord(rt, rest[0])) throw new Stop('unknown_record');
       return { ok: true, record: rest[0], state: 'vetoed' };
     }
+    // Words of the human: a record for every project, and "this was wrong".
+    if (first === 'share' && rest.length === 1 && rest[0] !== undefined) {
+      if (!shareRecord(rt, rest[0])) throw new Stop('unknown_record');
+      return { ok: true, record: rest[0], scope: 'common' };
+    }
+    if (first === 'wrong' && rest.length === 1 && rest[0] !== undefined) {
+      if (!wrongRecord(rt, rest[0])) throw new Stop('unknown_record');
+      return { ok: true, record: rest[0], state: listRecords(rt).find((r) => r.id === rest[0])?.state };
+    }
     if (first === 'restore' && rest.length === 1 && rest[0] !== undefined) {
       if (!restoreRecord(rt, rest[0])) throw new Stop('unknown_record');
       return { ok: true, record: rest[0], state: 'active' };
@@ -352,7 +361,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 let out: Out;

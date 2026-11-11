@@ -69,7 +69,9 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   const root = findRoot(cwd);
   const repoPack = root.isRepo ? path.join(root.root, '.reins') : undefined;
   if (config.packs.project === undefined && config.repoPacks && repoPack !== undefined && fs.existsSync(path.join(repoPack, 'pack.json'))) config.packs.project = repoPack;
-  const project = `p${crypto.createHash('sha1').update(cwd).digest('hex').slice(0, 8)}`;
+  // The project is the repository where the client works, whatever directory of it the client
+  // started in. Outside a repository it is the directory itself.
+  const project = `p${crypto.createHash('sha1').update(root.isRepo ? root.root : cwd).digest('hex').slice(0, 8)}`;
   const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file, workDir: cwd };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
   if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;

@@ -66,7 +66,8 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         break;
       case 'memory.record_changed':
         if (data.state === 'vetoed') m.memory.vetoed += 1;
-        else m.memory.written += 1;
+        // A share and a mark "this was wrong" change a record that was written before.
+        else if (data.scope === undefined && data.wrong === undefined) m.memory.written += 1;
         break;
       case 'memory.read':
         m.memory.reads += 1;

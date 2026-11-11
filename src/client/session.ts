@@ -11,7 +11,7 @@ import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, measure, propose } from '../craft/craft.ts';
-import { listRecords } from '../memory/store.ts';
+import { listRecords, recordsForStart } from '../memory/store.ts';
 
 // `capabilities`: what the client can do. `before`: it tells the core before an action.
 // `choice`: it can show the human a question with a choice. Absent: the client can.
@@ -22,6 +22,7 @@ export type ClientLevel = 'full' | 'no_choice' | 'no_before';
 // is no barrier; without a question with a choice the question goes as text.
 export const levelOf = (c: SessionEvent['capabilities']): ClientLevel => (c?.before === false ? 'no_before' : c?.choice === false ? 'no_choice' : 'full');
 
+const START_MEMORY_BYTES = 2000; // the memory records in the context of a session start
 const nameOf = sessionName;
 const fileOf = sessionFile;
 
@@ -112,6 +113,12 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   if (open.length > 0) {
     context.push('Open scenario tasks (read one with `reins input <task>`):');
     for (const t of open) context.push(`- ${t.id}: ${t.scenario ?? ''}, ${t.state}`);
+  }
+  // The memory of the project: what was decided and what was learned, before the agent acts.
+  const memory = recordsForStart(rt, START_MEMORY_BYTES);
+  if (memory.lines.length > 0) {
+    context.push('Memory of this project (cite the id of a record in your report when you use it):', ...memory.lines);
+    if (memory.more > 0) context.push(`${memory.more} more records: \`reins memory\`.`);
   }
   // The records that the harness wrote and that the human can still veto.
   const pending = listRecords(rt).filter((r) => r.state === 'pending' && r.project === rt.project);
