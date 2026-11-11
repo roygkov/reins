@@ -34,6 +34,9 @@ function current(rt: Runtime, session: string | undefined): { id?: string; stale
   return { stale: true };
 }
 
+// The free task that the session holds now, when it is open. Nothing opens here.
+export const heldFreeTask = (rt: Runtime, session: string | undefined): string | undefined => current(rt, session).id;
+
 // The free task of a session: an action outside a scenario belongs to it, so every decision of
 // the policy has a task in the journal. A session without a request event gets one at its first action.
 export function sessionTask(rt: Runtime, session: string | undefined): string {

@@ -16,7 +16,7 @@ import { applyEvent, approveContract, loadTask, openScenario, proposeContract, t
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { noteCost } from '../src/client/cost.ts';
 import { executorReported, executorStarted } from '../src/client/executors.ts';
-import { humanRequest } from '../src/client/session.ts';
+import { agentStopped, humanRequest } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -112,6 +112,22 @@ test('budget: without a limit in the manifest the limit of the packs holds, and 
   assert.deepEqual(noteCost(b.rt, { session: 's2', tokens: 5_000_000 }), { task: free, tokens: 5_000_000, over: false });
   assert.deepEqual(noteCost(b.rt, { session: 's2', tokens: 0 }), { task: free, tokens: 5_000_000, over: false }, 'nothing new is no row');
   assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost' && r.task === free).length, 1);
+});
+
+test('budget: a count of nothing after the end of the request opens no task', () => {
+  const b = box();
+  const free = humanRequest(b.rt, { session: 's3', cwd: b.cwd }).task;
+  agentStopped(b.rt, { session: 's3', cwd: b.cwd });
+  assert.equal(loadTask(b.rt, free)?.state, 'closed');
+  const opened = (): number => readJournal(b.rt.journal.file).filter((r) => r.kind === 'task.opened').length;
+  const before = opened();
+  // The client ends a helper of its own after the turn: it spent nothing that the harness can see.
+  assert.deepEqual(noteCost(b.rt, { session: 's3', tokens: 0 }), {});
+  assert.equal(opened(), before, 'no empty task');
+  // What was spent after the end of the request still needs a task.
+  const late = noteCost(b.rt, { session: 's3', tokens: 50 });
+  assert.equal(late.tokens, 50);
+  assert.equal(opened(), before + 1);
 });
 
 test('budget: the clients report what the model spent', () => {

@@ -6,7 +6,7 @@
 import { applyEvent, loadTask, mutateTask, type Runtime } from '../core/runtime.ts';
 import { currentScenario } from '../core/sessions.ts';
 import type { RowInput } from '../journal/writer.ts';
-import { sessionTask } from './session.ts';
+import { heldFreeTask, sessionTask } from './session.ts';
 
 export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number };
 export type CostReply = { task?: string; tokens?: number; over?: boolean };
@@ -22,9 +22,14 @@ export function noteCost(rt: Runtime, e: CostEvent): CostReply {
   // The task that spends: the scenario task that the session holds while it is open, else the free task.
   const held = currentScenario(rt, e.session);
   const scenario = held === undefined ? null : loadTask(rt, held);
-  const id = scenario !== null && scenario.session === e.session && scenario.state !== 'closed' && scenario.state !== 'skipped' ? scenario.id : sessionTask(rt, e.session);
+  const own = scenario !== null && scenario.session === e.session && scenario.state !== 'closed' && scenario.state !== 'skipped' ? scenario.id : undefined;
   const tokens = Number.isFinite(e.tokens) && e.tokens > 0 ? Math.round(e.tokens) : 0;
-  if (tokens === 0) return { task: id, tokens: loadTask(rt, id)?.cost?.tokens ?? 0, over: false };
+  if (tokens === 0) {
+    // A count of nothing opens no task: the client sends events after the end of a request too.
+    const open = own ?? heldFreeTask(rt, e.session);
+    return open === undefined ? {} : { task: open, tokens: loadTask(rt, open)?.cost?.tokens ?? 0, over: false };
+  }
+  const id = own ?? sessionTask(rt, e.session);
   const task = mutateTask(rt, id, (t) => ({ ...t, cost: { tokens: (t.cost?.tokens ?? 0) + tokens } }));
   if (task === null) return {};
   const row: RowInput = { kind: 'executor.cost', project: rt.project, task: id, executor: 'main', data: { tokens, ms: e.ms ?? 0, calls: e.calls ?? 1 } };
