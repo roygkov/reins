@@ -16,6 +16,8 @@ import { ConfigError, loadRuntime } from './client/config.ts';
 import { taskInput } from './client/input.ts';
 import { applyEvent, loadTask, openScenario, openTasks, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
+import { summarize } from './journal/metrics.ts';
+import { readJournal } from './journal/writer.ts';
 import { addRecord, listRecords, vetoRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
@@ -139,6 +141,18 @@ function main(args: string[]): Out {
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
   }
+  if (command === 'status') {
+    const rt = runtime();
+    const days = first !== undefined && /^[1-9][0-9]{0,2}$/.test(first) ? Number(first) : 7;
+    return {
+      ok: true,
+      days,
+      metrics: summarize(readJournal(rt.journal.file), Date.now() - days * 24 * 60 * 60 * 1000),
+      open_tasks: openTasks(rt).length,
+      packs: rt.merged.packs.map((p) => ({ level: p.level, name: p.name, connected: p.connected, errors: p.errors })),
+      rejected: rt.merged.rejected,
+    };
+  }
   if (command === 'memory') {
     const rt = runtime();
     if (first === undefined) return { ok: true, records: listRecords(rt) };
@@ -188,7 +202,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text>', 'memory veto <id>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text>', 'memory veto <id>'] });
 }
 
 let out: Out;

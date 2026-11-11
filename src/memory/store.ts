@@ -114,10 +114,10 @@ export function vetoRecord(rt: Runtime, id: string): boolean {
 }
 
 // The active records of a project about these places. A record is about a place when the place
-// ends with a path of the record. A record without paths is about the whole project.
+// ends with a path of the record or lies under it. A record without paths is about the whole project.
 export function findRecords(rt: Runtime, query: { paths: string[]; project?: string }, now: number = Date.now()): MemoryRecord[] {
   const project = query.project ?? rt.project;
-  const about = (r: MemoryRecord): boolean => r.paths.length === 0 || r.paths.some((p) => query.paths.some((q) => q === p || q.endsWith(`/${p}`)));
+  const about = (r: MemoryRecord): boolean => r.paths.length === 0 || r.paths.some((p) => query.paths.some((q) => q === p || q.endsWith(`/${p}`) || q.startsWith(`${p}/`) || q.includes(`/${p}/`)));
   const found = listRecords(rt, now).filter((r) => r.state === 'active' && r.project === project && about(r));
   rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: found.length } });
   return found;

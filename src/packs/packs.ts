@@ -31,6 +31,11 @@ export type Scenario = { name: string; level: PackLevel; file: string; manifest:
 // environment; `{field}` in the target is a field of the input of the tool.
 export type ToolRule = { kind: 'read' } | { kind: 'write'; action: string; target: string; env: string };
 
+// A rule of a pack: a layer of the policy. It can only make a decision stricter. It matches a
+// tool name (a `*` at the end is allowed), a write action, an environment, or a part of the text
+// of a shell command; every matcher that the rule gives must hold.
+export type PackRule = { id: string; outcome: 'ask' | 'defer' | 'deny'; tool?: string; action?: string; env?: string; command?: string };
+
 // What one pack says. Absent fields say nothing.
 export type PackSettings = {
   name: string;
@@ -41,6 +46,7 @@ export type PackSettings = {
   checks?: string[];
   memory?: { types?: string[] };
   tools?: Record<string, ToolRule>;
+  rules?: PackRule[];
 };
 
 export type LoadedPack = {
@@ -61,6 +67,7 @@ export type Merged = {
   rejected: Rejected[];
   scriptFiles: Record<string, string>; // the scripts of the connected packs: reference -> file
   tools: Record<string, ToolRule>; // the tools of the connectors, from the organization pack
+  rules: (PackRule & { level: PackLevel })[]; // the rules of all connected packs
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -70,7 +77,7 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -217,7 +224,42 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     else if (!isObj(value.tools)) errors.push({ code: 'not_object', path: 'tools' });
     else settings.tools = toolRules(errors, value.tools, settings.connectors?.write ?? [], settings.envs?.known ?? []);
   }
+  if (value.rules !== undefined) {
+    if (!Array.isArray(value.rules)) errors.push({ code: 'not_array', path: 'rules' });
+    else settings.rules = packRules(errors, value.rules);
+  }
   return { settings: errors.length === 0 ? settings : null, errors };
+}
+
+const RULE_OUTCOMES = ['ask', 'defer', 'deny'];
+const RULE_MATCHERS = ['tool', 'action', 'env', 'command'] as const;
+
+function packRules(errors: PackError[], rules: unknown[]): PackRule[] {
+  const out: PackRule[] = [];
+  const seen = new Set<string>();
+  rules.forEach((rule, i) => {
+    const at = `rules[${i}]`;
+    if (!isObj(rule)) {
+      errors.push({ code: 'not_object', path: at });
+      return;
+    }
+    const before = errors.length;
+    if (typeof rule.id !== 'string' || !NAME.test(rule.id)) errors.push({ code: rule.id === undefined ? 'missing' : 'bad_name', path: `${at}.id` });
+    else if (seen.has(rule.id)) errors.push({ code: 'duplicate', path: `${at}.id` });
+    else seen.add(rule.id);
+    for (const key of Object.keys(rule)) if (key !== 'id' && key !== 'outcome' && !(RULE_MATCHERS as readonly string[]).includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+    // A rule only makes a decision stricter: it cannot allow.
+    if (typeof rule.outcome !== 'string' || !RULE_OUTCOMES.includes(rule.outcome)) errors.push({ code: rule.outcome === undefined ? 'missing' : 'not_in_list', path: `${at}.outcome` });
+    const given = RULE_MATCHERS.filter((key) => rule[key] !== undefined);
+    if (given.length === 0) errors.push({ code: 'missing', path: `${at}.match` });
+    for (const key of given) {
+      const v = rule[key];
+      const ok = typeof v === 'string' && v !== '' && v.length <= 200 && (key === 'tool' ? TOOL_NAME.test(v) : key === 'command' ? !/[\r\n]/.test(v) : NAME.test(v));
+      if (!ok) errors.push({ code: 'bad_name', path: `${at}.${key}` });
+    }
+    if (errors.length === before) out.push(rule as PackRule);
+  });
+  return out;
 }
 
 const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,118}\*?$/;
@@ -369,6 +411,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
     c[key] = list;
   };
   if (s.tools !== undefined) m.tools = s.tools;
+  for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
   narrow('readConnectors', s.connectors?.read);
   narrow('writeActions', s.connectors?.write);
   narrow('memoryTypes', s.memory?.types);
@@ -404,7 +447,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
 
 // Merges packs that are already read, upper level first. Pure except for reading the manifest files.
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {} };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [] };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();

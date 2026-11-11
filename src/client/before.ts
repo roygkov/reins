@@ -127,7 +127,7 @@ function namedInCommand(rt: Runtime, command: string): string | null {
   return null;
 }
 
-type Read = { action: Action; layers: LayerDecision[] } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
+type Read = { action: Action; layers: LayerDecision[]; command?: string } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
 
 // What the call is, in the words of the policy.
 function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
@@ -150,7 +150,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|memory\s+(veto|decide))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
     if (named !== null) return { guard: { outcome: 'ask', rule: named } };
-    return { action: shell.action, layers: shell.layers };
+    return { action: shell.action, layers: shell.layers, command };
   }
   const rule = packRule(rt.merged.tools, call.tool);
   if (rule === undefined) return { action: UNKNOWN, layers: [] };
@@ -164,6 +164,20 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
 
 // The question waits for its answer under the session, the tool and the input of the call: a run
 // of the same call in another session is not the answer.
+
+// The rules of the packs that match this call: one layer decision for each. A rule only adds
+// strictness; the policy takes the strictest of all layers.
+function packLayers(rt: Runtime, call: ToolCall, action: Action, command: string | undefined): LayerDecision[] {
+  const out: LayerDecision[] = [];
+  for (const rule of rt.merged.rules) {
+    if (rule.tool !== undefined && !(rule.tool.endsWith('*') ? call.tool.startsWith(rule.tool.slice(0, -1)) : call.tool === rule.tool)) continue;
+    if (rule.action !== undefined && !(action.kind === 'write' && action.via === 'tool' && action.name === rule.action)) continue;
+    if (rule.env !== undefined && action.env.name !== rule.env) continue;
+    if (rule.command !== undefined && !(command !== undefined && command.includes(rule.command))) continue;
+    out.push({ layer: rule.level, outcome: rule.outcome, rule: rule.id });
+  }
+  return out;
+}
 
 // The task that executes and whose envelope names this write. A grant names one action on one
 // target: the task is found by the grant, not by the session of the client.
@@ -209,7 +223,8 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
     record(rt, call, [{ kind: 'policy.protected_attempt', data: { rule: read.guard.rule, outcome: read.guard.outcome } }]);
     return { outcome: read.guard.outcome, rule: read.guard.rule, layer: 'core', envelope: 'none' };
   }
-  const { action, layers } = read;
+  const { action } = read;
+  const layers = [...read.layers, ...packLayers(rt, call, action, read.command)];
   if (action.via === 'tool' && action.kind === 'write') {
     const key = grantKey(action.name, action.target, action.env.name);
     const id = taskFor(rt, key);
