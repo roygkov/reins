@@ -20,7 +20,7 @@ import { sessionTask } from './session.ts';
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { findRoot, loadConfig, shellAction, type GateConfig } from '../gate/index.ts';
-import type { ToolRule } from '../packs/packs.ts';
+import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '../packs/packs.ts';
 
 // `session`: the session of the client, when the client names it.
 // `sub`: the role of the subordinate executor that makes the call. `headless`: the client runs
@@ -57,6 +57,19 @@ function packRule(tools: Record<string, ToolRule>, name: string): ToolRule | und
     if (best === undefined || pattern.length > best.length) best = pattern;
   }
   return best === undefined ? undefined : tools[best];
+}
+
+// A tool that reads and writes: this call is a read when the field that the pack names is a text
+// that matches the pattern of the pack as a whole. Anything else is the write that the pack names.
+function readsNow(when: ReadWhen | undefined, input: Record<string, unknown>): boolean {
+  if (when === undefined) return false;
+  const value = Object.hasOwn(input, when.field) ? input[when.field] : undefined;
+  if (typeof value !== 'string' || value.length > READ_WHEN_MAX) return false;
+  try {
+    return readWhenPattern(when.pattern).test(value);
+  } catch {
+    return false;
+  }
 }
 
 // The target of a write with the fields of the tool input filled in; null when a field is not
@@ -230,10 +243,13 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
   const rule = packRule(rt.merged.tools, call.tool);
   if (rule === undefined) return { action: UNKNOWN, layers: [] };
   if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV }, layers: [] };
-  const target = fillTarget(rule.target, call.input);
-  if (target === null) return { action: UNKNOWN, layers: [] };
   const known = (rt.merged.context.envs ?? []).includes(rule.env);
   const production = !known || (rt.merged.context.productionEnvs ?? []).includes(rule.env);
+  // A read of a tool that also writes keeps the environment of the tool: a rule of a pack about
+  // that environment still sees the call.
+  if (readsNow(rule.read_when, call.input)) return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: { name: rule.env, known, production } }, layers: [] };
+  const target = fillTarget(rule.target, call.input);
+  if (target === null) return { action: UNKNOWN, layers: [] };
   return { action: { via: 'tool', kind: 'write', name: rule.action, target, env: { name: rule.env, known, production } }, layers: [] };
 }
 

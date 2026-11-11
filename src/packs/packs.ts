@@ -29,7 +29,14 @@ export type Scenario = { name: string; level: PackLevel; file: string; manifest:
 // What a tool of a connector does, by the name that the client gives to the tool. A name can end
 // with `*`. A read tool only reads. A write tool performs a named action on a target in an
 // environment; `{field}` in the target is a field of the input of the tool.
-export type ToolRule = { kind: 'read' } | { kind: 'write'; action: string; target: string; env: string };
+// `read_when`: one tool can read and write (a tool that runs a query). The call is a read when the
+// named field of its input is a text that matches the pattern as a whole. The pattern is the
+// business of the pack: the core only matches.
+export type ReadWhen = { field: string; pattern: string };
+export type ToolRule = { kind: 'read' } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen };
+// The pattern of a pack runs before every call of the tool: a short value bounds the time of a slow pattern.
+export const READ_WHEN_MAX = 4000; // characters of the value that is judged: a longer one is no read
+export const readWhenPattern = (pattern: string): RegExp => new RegExp(`^(?:${pattern})$`, 'is');
 
 // A rule of a pack: a layer of the policy. It can only make a decision stricter. It matches a
 // tool name (a `*` at the end is allowed), a write action, an environment, or a part of the text
@@ -397,7 +404,7 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
       errors.push({ code: rule.kind === undefined ? 'missing' : 'not_in_list', path: `${at}.kind` });
       continue;
     }
-    const allowed = rule.kind === 'read' ? ['kind'] : ['kind', 'action', 'target', 'env'];
+    const allowed = rule.kind === 'read' ? ['kind'] : ['kind', 'action', 'target', 'env', 'read_when'];
     for (const key of Object.keys(rule)) if (!allowed.includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
     if (rule.kind === 'read') {
       out[name] = { kind: 'read' };
@@ -410,9 +417,41 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
     else if (typeof target !== 'string' || !TARGET.test(target)) errors.push({ code: 'bad_name', path: `${at}.target` });
     if (env === undefined) errors.push({ code: 'missing', path: `${at}.env` });
     else if (typeof env !== 'string' || !envs.includes(env)) errors.push({ code: 'not_in_list', path: `${at}.env` });
-    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env };
+    const when = readWhen(errors, rule.read_when, `${at}.read_when`);
+    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env, ...(when !== undefined ? { read_when: when } : {}) };
   }
   return out;
+}
+
+// The condition of a read: a field of the input and a pattern that compiles.
+function readWhen(errors: PackError[], value: unknown, at: string): ReadWhen | undefined {
+  if (value === undefined) return undefined;
+  if (!isObj(value)) {
+    errors.push({ code: 'not_object', path: at });
+    return undefined;
+  }
+  for (const key of Object.keys(value)) if (key !== 'field' && key !== 'pattern') errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+  const { field, pattern } = value;
+  let ok = true;
+  if (typeof field !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(field)) {
+    errors.push({ code: field === undefined ? 'missing' : 'bad_name', path: `${at}.field` });
+    ok = false;
+  }
+  if (typeof pattern !== 'string' || pattern === '' || pattern.length > 500) {
+    errors.push({ code: pattern === undefined ? 'missing' : 'bad_name', path: `${at}.pattern` });
+    ok = false;
+  } else {
+    try {
+      // The pattern must compile alone: a bracket without its pair would close the group that
+      // makes the match whole, and then a part of the pattern would match any text.
+      new RegExp(pattern, 'is');
+      readWhenPattern(pattern);
+    } catch {
+      errors.push({ code: 'bad_name', path: `${at}.pattern` });
+      ok = false;
+    }
+  }
+  return ok ? { field: field as string, pattern: pattern as string } : undefined;
 }
 
 // The scripts of a pack: regular files under collect/ and check/. A symbolic link is skipped,

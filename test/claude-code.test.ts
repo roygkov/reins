@@ -21,6 +21,9 @@ const TOOLS = {
   'mcp__tracker__get_*': { kind: 'read' },
   'mcp__tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' },
   'mcp__tracker__editIssue': { kind: 'write', action: 'comment', target: 'issue/{issueIdOrKey}', env: 'work' },
+  // One tool that reads and writes: the text of the query says which. The pattern is a sample for
+  // the test, not for a pack: it takes `select nextval('s')` and `select * into t2 from t` for reads.
+  'mcp__db__query': { kind: 'write', action: 'comment', target: 'db/main', env: 'work', read_when: { field: 'sql', pattern: '\\s*select\\b[^;]*;?\\s*' } },
 };
 
 type Box = { root: string; config: string; state: string; cwd: string };
@@ -225,6 +228,47 @@ test('claude-code: a pack with a mistake is named at the start of the session an
   // Packs without a mistake are not named.
   const good = box();
   assert.equal(run(CLI, good, ['scenarios'], '').json.not_connected, undefined);
+});
+
+test('claude-code: a tool that reads and writes is a read when its input says so', () => {
+  const b = box();
+  // The whole value must match: a read passes as any read, with no output.
+  assert.equal(pre(b, 'mcp__db__query', { sql: 'SELECT id\nFROM t WHERE a = 1;' }).stdout, '');
+  const ask = (input: unknown): string => pre(b, 'mcp__db__query', input).json?.hookSpecificOutput?.permissionDecisionReason ?? '';
+  assert.match(ask({ sql: 'delete from t' }), /default\.write/);
+  assert.match(ask({ sql: 'select 1; drop table t' }), /default\.write/, 'a read at the start does not make the rest a read');
+  assert.match(ask({ sql: 'x select 1' }), /default\.write/);
+  assert.match(ask({ sql: ['select 1'] }), /default\.write/, 'a value that is no text is no read');
+  assert.match(ask({}), /default\.write/);
+  assert.match(ask({ sql: `select ${'a,'.repeat(20000)} 1` }), /default\.write/, 'a text that is too long is not judged');
+  // A read of a tool that also writes keeps the environment of the tool.
+  const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+  assert.deepEqual(rows.find((r) => r.kind === 'policy.decision' && r.data.action_kind === 'read')?.data, { outcome: 'allow', action_kind: 'read', env: 'work' });
+});
+
+test('claude-code: a condition of a read is checked when the pack is loaded', () => {
+  for (const [bad, at] of [
+    [{ field: 'sql', pattern: '(' }, 'read_when.pattern'],
+    // A bracket without its pair: inside the group of the whole match it would compile and match any text.
+    [{ field: 'sql', pattern: 'select 1)|(?:.*' }, 'read_when.pattern'],
+    [{ field: 'sql', pattern: 'x'.repeat(501) }, 'read_when.pattern'],
+    [{ field: 'a b', pattern: 'x' }, 'read_when.field'],
+    [{ field: 'sql' }, 'read_when.pattern'],
+    [{ field: 'sql', pattern: 'x', more: 1 }, 'read_when.more'],
+    ['select', 'read_when'],
+  ] as const) {
+    const b = box();
+    const file = path.join(b.root, 'packs', 'organization', 'pack.json');
+    const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__db__query': { kind: 'write', action: 'comment', target: 'db/main', env: 'work', read_when: bad } } }));
+    assert.equal(run(CLI, b, ['scenarios'], '').json.not_connected?.[0]?.errors?.[0]?.path, `tools.mcp__db__query.${at}`, JSON.stringify(bad));
+  }
+  // A tool that only reads has no condition.
+  const b = box();
+  const file = path.join(b.root, 'packs', 'organization', 'pack.json');
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__db__get': { kind: 'read', read_when: { field: 'sql', pattern: 'x' } } } }));
+  assert.equal(run(CLI, b, ['scenarios'], '').json.not_connected?.[0]?.errors?.[0]?.path, 'tools.mcp__db__get.read_when');
 });
 
 test('claude-code: a change of the adapter itself asks the human', () => {
