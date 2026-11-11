@@ -175,3 +175,13 @@ test('claude-code: a change of the adapter itself asks the human', () => {
   assert.equal(decision(r), 'ask');
   assert.match(r.json.hookSpecificOutput.permissionDecisionReason, /protect\.harness/);
 });
+
+test('claude-code: in the mode `auto` the human answers a question, and a run of the tool is the approval', () => {
+  const b = box();
+  run(CLI, b, ['open', 'change-review', 'change_id=7'], '');
+  const input = { change: '7', body: 'x' };
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'ask');
+  const auto = JSON.stringify({ session_id: 'abc', cwd: b.cwd, hook_event_name: 'PostToolUse', permission_mode: 'auto', tool_name: 'mcp__tracker__add_comment', tool_input: input });
+  assert.equal(run(HOOK, b, ['post'], auto).stdout, '');
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'allow', 'the grant is confirmed for the task');
+});

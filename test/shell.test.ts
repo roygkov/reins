@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import type { Runtime } from '../src/core/runtime.ts';
+import { collectedDir, type Runtime } from '../src/core/runtime.ts';
+import { sweep } from '../src/core/sweep.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { commandPlaces } from '../src/client/places.ts';
 import { listQueue, resolveQueued } from '../src/core/queue.ts';
@@ -243,4 +244,59 @@ test('shell: on a file system that ignores the case of letters, another case of 
   if (!fs.existsSync(b.rt.stateDir.toUpperCase())) return t.skip('the file system keeps the case of letters apart');
   const r = shell(b, 'echo x > ../STATE/pause.json');
   assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.state']);
+});
+
+// ---- Found in a live client.
+
+test('shell: the copies of collected results lie outside the state: a read of them asks nothing, the state still asks', () => {
+  const b = box();
+  const dir = path.join(collectedDir(b.rt), 't0123456789ab');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'diff.json'), '{}');
+  assert.equal(path.relative(b.rt.stateDir, dir).startsWith('..'), true);
+  for (const command of [`cat ${dir}/diff.json`, `sed -n 1,40p ${dir}/diff.json | head`, `python3 -c "print(len(open('${dir}/diff.json').read()))"`, `ls ${dir}`, `jq . ${dir}/diff.json > /dev/null`]) {
+    assert.equal(shell(b, command).outcome, 'allow', command);
+  }
+  // Every way to name a place of the state asks or is refused, as before the copies moved.
+  const task = path.join(b.rt.stateDir, 'tasks', 't000000000000.json');
+  for (const command of [
+    `cat ${task}`,
+    `python3 -c "open('${task}','w').write('x')"`,
+    `f=${task}; echo x > $f`,
+    `mytool ${task}`,
+    `grep -e. ${b.rt.stateDir}/tasks/'..'/journal.jsonl`,
+    `xargs -a ${b.rt.stateDir}/journal.jsonl ls`,
+    `find ${b.rt.stateDir}/tasks -maxdepth 0 -exec cp /tmp/x {}/t000000000000.json \\;`,
+    `sort -o ${task} ${task}`,
+    `cat ${dir}/../../state/journal.jsonl`,
+  ]) {
+    const r = shell(b, command);
+    assert.deepEqual([r.outcome === 'allow', r.rule], [false, 'protect.state'], command);
+  }
+  assert.deepEqual([shell(b, `echo x > ${task}`).outcome, shell(b, `echo x > ${task}`).rule], ['deny', 'protect.state']);
+});
+
+test('shell: the sweep removes the copies of collected results that are a week old', () => {
+  const b = box();
+  const dir = path.join(collectedDir(b.rt), 't0123456789ab');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'diff.json'), '{}');
+  const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(dir, old, old);
+  fs.mkdirSync(path.join(collectedDir(b.rt), 't0123456789ac'), { recursive: true });
+  sweep(b.rt);
+  assert.deepEqual(fs.readdirSync(collectedDir(b.rt)), ['t0123456789ac']);
+});
+
+test('shell: an answer of the command line about a proposal, a record or a queued action is a success', () => {
+  const b = box({ person: { rules: [{ id: 'later', outcome: 'defer', tool: 'tracker__close' }] } });
+  const id = close(b).queued ?? '';
+  const p = spawnSync(process.execPath, [CLI, 'queue', 'approve', id], { encoding: 'utf8', cwd: b.cwd, env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config } });
+  assert.deepEqual([JSON.parse(p.stdout).state, p.status], ['approved', 0]);
+  const run = (args: string[]) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd: b.cwd, env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config } });
+  run(['memory', 'add', 'pitfall', 'a note', 'task=t000000000000']);
+  run(['memory', 'decide', 'we keep one cache', 'because=two caches went out of step']);
+  const record = JSON.parse(run(['memory']).stdout).records[0].id;
+  assert.deepEqual([JSON.parse(run(['memory', 'veto', record]).stdout).state, run(['memory', 'restore', record]).status], ['vetoed', 0]);
+  assert.equal(run(['memory', 'veto', record]).status, 0);
 });

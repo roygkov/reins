@@ -41,9 +41,10 @@ function readEvent(): ToolCall | null {
   }
   if (!isObj(value) || typeof value.tool_name !== 'string' || value.tool_name === '' || !isObj(value.tool_input)) return null;
   if (typeof value.cwd !== 'string' || !value.cwd.startsWith('/')) return null;
-  // The modes of the client where the human answers a question. In the other modes (`auto`,
-  // `dontAsk`, `bypassPermissions`) the documentation does not say that "ask" shows a question.
-  skipsQuestions = typeof value.permission_mode === 'string' && !['default', 'acceptEdits', 'plan'].includes(value.permission_mode);
+  // The modes of the client where the human answers a question. In the mode `auto` the client
+  // shows the question of a hook too: seen in a live client 2.1.322 on 11.11.2026. In the other
+  // modes (`dontAsk`, `bypassPermissions`) nothing says that "ask" shows a question.
+  skipsQuestions = typeof value.permission_mode === 'string' && !['default', 'acceptEdits', 'plan', 'auto'].includes(value.permission_mode);
   transcript = typeof value.transcript_path === 'string' && value.transcript_path.startsWith('/') ? value.transcript_path : undefined;
   const call: ToolCall = { cwd: value.cwd, tool: value.tool_name, input: value.tool_input };
   if (typeof value.session_id === 'string' && value.session_id !== '') call.session = value.session_id;

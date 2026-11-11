@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyEvent, openTasks, type Runtime } from './runtime.ts';
+import { applyEvent, collectedDir, openTasks, type Runtime } from './runtime.ts';
 import type { Task } from './task.ts';
 import { pruneArchive } from '../journal/writer.ts';
 import { pruneQueue } from './queue.ts';
@@ -37,6 +37,19 @@ export function sweep(rt: Runtime, now: number = Date.now()): string[] {
     // no questions wait
   }
   pruneQueue(rt, now);
+  // The copies of collected results that nobody touched for a week: their tasks ended long ago.
+  // A link is never followed. The copies of an earlier version lay beside the tasks in the state.
+  for (const [base, pattern] of [[collectedDir(rt), /^t[0-9a-f]{12}$/], [path.join(rt.stateDir, 'tasks'), /^t[0-9a-f]{12}\.collected$/]] as const) {
+    try {
+      for (const name of fs.readdirSync(base)) {
+        const dir = path.join(base, name);
+        const stat = fs.lstatSync(dir);
+        if (pattern.test(name) && stat.isDirectory() && now - stat.mtimeMs > 7 * 24 * HOUR) fs.rmSync(dir, { recursive: true, force: true });
+      }
+    } catch {
+      // no copies
+    }
+  }
   // The archive of the journal past the term that the packs name goes away.
   pruneArchive(rt.stateDir, rt.merged.journalKeepDays, now);
   return closed;

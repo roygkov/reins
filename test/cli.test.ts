@@ -257,7 +257,9 @@ test('cli: a large collected result is given as a file, not as text', () => {
   assert.equal(c.diff.bytes, 5000);
   assert.equal(fs.readFileSync(c.diff.file, 'utf8'), 'd'.repeat(5000));
   assert.deepEqual(JSON.parse(fs.readFileSync(c.task.file, 'utf8')), big.outputs.task);
-  assert.ok(c.diff.file.startsWith(b.state) && c.diff.file.endsWith('.txt') && c.task.file.endsWith('.json'));
+  // The copy lies outside the state: the state is closed for the agent, the copy is for its reading.
+  assert.ok(path.relative(b.state, c.diff.file).startsWith('..') && !c.diff.file.includes(`${b.state}/`));
+  assert.ok(c.diff.file.endsWith('.txt') && c.task.file.endsWith('.json'));
   assert.ok(r.stdout.length < 6000, 'the input stays small');
   assert.deepEqual(reins(b, ['input', r.json.task]).json.input.collected, c);
 });
@@ -413,4 +415,23 @@ test('cli: an answer of a check for an older report is not applied to a newer re
   const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
   const r = reins(b, ['report', id, '-'], 'the first report');
   assert.deepEqual([r.json.state, r.json.answer], ['checking', undefined], r.stdout);
+});
+
+test('cli: a copy of a collected result that was changed is written again, and a link in its place is not used', () => {
+  const b = box();
+  const big = { outputs: { diff: 'd'.repeat(5000), task: { id: 7 }, discussion: [], worktree: b.tree }, flags: { has_new_commits: true } };
+  fs.writeFileSync(path.join(b.root, 'project/collect/change.sh'), `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${JSON.stringify(big)}'\n`, { mode: 0o755 });
+  const r = reins(b, ['open', 'change-review', 'change_id=7']);
+  const file = r.json.input.collected.diff.file;
+  fs.writeFileSync(file, 'what the agent put there');
+  reins(b, ['input', r.json.task]);
+  assert.equal(fs.readFileSync(file, 'utf8'), 'd'.repeat(5000), 'the copy is what the state holds');
+  // A link in the place of the copy: the harness does not write through it.
+  const target = path.join(b.root, 'elsewhere.txt');
+  fs.writeFileSync(target, 'untouched');
+  fs.rmSync(file);
+  fs.symlinkSync(target, file);
+  const again = reins(b, ['input', r.json.task]).json.input.collected.diff;
+  assert.equal(again, 'd'.repeat(5000), 'the result stays in the input');
+  assert.equal(fs.readFileSync(target, 'utf8'), 'untouched');
 });

@@ -24,7 +24,7 @@ import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, approveContract, loadTask, verifyWork, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
+import { applyEvent, approveContract, collectedDir, loadTask, verifyWork, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
@@ -56,8 +56,25 @@ function runtime(): Runtime {
 const INLINE_BYTES = 2000;
 const MEMORY_INPUT_BYTES = 4000;
 
+const isLink = (file: string): boolean => {
+  try {
+    return fs.lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
+// Makes a directory and says that it is a real directory, not a link to another place.
+function plainDir(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    return fs.lstatSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // A large collected result does not go into the context of the model: it is written to a file
-// beside the task and the input names the file. The model reads what it needs from there.
+// outside the state and the input names the file. The model reads what it needs from there.
 function byReference(rt: Runtime, id: string, collected: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(collected)) {
@@ -67,11 +84,20 @@ function byReference(rt: Runtime, id: string, collected: Record<string, unknown>
       out[name] = value;
       continue;
     }
-    const file = path.join(rt.stateDir, 'tasks', `${id}.collected`, `${name}.${typeof value === 'string' ? 'txt' : 'json'}`);
-    if (!fs.existsSync(file)) {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, text);
+    const file = path.join(collectedDir(rt), id, `${name}.${typeof value === 'string' ? 'txt' : 'json'}`);
+    // The copy lies where the agent can write. So it is written again whenever it differs from
+    // what the state holds, and a place that is a link is not used: the result then stays in the input.
+    if (!plainDir(collectedDir(rt)) || !plainDir(path.dirname(file)) || isLink(file)) {
+      out[name] = value;
+      continue;
     }
+    let same = false;
+    try {
+      same = fs.readFileSync(file, 'utf8') === text;
+    } catch {
+      // no copy yet
+    }
+    if (!same) fs.writeFileSync(file, text);
     out[name] = { file, bytes };
   }
   return out;
@@ -408,12 +434,15 @@ try {
 process.stdout.write(`${JSON.stringify(out)}\n`);
 // Exit code 0: for `open` and `input` the task executes or had no work; for `report` the task is
 // closed with a verified result. Exit code 2: the task did not close as verified.
-const verified = (out.state === 'closed' || out.state === 'publishing') && out.label !== 'not_verified';
+// Only the answer about a task has a state of a task: `state` of a proposal, of a memory record
+// or of a queued action says nothing about the exit code.
+const taskState = typeof out.task === 'string' ? out.state : undefined;
+const verified = (taskState === 'closed' || taskState === 'publishing') && out.label !== 'not_verified';
 const reported = 'returns_left' in out;
 // After a run of a client the task must be closed as verified, or had no work.
 const ranClient = out.ran === true;
 // A client that did not start, or a run of the schedule where a task did not end as verified,
 // is not a success either.
 const notRun = out.ran === false || out.failed === true;
-const done = !notRun && (stopped || out.state === undefined || verified || (!reported && !ranClient && (out.state === 'executing' || out.state === 'skipped')) || (ranClient && out.state === 'skipped'));
+const done = !notRun && (stopped || taskState === undefined || verified || (!reported && !ranClient && (taskState === 'executing' || taskState === 'skipped')) || (ranClient && taskState === 'skipped'));
 process.exitCode = out.ok !== true ? 1 : done ? 0 : 2;

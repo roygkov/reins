@@ -127,6 +127,11 @@ function withLock<T>(rt: Runtime, id: string, fn: () => T): T | 'busy' {
   }
 }
 
+// Where the copies of large collected results lie for the model to read. Outside the state on
+// purpose: the state is closed for the agent, and a copy is only for its reading. The check of a
+// task reads the collected results from the state, never from a copy.
+export const collectedDir = (rt: Runtime): string => path.join(path.dirname(rt.stateDir), `collected-${path.basename(rt.stateDir)}`);
+
 // What the collect script gave for the model. Kept beside the task, never in the journal.
 export function readCollected(rt: Runtime, id: string): Record<string, unknown> | null {
   if (!TASK_ID.test(id)) return null;
