@@ -137,7 +137,7 @@ test('claude-code: "post" never blocks and prints nothing', () => {
 
 test('claude-code: the plugin registers the hook before every tool', () => {
   const hooks = JSON.parse(fs.readFileSync(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url), 'utf8')).hooks;
-  assert.deepEqual(Object.keys(hooks).sort(), ['PostToolUse', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(hooks).sort(), ['PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit']);
   assert.equal(hooks.PreToolUse[0].matcher, '.*');
   assert.equal(hooks.PreToolUse[0].hooks[0].onFailure, 'block');
   assert.match(hooks.PreToolUse[0].hooks[0].command, /hooks\/hook\.ts" pre$/);
@@ -269,6 +269,121 @@ test('claude-code: a condition of a read is checked when the pack is loaded', ()
   const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
   fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__db__get': { kind: 'read', read_when: { field: 'sql', pattern: 'x' } } } }));
   assert.equal(run(CLI, b, ['scenarios'], '').json.not_connected?.[0]?.errors?.[0]?.path, 'tools.mcp__db__get.read_when');
+});
+
+const decisions = (b: Box): { decision: string; session?: string }[] =>
+  fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l))
+    .filter((r) => r.kind === 'task.human_decision').map((r) => ({ decision: r.data.decision, session: r.session }));
+const hookEvent = (b: Box, name: string, more: Record<string, unknown> = {}, session = 'abc'): string =>
+  JSON.stringify({ session_id: session, cwd: b.cwd, hook_event_name: name, permission_mode: 'default', ...more });
+
+test('claude-code: a question that no run of the tool answered is the "no" of the human', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const input = { change: '7', body: 'x' };
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'ask');
+  // The end of the turn of another session says nothing about this question.
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop', {}, 'other'));
+  assert.deepEqual(decisions(b), []);
+  // The turn ended and the tool did not run: the human refused.
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.deepEqual(decisions(b), [{ decision: 'refused', session: 'abc' }]);
+  assert.deepEqual(fs.readdirSync(path.join(b.state, 'pending')), []);
+  // It is written once.
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.equal(decisions(b).length, 1);
+});
+
+test('claude-code: the next request also settles a question: a turn that the human broke has no end', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', { change: '7', body: 'x' })), 'ask');
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  assert.deepEqual(decisions(b), [{ decision: 'refused', session: 'abc' }]);
+});
+
+test('claude-code: a tool that ran and failed after a question is still the "yes" of the human', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const input = { change: '7', body: 'x' };
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'ask');
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'mcp__tracker__add_comment', tool_input: input, error: 'boom' }));
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.deepEqual(decisions(b), [{ decision: 'answered', session: 'abc' }]);
+  // The client tells the harness about a failed tool.
+  const hooks = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url)), 'utf8')).hooks;
+  assert.match(hooks.PostToolUseFailure[0].hooks[0].command, /hook\.ts" post$/);
+});
+
+test('claude-code: a question of a subordinate ends with the subordinate, not with the turn', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const input = { change: '7', body: 'x' };
+  const fromSub = (name: string, more: Record<string, unknown> = {}) => hookEvent(b, name, { tool_name: 'mcp__tracker__add_comment', tool_input: input, agent_id: 'agent-1', agent_type: 'reviewer', ...more });
+  assert.equal(decision(run(HOOK, b, ['pre'], fromSub('PreToolUse'))), 'ask');
+  // The turn of the session ends while the subordinate still waits for the human.
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  assert.deepEqual(decisions(b), []);
+  // The human says "yes" later: the run of the tool is still the answer.
+  run(HOOK, b, ['post'], fromSub('PostToolUse'));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['answered']);
+  // Another question of the subordinate, and the subordinate ends without a run of the tool.
+  assert.equal(decision(run(HOOK, b, ['pre'], fromSub('PreToolUse', { tool_input: { change: '8', body: 'y' } }))), 'ask');
+  run(HOOK, b, ['subagent-stop'], hookEvent(b, 'SubagentStop', { agent_id: 'agent-2', agent_type: 'reviewer' }));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['answered'], 'the end of another subordinate says nothing');
+  run(HOOK, b, ['subagent-stop'], hookEvent(b, 'SubagentStop', { agent_id: 'agent-1', agent_type: 'reviewer' }));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['answered', 'refused']);
+});
+
+test('claude-code: in a mode without permission questions no human refused anything', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const quiet = (name: string) => hookEvent(b, name, { permission_mode: 'dontAsk', tool_name: 'mcp__tracker__add_comment', tool_input: { change: '7', body: 'x' } });
+  assert.equal(decision(run(HOOK, b, ['pre'], quiet('PreToolUse'))), 'ask');
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop', { permission_mode: 'dontAsk' }));
+  assert.deepEqual(decisions(b), []);
+  assert.deepEqual(fs.readdirSync(path.join(b.state, 'pending')), [], 'the question is gone all the same');
+});
+
+test('claude-code: the end of the session ends the questions of its subordinates too', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  assert.equal(decision(run(HOOK, b, ['pre'], hookEvent(b, 'PreToolUse', { tool_name: 'mcp__tracker__add_comment', tool_input: { change: '7', body: 'x' }, agent_id: 'agent-1', agent_type: 'reviewer' }))), 'ask');
+  run(HOOK, b, ['session-end'], hookEvent(b, 'SessionEnd'));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['refused']);
+});
+
+test('claude-code: the identifier of a call ties a question to its answer, whatever the input became', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const call = (name: string, more: Record<string, unknown>) => hookEvent(b, name, { tool_name: 'mcp__tracker__add_comment', ...more });
+  assert.equal(decision(run(HOOK, b, ['pre'], call('PreToolUse', { tool_use_id: 'toolu_1', tool_input: { change: '7', body: 'x' } }))), 'ask');
+  // Another hook rewrote the input before the run: the call is the same one.
+  run(HOOK, b, ['post'], call('PostToolUse', { tool_use_id: 'toolu_1', tool_input: { change: '7', body: 'x', extra: true } }));
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['answered']);
+  // The same input from the session and from its subordinate: two calls, two questions.
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const same = { change: '8', body: 'y' };
+  assert.equal(decision(run(HOOK, b, ['pre'], call('PreToolUse', { tool_use_id: 'toolu_2', tool_input: same }))), 'ask');
+  assert.equal(decision(run(HOOK, b, ['pre'], call('PreToolUse', { tool_use_id: 'toolu_3', tool_input: same, agent_id: 'agent-1', agent_type: 'reviewer' }))), 'ask');
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['answered', 'refused'], 'only the question of the session ended');
+  run(HOOK, b, ['post'], call('PostToolUse', { tool_use_id: 'toolu_3', tool_input: same, agent_id: 'agent-1', agent_type: 'reviewer' }));
+  assert.deepEqual(decisions(b).map((d) => d.decision), ['answered', 'refused', 'answered']);
+});
+
+test('claude-code: a tool that the human broke off is neither a "yes" nor a "no"', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const input = { change: '7', body: 'x' };
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'ask');
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'mcp__tracker__add_comment', tool_input: input, error: 'interrupted', is_interrupt: true }));
+  run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.deepEqual(decisions(b), []);
+  assert.deepEqual(fs.readdirSync(path.join(b.state, 'pending')), []);
 });
 
 test('claude-code: a change of the adapter itself asks the human', () => {

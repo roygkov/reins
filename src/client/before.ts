@@ -25,7 +25,15 @@ import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '..
 // `session`: the session of the client, when the client names it.
 // `sub`: the role of the subordinate executor that makes the call. `headless`: the client runs
 // without a window, so nobody can answer a question.
-export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; headless?: boolean };
+// `unshown`: the client shows no question to the human in its mode now: a question of the harness has no answer of a human.
+// `subId`: the identifier of the subordinate executor that makes the call, when the client gives one (`sub` is its role).
+// `callId`: the identifier that the client gives to one call of a tool, the same before and after it.
+export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; headless?: boolean; unshown?: boolean };
+
+// What a question keeps while it waits: whose it is, and whether a human sees it.
+const asker = (call: ToolCall): Record<string, unknown> => ({
+  ...(call.session !== undefined ? { session: call.session } : {}), ...(call.subId !== undefined || call.sub !== undefined ? { sub: call.subId ?? call.sub } : {}), ...(call.unshown === true ? { shown: false } : {}),
+});
 
 // A tool of the client: it reads, it changes a file (the input field `path` names the file),
 // or it runs a shell command (the input field `command` holds it).
@@ -314,8 +322,14 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   for (const row of rows) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 
-const pendingFile = (rt: Runtime, call: ToolCall): string =>
-  path.join(rt.stateDir, 'pending', `${crypto.createHash('sha256').update(`${call.session ?? ''}\n${call.tool}\n${JSON.stringify(call.input)}`).digest('hex').slice(0, 32)}.json`);
+// A question waits under the call that asked it. The identifier of the call, when the client gives
+// one, names the call for sure: the input can change between the question and the run (another
+// hook rewrites it), and two executors of one session can make the same call. Without an
+// identifier the session, the tool and the input name the call.
+const pendingFile = (rt: Runtime, call: ToolCall): string => {
+  const name = call.callId !== undefined ? `id\n${call.session ?? ''}\n${call.callId}` : `${call.session ?? ''}\n${call.tool}\n${JSON.stringify(call.input)}`;
+  return path.join(rt.stateDir, 'pending', `${crypto.createHash('sha256').update(name).digest('hex').slice(0, 32)}.json`);
+};
 
 function reply(d: Decision, more: { task?: string; grant?: string } = {}): Reply {
   const r: Reply = { outcome: d.outcome, rule: d.basis.rule, layer: d.basis.layer, envelope: d.envelope };
@@ -345,7 +359,8 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   if (r.outcome !== 'ask') fs.rmSync(file, { force: true });
   else if (!(r.scope === 'task' && fs.existsSync(file))) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ ask: true }));
+    // The session is kept with the question: at the end of the turn a question without an answer is the "no" of the human.
+    fs.writeFileSync(file, JSON.stringify({ ask: true, ...asker(call) }));
   }
   return r;
 }
@@ -375,7 +390,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
       if (decision.outcome === 'ask' && decision.envelope === 'confirm') {
         const file = pendingFile(rt, call);
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify({ task: id, key }));
+        fs.writeFileSync(file, JSON.stringify({ task: id, key, ...asker(call) }));
       }
       return queued(rt, call, clientTools, action, read.command, reply(decision, { task: id, grant: key }));
     }

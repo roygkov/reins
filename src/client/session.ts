@@ -152,8 +152,56 @@ export function beforeCompaction(rt: Runtime, e: SessionEvent): { task?: string;
   return { task: task.id, state: task.state };
 }
 
+// The questions of a session that no run of the tool answered. The turn is over, or the human
+// started another: the tool did not run, so the human said "no". The fact goes to the journal once.
+// `who`: whose questions end now. The end of a turn ends the questions of the session itself; a
+// subordinate executor works on after it, so its questions end when it ends ({ sub }); the end of
+// the session ends all of them ('all'). A question of another session is not touched.
+export function settleQuestions(rt: Runtime, session: string | undefined, who: 'main' | 'all' | { sub: string } = 'main'): number {
+  if (session === undefined) return 0;
+  const dir = path.join(rt.stateDir, 'pending');
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let settled = 0;
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const file = path.join(dir, name);
+    let asked: { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown };
+    try {
+      const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (value === null || typeof value !== 'object') continue;
+      asked = value as { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown };
+    } catch {
+      continue;
+    }
+    if (asked.session !== session) continue;
+    if (who === 'main' ? asked.sub !== undefined : who !== 'all' && asked.sub !== who.sub) continue;
+    // A question that no human saw has no answer of a human: it ends without a word.
+    const seen = asked.shown !== false;
+    // The task of the question: the scenario task that asked for the whole task, else the task of the session now.
+    const task = typeof asked.task === 'string' && loadTask(rt, asked.task) !== null ? asked.task : currentScenario(rt, session) ?? current(rt, session).id;
+    // Without a task the fact has no place in the journal: the question stays for the sweep.
+    if (seen && task === undefined) continue;
+    // Only one process writes the fact: the removal of the file works once.
+    try {
+      fs.rmSync(file);
+    } catch {
+      continue;
+    }
+    if (!seen || task === undefined) continue;
+    rt.journal.write({ kind: 'task.human_decision', project: rt.project, task, ...(/^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}), data: { decision: 'refused' } });
+    settled += 1;
+  }
+  return settled;
+}
+
 // A request of the human: the free task of the request before it ends, a new one opens.
 export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
+  settleQuestions(rt, e.session);
   // The state of the work tree at the request: at the stop it says whether the request changed the work.
   const work = workState(e.cwd);
   // The count of requests and the new task change in one step under the lock of the session file:
@@ -170,6 +218,7 @@ export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result
 // is "not verified" (harness-core, page 2, rule 4).
 export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; label?: string; changed?: boolean } {
+  settleQuestions(rt, e.session);
   const id = current(rt, e.session).id;
   if (id === undefined) return {};
   const before = readSession(rt, e.session)?.work;
@@ -187,6 +236,7 @@ export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; lab
 
 // The end of a session: its free task ends and the session is forgotten.
 export function sessionEnd(rt: Runtime, e: SessionEvent): { closed: string[] } {
+  settleQuestions(rt, e.session, 'all');
   const id = current(rt, e.session).id;
   const closed: string[] = [];
   if (id !== undefined) {
