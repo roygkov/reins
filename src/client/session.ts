@@ -10,7 +10,7 @@ import { forgetDirectory, noteDirectory, patchSession, readSession, sessionFile,
 import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { readJournalSince } from '../journal/writer.ts';
-import { listProposals, propose } from '../craft/craft.ts';
+import { listProposals, measure, propose } from '../craft/craft.ts';
 import { listRecords } from '../memory/store.ts';
 
 export type SessionEvent = { session?: string; cwd: string; client?: string };
@@ -77,6 +77,7 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   // Housekeeping that needs no human: tasks past their term end, new patterns become proposals.
   sweep(rt);
   propose(rt);
+  measure(rt);
   rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level: 'full' } });
   const context = ['reins: the harness of this workspace. It decides before every action and checks the result of a scenario.'];
   const last = readHandoff(rt);

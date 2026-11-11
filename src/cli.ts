@@ -24,7 +24,7 @@ import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
 import { sweep } from './core/sweep.ts';
-import { listProposals, propose, resolveProposal } from './craft/craft.ts';
+import { listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { eight, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, countUses, importRecords, listRecords, recordsForInput, restoreRecord, vetoRecord } from './memory/store.ts';
@@ -210,11 +210,13 @@ function main(args: string[]): Out {
     const rt = runtime();
     if (first === undefined) {
       propose(rt);
+      measure(rt);
       return { ok: true, proposals: listProposals(rt) };
     }
     if ((first === 'accept' || first === 'reject') && rest.length === 1 && rest[0] !== undefined) {
       if (!resolveProposal(rt, rest[0], first === 'accept' ? 'accepted' : 'rejected')) throw new Stop('unknown_proposal');
-      return { ok: true, proposal: rest[0], state: first === 'accept' ? 'accepted' : 'rejected' };
+      const applied = listProposals(rt).find((p) => p.id === rest[0])?.applied;
+      return { ok: true, proposal: rest[0], state: first === 'accept' ? 'accepted' : 'rejected', ...(applied !== undefined ? { applied } : {}) };
     }
     throw new Stop('usage');
   }

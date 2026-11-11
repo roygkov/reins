@@ -40,6 +40,7 @@ export type MemoryRecord = {
   source?: string; // the id of the record in the store that it was imported from
   history: { at: string; state: RecordState }[];
   uses: number; // how many reports cited the record; from the working state
+  last_use?: string; // the time of the last report that cited the record
 };
 
 export type NewRecord = {
@@ -189,7 +190,7 @@ export function brokenRecords(rt: Runtime): string[] {
 // stale when its place changed or is gone, or when no report cited it for its term. A decision
 // does not age: it holds until another decision replaces it.
 function at(record: Omit<MemoryRecord, 'uses'>, now: number, uses: { n: number; last: string } | undefined): MemoryRecord {
-  const out: MemoryRecord = { ...record, uses: uses?.n ?? 0 };
+  const out: MemoryRecord = { ...record, uses: uses?.n ?? 0, ...(uses !== undefined ? { last_use: uses.last } : {}) };
   if (out.state === 'pending' && out.veto_until !== undefined && Date.parse(out.veto_until) < now) out.state = 'active';
   if (out.state !== 'active') return out;
   if (out.anchor !== undefined && fingerprint(out.anchor.root, out.anchor.path) !== out.anchor.fp) out.state = 'stale';
@@ -265,6 +266,18 @@ export function vetoRecord(rt: Runtime, id: string, now: number = Date.now()): b
   if (record === undefined || record.state === 'vetoed' || record.state === 'replaced') return false;
   write(rt, { ...record, state: 'vetoed', history: [...record.history, { at: new Date(now).toISOString(), state: 'vetoed' }] });
   rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: 'vetoed' } });
+  return true;
+}
+
+// A record that is in use goes out of use: nobody cited it. The human can restore it.
+// `idleDays`: the record must be without a citation for this long, as it was when the change was proposed.
+export function retireRecord(rt: Runtime, id: string, now: number = Date.now(), idleDays = 0): boolean {
+  const record = stored(rt).find((r) => r.id === id);
+  const uses = readUses(rt)[id];
+  if (record === undefined || record.type === 'decision' || at(record, now, uses).state !== 'active') return false;
+  if (uses !== undefined && now - Date.parse(uses.last) < idleDays * DAY) return false;
+  write(rt, { ...record, state: 'stale', history: [...record.history, { at: new Date(now).toISOString(), state: 'stale' }] });
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: 'stale' } });
   return true;
 }
 

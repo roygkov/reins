@@ -1,0 +1,219 @@
+// The craft past its first cut: more detectors, a proposal that carries a ready change, and the
+// measure of what an accepted proposal did.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadPacks } from '../src/packs/packs.ts';
+import { openJournal, readJournal } from '../src/journal/writer.ts';
+import { validateRow } from '../src/contracts/journal.ts';
+import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
+import { detect, listProposals, measure, propose, resolveProposal } from '../src/craft/craft.ts';
+import { addRecord, listRecords } from '../src/memory/store.ts';
+import { loadCases } from './cases.ts';
+
+const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'craft-'));
+after(() => fs.rmSync(SB, { recursive: true, force: true }));
+const manifests = new Map(loadCases<{ name: string; manifest: unknown }>('manifest-bases').map((b) => [b.name, b.manifest]));
+const files = loadCases<{ name: string; files: Record<string, unknown> }>('packs-bases').find((b) => b.name === 'three')?.files ?? {};
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = Date.now();
+const CONTRACT = {
+  manifest: 1, name: 'fix-flaky-test', title: 'Fix the flaky test', package: 'person',
+  trigger: { kind: 'command' }, model: { level: 'medium', token_limit: 50000 }, permissions: { read: ['code-host'] },
+  done: { kind: 'human', retries: 1 }, output: { format: 'text', max_bytes: 2000 },
+};
+
+type Box = { rt: Runtime; root: string; cwd: string; config: string; packs: Record<string, string> };
+let n = 0;
+function box(): Box {
+  n += 1;
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(SB, `${n}-`)));
+  const cwd = path.join(root, 'work');
+  fs.mkdirSync(cwd, { recursive: true });
+  for (const [rel, value] of Object.entries(files)) {
+    const file = path.join(root, 'packs', rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (rel.endsWith('.sh')) fs.writeFileSync(file, '#!/bin/sh\n', { mode: 0o755 });
+    else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
+    else fs.writeFileSync(file, JSON.stringify(value));
+  }
+  const packs = { organization: path.join(root, 'packs/organization'), project: path.join(root, 'packs/project'), person: path.join(root, 'packs/person') };
+  const merged = loadPacks(packs);
+  assert.deepEqual(merged.packs.map((p) => p.errors), [[], [], []]);
+  const stateDir = path.join(root, 'state');
+  const config = path.join(root, 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4' }, root, cwd, config, packs };
+}
+// Rows of the journal at a time in the past.
+function rows(b: Box, at: number, list: Record<string, unknown>[]): void {
+  fs.mkdirSync(b.rt.stateDir, { recursive: true });
+  fs.appendFileSync(b.rt.journal.file, list.map((r) => `${JSON.stringify({ ts: new Date(at).toISOString(), v: 1, project: 'p1a2b3c4', task: 't000000000000', ...r })}\n`).join(''));
+}
+const question = (rule: string) => [
+  { kind: 'policy.decision', data: { outcome: 'ask', action_kind: 'unknown', env: 'unknown' } },
+  { kind: 'policy.basis', data: { layer: 'core', rule } },
+];
+const times = <T,>(k: number, list: T[]): T[] => Array.from({ length: k }, () => list).flat();
+
+// ---- Detectors.
+
+test('craft: contracts with one name that repeat are a candidate for a scenario', () => {
+  const row = (name: string) => ({ ts: '2026-11-11T10:00:00.000Z', v: 1, kind: 'task.contract_approved', project: 'p1', task: 't000000000000', scenario: name, scenario_v: 1 }) as never;
+  assert.deepEqual(detect([row('a'), row('a'), row('a'), row('b'), row('b')]), [{ pattern: 'repeated_contract', key: 'a', n: 3 }]);
+});
+
+test('craft: a memory record that no report cited for a month is a pattern, a decision is not', () => {
+  const b = box();
+  const old = NOW - 40 * DAY;
+  const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, old);
+  const decision = addRecord(b.rt, { type: 'decision', text: 'we keep one cache', because: 'two caches went out of step', paths: [], by: 'human' }, old);
+  const fresh = addRecord(b.rt, { type: 'pitfall', text: 'a new note about the cache', paths: [], by: 'human' }, NOW - DAY);
+  assert.ok(note.ok && decision.ok && fresh.ok);
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.change]), [['record_unused', note.record.id, { kind: 'memory', record: note.record.id, state: 'stale' }]]);
+});
+
+// ---- A proposal with a ready change.
+
+test('craft: a repeated contract becomes a proposal with the manifest, and the acceptance puts it into the person pack', () => {
+  const b = box();
+  for (let i = 0; i < 3; i += 1) {
+    const r = proposeContract(b.rt, CONTRACT, {});
+    assert.ok(r.ok);
+    approveContract(b.rt, r.task.id);
+  }
+  const made = propose(b.rt);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.n, p.change?.kind]), [['repeated_contract', 'fix-flaky-test', 3, 'manifest']]);
+  const run = (args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd: b.cwd, env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config } }).stdout);
+  const out = run(['craft', 'accept', made[0]?.id ?? '']);
+  assert.deepEqual([out.ok, out.state, out.applied], [true, 'accepted', true]);
+  const merged = loadPacks(b.packs);
+  assert.deepEqual(merged.rejected, []);
+  assert.ok(merged.scenarios.some((s) => s.manifest.name === 'fix-flaky-test'), 'the scenario is connected');
+  assert.equal(proposeContract({ ...b.rt, merged }, CONTRACT, {}).ok, false, 'the name is a scenario now');
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+});
+
+test('craft: the acceptance of an unused record makes it stale', () => {
+  const b = box();
+  const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);
+  assert.ok(note.ok);
+  const made = propose(b.rt, NOW);
+  assert.equal(resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW), true);
+  assert.equal(listRecords(b.rt, NOW).find((r) => r.id === note.record.id)?.state, 'stale');
+  assert.equal(listProposals(b.rt)[0]?.applied, true);
+});
+
+test('craft: a proposal without a ready change says so, and its acceptance applies nothing', () => {
+  const b = box();
+  rows(b, NOW - DAY, times(5, question('default.unknown-tool')));
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.change]), [['repeated_question', undefined]]);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
+  assert.equal(listProposals(b.rt)[0]?.applied, false);
+});
+
+// ---- A rejected pattern.
+
+test('craft: a rejected pattern is proposed again only when it grew twice', () => {
+  const b = box();
+  rows(b, NOW - DAY, times(5, question('default.unknown-tool')));
+  const first = propose(b.rt, NOW);
+  resolveProposal(b.rt, first[0]?.id ?? '', 'rejected', NOW);
+  rows(b, NOW - DAY, times(4, question('default.unknown-tool')));
+  assert.deepEqual(propose(b.rt, NOW), [], '9 is less than twice 5');
+  rows(b, NOW - DAY, question('default.unknown-tool'));
+  const again = propose(b.rt, NOW);
+  assert.deepEqual(again.map((p) => [p.id, p.n, p.state]), [[first[0]?.id, 10, 'open']]);
+});
+
+// ---- The measure of the effect.
+
+test('craft: an accepted proposal is measured after a week: fewer questions about the rule is better', () => {
+  const b = box();
+  const accepted = NOW - 8 * DAY;
+  rows(b, accepted - 2 * DAY, times(6, question('default.unknown-tool')));
+  const made = propose(b.rt, accepted);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', accepted);
+  rows(b, accepted + 2 * DAY, question('default.unknown-tool'));
+  assert.deepEqual(measure(b.rt, accepted + 3 * DAY), [], 'a week did not pass');
+  assert.deepEqual(measure(b.rt, NOW).map((p) => [p.id, p.effect]), [[made[0]?.id, 'better']]);
+  assert.deepEqual(measure(b.rt, NOW), [], 'one measure for one proposal');
+  const found = readJournal(b.rt.journal.file).filter((r) => r.kind === 'craft.effect_measured');
+  assert.deepEqual(found.map((r) => r.data), [{ proposal: made[0]?.id, effect: 'better' }]);
+  for (const r of found) assert.deepEqual(validateRow(r), []);
+});
+
+test('craft: more questions after the acceptance is worse, the same count is the same', () => {
+  for (const [after, effect] of [[8, 'worse'], [6, 'same']] as const) {
+    const b = box();
+    const accepted = NOW - 8 * DAY;
+    rows(b, accepted - 2 * DAY, times(6, question('default.unknown-tool')));
+    const made = propose(b.rt, accepted);
+    resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', accepted);
+    rows(b, accepted + 2 * DAY, times(after, question('default.unknown-tool')));
+    assert.deepEqual(measure(b.rt, NOW).map((p) => p.effect), [effect]);
+  }
+});
+
+test('craft: without enough data the effect is "not measured", and no row is written', () => {
+  const b = box();
+  const accepted = NOW - 8 * DAY;
+  const check = (result: string) => ({ kind: 'check.answered', scenario: 'change-review', scenario_v: 1, data: { result, check_kind: 'citations' } });
+  rows(b, accepted - DAY, ['FAIL', 'FAIL', 'FAIL', 'PASS'].map(check));
+  const made = propose(b.rt, accepted);
+  assert.deepEqual(made.map((p) => p.pattern), ['check_fails_often']);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', accepted);
+  rows(b, accepted + DAY, [check('PASS')]);
+  assert.deepEqual(measure(b.rt, NOW), []);
+  assert.equal(listProposals(b.rt)[0]?.effect, 'not_measured');
+  assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'craft.effect_measured').length, 0);
+  // With enough checks later the measure is made.
+  rows(b, accepted + 2 * DAY, ['PASS', 'PASS', 'PASS'].map(check));
+  assert.deepEqual(measure(b.rt, NOW).map((p) => p.effect), ['better']);
+});
+
+// ---- Cases of the review.
+
+test('craft: without work after the acceptance the effect of a rule is not measured', () => {
+  const b = box();
+  const accepted = NOW - 8 * DAY;
+  rows(b, accepted - 2 * DAY, times(6, question('default.unknown-tool')));
+  const made = propose(b.rt, accepted);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', accepted);
+  assert.deepEqual(measure(b.rt, NOW), []);
+  assert.equal(listProposals(b.rt)[0]?.effect, 'not_measured');
+});
+
+test('craft: a scenario from contracts is measured by its returns for one task', () => {
+  const b = box();
+  const accepted = NOW - 8 * DAY;
+  const r = (kind: string) => ({ kind, scenario: 'fix-flaky-test', scenario_v: 1, ...(kind === 'task.returned' ? { data: { n: 1, reason: 'human' } } : {}) });
+  rows(b, accepted - DAY, [...times(3, [r('task.contract_approved'), r('task.started')]), ...times(3, [r('task.returned')])]);
+  const made = propose(b.rt, accepted);
+  assert.deepEqual(made.map((p) => p.pattern), ['repeated_contract']);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', accepted);
+  rows(b, accepted + DAY, [...times(3, [r('task.started')]), r('task.returned')]);
+  assert.deepEqual(measure(b.rt, NOW).map((p) => p.effect), ['better']);
+});
+
+test('craft: a record that a report cited in the last month is not unused, and is not made stale', () => {
+  const b = box();
+  const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);
+  assert.ok(note.ok);
+  const made = propose(b.rt, NOW);
+  assert.equal(made.length, 1);
+  // A report cites the record after the proposal: the acceptance does not make it stale.
+  const file = path.join(b.rt.stateDir, 'memory-state', 'uses.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ [note.record.id]: { n: 1, last: new Date(NOW - DAY).toISOString() } }));
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
+  assert.equal(listProposals(b.rt)[0]?.applied, false);
+  assert.equal(listRecords(b.rt, NOW).find((x) => x.id === note.record.id)?.state, 'active');
+});
