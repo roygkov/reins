@@ -12,7 +12,9 @@ import { findRoot } from '../gate/index.ts';
 import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 
 // The keys of the file: of the harness, and of the gate (src/gate/config.cjs).
-const KEYS = ['packs', 'state_dir', 'memory_dir', 'repo_packs', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+// `runner`: the command that starts a client without a window, as a list of words; `{task}` and
+// `{prompt}` in a word are filled in. `runner_timeout_s`: the time limit of one run.
+const KEYS = ['packs', 'state_dir', 'memory_dir', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -24,7 +26,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string } {
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; runner?: string[]; runnerTimeoutMs?: number } {
   const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
   let text: string;
   try {
@@ -52,7 +54,12 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   if (value.repo_packs !== undefined && typeof value.repo_packs !== 'boolean') throw bad;
   // The memory records can live in a directory of the instance, for example a repository with history.
   if (value.memory_dir !== undefined && (typeof value.memory_dir !== 'string' || !path.isAbsolute(value.memory_dir))) throw bad;
-  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  // The runner is a command that the harness starts: a list of words, never one line for a shell.
+  if (value.runner !== undefined && (!Array.isArray(value.runner) || value.runner.length === 0 || value.runner.some((w) => typeof w !== 'string' || w === ''))) throw bad;
+  if (value.runner_timeout_s !== undefined && (typeof value.runner_timeout_s !== 'number' || !Number.isInteger(value.runner_timeout_s) || value.runner_timeout_s <= 0)) throw bad;
+  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; runner?: string[]; runnerTimeoutMs?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  if (Array.isArray(value.runner)) out.runner = value.runner as string[];
+  if (typeof value.runner_timeout_s === 'number') out.runnerTimeoutMs = value.runner_timeout_s * 1000;
   if (typeof value.memory_dir === 'string') out.memoryDir = value.memory_dir;
   return out;
 }
@@ -75,5 +82,7 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file, workDir: cwd };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
   if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;
+  if (config.runner !== undefined) rt.runner = config.runner;
+  if (config.runnerTimeoutMs !== undefined) rt.runnerTimeoutMs = config.runnerTimeoutMs;
   return rt;
 }

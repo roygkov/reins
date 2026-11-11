@@ -8,6 +8,8 @@
 //   reins stop <task>                    the human stops a task in any open state
 //   reins tasks                          the tasks that are not closed
 //   reins tick                           opens the tasks of the scenarios whose schedule came
+//   reins tick run                       the same, and starts the client of the machine for each task
+//   reins run <scenario> [name=value]    opens a task and starts the client of the machine for it
 //   reins fire <event> [name=value]      opens the tasks of the scenarios that wait for this event
 //   reins queue [approve|reject <id>]    the actions that a rule deferred; the human answers
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
@@ -16,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError, loadRuntime } from './client/config.ts';
+import { runTask } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
 import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
@@ -229,6 +232,33 @@ function main(args: string[]): Out {
   if (command === 'sweep' && first === undefined) return { ok: true, closed: sweep(runtime()) };
   // Triggers without a human. A timer of the system runs `tick`; a system that saw an event runs `fire`.
   if (command === 'tick' && first === undefined) return { ok: true, ...tick(runtime()) };
+  // The schedule with a client: every task that it opens and that needs the model gets a run of
+  // the client of the machine, one after another.
+  if (command === 'tick' && first === 'run' && rest.length === 0) {
+    // A client without a window starts no client: nothing is opened, the time of the schedule stays.
+    if (process.env.REINS_HEADLESS === '1') throw new Stop('nested_run');
+    const rt = runtime();
+    const r = tick(rt);
+    const opened = r.opened.map((t) => {
+      const ran = runTask(rt, t.task);
+      const task = loadTask(rt, t.task);
+      return { ...t, ...ran, state: task?.state ?? t.state, ...(task?.label !== undefined ? { label: task.label } : {}), ...(task?.waiting !== undefined ? { waiting: task.waiting } : {}) };
+    });
+    // A timer of the system reads the exit code: a task that did not end as verified is not a success.
+    const failed = opened.some((t) => t.ran !== true || !((t.state === 'closed' || t.state === 'publishing') && t.label !== 'not_verified'));
+    return { ok: true, opened, skipped: r.skipped, ...(failed ? { failed: true } : {}) };
+  }
+  // One scenario without a window: the task opens, and the client of the machine works on it.
+  if (command === 'run' && first !== undefined) {
+    if (process.env.REINS_HEADLESS === '1') throw new Stop('nested_run');
+    const rt = runtime();
+    const opened = open(rt, first, rest);
+    delete opened.input;
+    if (opened.state !== 'executing' || typeof opened.task !== 'string') return opened;
+    const ran = runTask(rt, opened.task);
+    const task = loadTask(rt, opened.task);
+    return { ...opened, ...(task !== null ? { state: task.state, ...(task.label !== undefined ? { label: task.label } : {}), ...(task.waiting !== undefined ? { waiting: task.waiting } : {}) } : {}), ...ran };
+  }
   if (command === 'fire' && first !== undefined) {
     const inputs: Record<string, string> = {};
     for (const pair of rest) {
@@ -361,7 +391,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 let out: Out;
@@ -380,5 +410,10 @@ process.stdout.write(`${JSON.stringify(out)}\n`);
 // closed with a verified result. Exit code 2: the task did not close as verified.
 const verified = (out.state === 'closed' || out.state === 'publishing') && out.label !== 'not_verified';
 const reported = 'returns_left' in out;
-const done = stopped || out.state === undefined || verified || (!reported && (out.state === 'executing' || out.state === 'skipped'));
+// After a run of a client the task must be closed as verified, or had no work.
+const ranClient = out.ran === true;
+// A client that did not start, or a run of the schedule where a task did not end as verified,
+// is not a success either.
+const notRun = out.ran === false || out.failed === true;
+const done = !notRun && (stopped || out.state === undefined || verified || (!reported && !ranClient && (out.state === 'executing' || out.state === 'skipped')) || (ranClient && out.state === 'skipped'));
 process.exitCode = out.ok !== true ? 1 : done ? 0 : 2;

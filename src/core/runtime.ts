@@ -35,6 +35,8 @@ export type Runtime = {
   projectPackDir?: string; // `.reins` of the repository of the client, also when it does not exist yet
   memoryDir?: string; // the directory of the memory records; absent: inside the state directory
   clientPaths?: string[]; // patterns of the paths of the client settings that register the harness
+  runner?: string[]; // the command of the machine that starts a client for one task, with its arguments
+  runnerTimeoutMs?: number; // how long one run of the client can take
   workDir?: string; // the directory where the client works: a script of a pack must not change it
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };
