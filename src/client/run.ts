@@ -1,13 +1,15 @@
 // A task without a window. The harness has no model of its own: the config of the machine names
-// the command that starts a client (`runner`), and the harness starts it for one task. The client
+// the command that starts a client (`runner`), and the harness starts it for one task. The words
+// `{task}`, `{prompt}` and `{model}` of the command are filled in. The client
 // runs with REINS_HEADLESS=1: nobody answers a question there, so a question becomes a place in
 // the queue of the human.
 // Specification: docs/spec/harness-client, page 5.
 
 import { spawnSync } from 'node:child_process';
-import type { Runtime } from '../core/runtime.ts';
+import { loadTask, type Runtime } from '../core/runtime.ts';
+import { MODEL_NAME } from '../packs/packs.ts';
 
-export type RunReply = { ran: boolean; exit?: number; error?: 'no_runner' | 'nested_run' | 'timeout' | 'start_failed' };
+export type RunReply = { ran: boolean; exit?: number; error?: 'no_runner' | 'nested_run' | 'no_model' | 'timeout' | 'start_failed' };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -21,7 +23,18 @@ export function runTask(rt: Runtime, id: string): RunReply {
   if (process.env.REINS_HEADLESS === '1') return { ran: false, error: 'nested_run' };
   const runner = rt.runner;
   if (runner === undefined || runner.length === 0) return { ran: false, error: 'no_runner' };
-  const [command, ...args] = runner.map((part) => part.replaceAll('{task}', id).replaceAll('{prompt}', runPrompt(id)));
+  // `{model}`: the name of the model of the client for the level of the task, as the packs name it.
+  // A runner that asks for a model and gets no name does not start: a wrong model is worse than none.
+  let model = '';
+  if (runner.some((part) => part.includes('{model}'))) {
+    const task = loadTask(rt, id);
+    const level = task?.level ?? task?.manifest?.model.level ?? 'medium';
+    const name = rt.merged.models[level];
+    // The packs are checked when they load; the check here holds for any other way a name comes in.
+    if (name === undefined || !MODEL_NAME.test(name)) return { ran: false, error: 'no_model' };
+    model = name;
+  }
+  const [command, ...args] = runner.map((part) => part.replaceAll('{task}', id).replaceAll('{prompt}', runPrompt(id)).replaceAll('{model}', model));
   if (command === undefined) return { ran: false, error: 'no_runner' };
   // The command runs directly, without a shell: the words of the prompt never become a command line.
   const r = spawnSync(command, args, {

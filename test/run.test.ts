@@ -66,6 +66,30 @@ test('run: the answer says how the client ended and where the task is', () => {
   assert.equal(r.code, 2, 'a task that is not closed as verified');
 });
 
+test('run: the runner gets the model of the level of the task', () => {
+  const b = box('');
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  const [node, script] = config.runner;
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, runner: [node, script, '{task}', '--model', '{model}', 'x-{model}-y'] }));
+  // No pack names a model for the level "weak" of this scenario: nothing starts with a wrong model.
+  const none = b.run(['run', 'draft-message']);
+  assert.deepEqual([none.json.ok, none.json.ran, none.json.error, none.code], [true, false, 'no_model', 2]);
+  assert.equal(fs.existsSync(b.log), false);
+  // The organization pack names the models of the client for the levels.
+  const file = path.join(b.root, 'packs', 'organization', 'pack.json');
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), models: { weak: 'small-model', strong: 'big-model' } }));
+  const r = b.run(['run', 'draft-message']);
+  assert.deepEqual([r.json.ran, r.json.exit], [true, 0]);
+  assert.deepEqual(calls(b)[0].args, [r.json.task, '--model', 'small-model', 'x-small-model-y']);
+  // A name of a model is a name: a pack cannot put a flag into the command line of the client.
+  for (const bad of ['--dangerously-skip-permissions', '-x', 'a b', '']) {
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), models: { weak: bad } }));
+    const refused = b.run(['scenarios']).json;
+    assert.equal(refused.not_connected?.[0]?.errors?.[0]?.path, 'models.weak', bad);
+  }
+  assert.equal(calls(b).length, 1, 'nothing more started');
+});
+
 test('run: without a runner in the config the task opens and nothing starts', () => {
   const b = box(null);
   const r = b.run(['run', 'draft-message']);

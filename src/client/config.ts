@@ -15,7 +15,7 @@ import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 // `source`: the directory of the source of the harness. A plugin that a client copied into its
 // cache has no core beside it: its entry loads the adapter from this directory.
 // `runner`: the command that starts a client without a window, as a list of words; `{task}` and
-// `{prompt}` in a word are filled in. `runner_timeout_s`: the time limit of one run.
+// `{prompt}` in a word are filled in, and `{model}` with the model of the level of the task. `runner_timeout_s`: the time limit of one run.
 const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {

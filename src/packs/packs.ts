@@ -35,6 +35,8 @@ export type Scenario = { name: string; level: PackLevel; file: string; manifest:
 export type ReadWhen = { field: string; pattern: string };
 export type ToolRule = { kind: 'read' } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen };
 // The pattern of a pack runs before every call of the tool: a short value bounds the time of a slow pattern.
+// The name of a model of a client: starts with a letter or a digit, no spaces.
+export const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$/;
 export const READ_WHEN_MAX = 4000; // characters of the value that is judged: a longer one is no read
 export const readWhenPattern = (pattern: string): RegExp => new RegExp(`^(?:${pattern})$`, 'is');
 
@@ -286,7 +288,8 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   if (models !== null) {
     const out: Partial<Record<ModelLevel, string>> = {};
     for (const [level, name] of Object.entries(models)) {
-      if (typeof name !== 'string' || name === '' || name.length > 100 || /[\r\n]/.test(name)) errors.push({ code: 'bad_name', path: `models.${level}` });
+      // The name goes into the command line of a client: a name, never a flag of the client.
+      if (typeof name !== 'string' || !MODEL_NAME.test(name)) errors.push({ code: 'bad_name', path: `models.${level}` });
       else out[level as ModelLevel] = name;
     }
     settings.models = out;
