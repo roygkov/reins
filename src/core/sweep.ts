@@ -7,6 +7,7 @@ import path from 'node:path';
 import { applyEvent, openTasks, type Runtime } from './runtime.ts';
 import type { Task } from './task.ts';
 import { pruneArchive } from '../journal/writer.ts';
+import { pruneQueue } from './queue.ts';
 
 const HOUR = 60 * 60 * 1000;
 // A free task: half a day. A scenario task: a day. A publication: an hour, as its envelope.
@@ -35,6 +36,7 @@ export function sweep(rt: Runtime, now: number = Date.now()): string[] {
   } catch {
     // no questions wait
   }
+  pruneQueue(rt, now);
   // The archive of the journal past the term that the packs name goes away.
   pruneArchive(rt.stateDir, rt.merged.journalKeepDays, now);
   return closed;

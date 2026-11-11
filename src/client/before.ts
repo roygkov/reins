@@ -177,6 +177,8 @@ function placesGuard(rt: Runtime, command: string, cwd: string): { outcome: 'den
   return found;
 }
 
+const isForm = (f: unknown): f is { decision?: unknown } => f !== null && typeof f === 'object';
+
 // The rule data of the gate: its own layers, and the lists that the packs add.
 function gateConfig(rt: Runtime, cwd: string): GateConfig {
   const cfg = rt.gateConfig ?? loadConfig(findRoot(cwd));
@@ -184,6 +186,12 @@ function gateConfig(rt: Runtime, cwd: string): GateConfig {
   for (const [key, list] of Object.entries(rt.merged.gate)) {
     const base = Array.isArray(cfg[key]) ? (cfg[key] as unknown[]) : [];
     out[key] = [...base, ...(list as unknown[]).filter((x) => !base.includes(x))];
+  }
+  // The gate takes the first form that matches. The forms that refuse stand first: a form of a
+  // lower pack that refuses is not hidden by a form above it that only asks.
+  if (Array.isArray(out.forms)) {
+    const refuses = (f: unknown): boolean => isForm(f) && f.decision === 'deny';
+    out.forms = [...out.forms.filter(refuses), ...out.forms.filter((f) => !refuses(f))];
   }
   return out;
 }
@@ -307,9 +315,7 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   if (call.headless === true && r.outcome === 'ask') {
     // The human sees the command of a shell tool, and only the name of any other tool: the input
     // of a tool can hold the text of a file.
-    const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
-    const command = own?.kind === 'shell' ? call.input[own.command] : undefined;
-    const d = deferCall(rt, call, { rule: r.rule, what: typeof command === 'string' ? command : call.tool, task: sessionTask(rt, call.session) });
+    const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what: whatOf(call, clientTools), task: sessionTask(rt, call.session) });
     if (d.pass) {
       // The approval of the human is a fact of the journal. It lets this one call pass; it does
       // not confirm a grant of a task envelope.
@@ -355,7 +361,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify({ task: id, key }));
       }
-      return queued(rt, call, action, read.command, reply(decision, { task: id, grant: key }));
+      return queued(rt, call, clientTools, action, read.command, reply(decision, { task: id, grant: key }));
     }
   }
   // A contract does not change after its approval. This holds for a write of a tool and for a
@@ -377,15 +383,34 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
     { kind: 'policy.decision', data: { outcome: decision.outcome, action_kind: action.kind, env: action.env.name } },
     { kind: 'policy.basis', data: { layer: decision.basis.layer, rule: decision.basis.rule } },
   ]);
-  return queued(rt, call, action, read.command, reply(decision));
+  return queued(rt, call, clientTools, action, read.command, reply(decision));
+}
+
+// What of the input of a call names the action. For a shell tool the words that the agent puts
+// beside the command (a description, a time limit) do not make it another action. Every other
+// field stays: it can change what the call does. For any other tool the whole input is the action:
+// the content of a file is the change itself.
+const BESIDE: readonly string[] = ['description', 'timeout', 'timeout_ms'];
+function keyInput(call: ToolCall, clientTools: ClientTools): unknown {
+  const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
+  if (own?.kind !== 'shell') return call.input;
+  return Object.fromEntries(Object.entries(call.input).filter(([key]) => !BESIDE.includes(key)));
+}
+
+// The action of a call in words for the human: the command of a shell tool, the file of a file
+// tool, else the name of the tool.
+function whatOf(call: ToolCall, clientTools: ClientTools): string {
+  const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
+  const text = own?.kind === 'shell' ? call.input[own.command] : own?.kind === 'local' ? call.input[own.path] : undefined;
+  return typeof text === 'string' ? (own?.kind === 'local' ? `${call.tool} ${text}` : text) : call.tool;
 }
 
 // An action that the policy defers waits in the queue of the human. An approval of the human for
 // this call lets it pass once.
-function queued(rt: Runtime, call: ToolCall, action: Action, command: string | undefined, r: Reply): Reply {
+function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: Action, command: string | undefined, r: Reply): Reply {
   if (r.outcome !== 'defer') return r;
   const what = command ?? `${action.name} ${action.target} @${action.env.name}`;
-  const d = deferCall(rt, call, { rule: r.rule, what, task: sessionTask(rt, call.session) });
+  const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what, task: sessionTask(rt, call.session) });
   if (!d.pass) return { ...r, queued: d.id };
   record(rt, call, [
     { kind: 'policy.decision', data: { outcome: 'allow', action_kind: action.kind, env: action.env.name } },

@@ -23,7 +23,11 @@ export type Queued = {
 };
 
 const ID = /^q[0-9a-f]{10}$/;
-const APPROVAL_MS = 24 * 60 * 60 * 1000; // an approval that nobody used for this long is gone
+const DAY = 24 * 60 * 60 * 1000;
+const APPROVAL_MS = DAY; // an approval that nobody used for this long is gone
+const WAIT_MS = 7 * DAY; // an action that nobody answered for this long waits no more
+const KEEP_MS = 7 * DAY; // an entry that ended stays this long for the human who looks back
+const MAX_WHAT = 4000; // the text of the action for the human: the whole command, within reason
 const dirOf = (rt: Runtime): string => path.join(rt.stateDir, 'queue');
 const fileOf = (rt: Runtime, id: string): string => path.join(dirOf(rt), `${id}.json`);
 
@@ -59,13 +63,21 @@ export function listQueue(rt: Runtime, now: number = Date.now()): Queued[] {
     const id = name.replace(/\.json$/, '');
     const q = ID.test(id) && name.endsWith('.json') ? read(rt, id) : null;
     if (q === null) continue;
-    if (q.state === 'waiting' || (q.state === 'approved' && now - Date.parse(q.at) <= APPROVAL_MS)) out.push(q);
+    const age = now - Date.parse(q.at);
+    if ((q.state === 'waiting' && age <= WAIT_MS) || (q.state === 'approved' && age <= APPROVAL_MS)) out.push(q);
   }
   return out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : 1));
 }
 
 function row(rt: Runtime, kind: 'policy.action_deferred' | 'policy.deferred_resolved', q: Queued, data: Record<string, string>): void {
   rt.journal.write({ kind, project: rt.project, task: q.task, ...(q.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(q.session) ? { session: q.session } : {}), data });
+}
+
+// The text of an action for the human. A text that is too long is cut, and the cut is said: the
+// human must know that the approval covers more than the text shows.
+function shown(what: string): string {
+  const text = what.replace(/\s+/g, ' ');
+  return text.length <= MAX_WHAT ? text : `${text.slice(0, MAX_WHAT)} … (+${text.length - MAX_WHAT} characters cut: the approval covers the whole action)`;
 }
 
 // A call that the policy defers. An approval of the human for this call is used up and the call
@@ -90,7 +102,7 @@ export function deferCall(rt: Runtime, call: { session?: string; tool: string; i
   if (waiting !== undefined) return { pass: false, id: waiting.id };
   const q: Queued = {
     id: `q${crypto.randomBytes(5).toString('hex')}`, key, state: 'waiting', at: new Date().toISOString(),
-    tool: call.tool, rule: more.rule, what: more.what.replace(/\s+/g, ' ').slice(0, 300), task: more.task, project: rt.project,
+    tool: call.tool, rule: more.rule, what: shown(more.what), task: more.task, project: rt.project,
     ...(call.session !== undefined ? { session: call.session } : {}),
   };
   write(rt, q);
@@ -99,11 +111,43 @@ export function deferCall(rt: Runtime, call: { session?: string; tool: string; i
 }
 
 // The answer of the human for an action that waits. False: nothing waits under this name.
-export function resolveQueued(rt: Runtime, id: string, state: 'approved' | 'rejected'): boolean {
+export function resolveQueued(rt: Runtime, id: string, state: 'approved' | 'rejected', now: number = Date.now()): boolean {
   const q = ID.test(id) ? read(rt, id) : null;
-  if (q === null || q.state !== 'waiting') return false;
+  // An action that waited past its term waits no more: an answer that comes too late answers nothing.
+  if (q === null || q.state !== 'waiting' || now - Date.parse(q.at) > WAIT_MS) return false;
   // The time of the approval starts its term.
-  write(rt, { ...q, state, at: new Date().toISOString() });
+  write(rt, { ...q, state, at: new Date(now).toISOString() });
   row(rt, 'policy.deferred_resolved', q, { queued: q.id, state });
   return true;
+}
+
+// Removes the entries that ended long ago: used, rejected, an approval that nobody used, an action
+// that nobody answered. Returns the count.
+export function pruneQueue(rt: Runtime, now: number = Date.now()): number {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dirOf(rt));
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of names) {
+    const id = name.replace(/\.json$/, '');
+    const q = ID.test(id) && name.endsWith('.json') ? read(rt, id) : null;
+    if (q === null) {
+      // What a process left when it died in the middle of a write.
+      try {
+        if (/\.(taken|tmp)$/.test(name) && now - fs.statSync(path.join(dirOf(rt), name)).mtimeMs > KEEP_MS) fs.rmSync(path.join(dirOf(rt), name), { force: true });
+      } catch {
+        // the file went away
+      }
+      continue;
+    }
+    const age = now - Date.parse(q.at);
+    const life = q.state === 'waiting' ? WAIT_MS : q.state === 'approved' ? APPROVAL_MS : 0;
+    if (age <= life + KEEP_MS) continue;
+    fs.rmSync(fileOf(rt, q.id), { force: true });
+    removed += 1;
+  }
+  return removed;
 }
