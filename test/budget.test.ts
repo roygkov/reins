@@ -244,3 +244,60 @@ test('budget: another transcript file is counted from its start', () => {
   const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost');
   assert.deepEqual(rows.map((r) => r.data?.tokens), [150, 150], 'one answer in three lines is counted once; the second file from its start');
 });
+
+// ---- Found in a live client.
+
+test('budget: what the last answer of the model spent is counted at the end of the turn', () => {
+  const b = box(LIMITED);
+  const transcript = path.join(b.root, 'transcript.jsonl');
+  const line = (id: string) => `${JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: 100, output_tokens: 50 } } })}\n`;
+  const hook = (mode: string, name: string) => spawnSync(process.execPath, [CLAUDE, mode], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: name, transcript_path: transcript, tool_name: 'Read', tool_input: {} }), env: b.env, encoding: 'utf8' });
+  hook('prompt', 'UserPromptSubmit');
+  fs.writeFileSync(transcript, line('m1'));
+  hook('post', 'PostToolUse');
+  fs.appendFileSync(transcript, line('m2'));
+  hook('stop', 'Stop');
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost');
+  assert.deepEqual(rows.map((r) => r.data?.tokens), [150, 150]);
+  assert.equal(new Set(rows.map((r) => r.task)).size, 1, 'the cost of the last answer goes to the task of the turn, before it closes');
+});
+
+test('budget: a subordinate has a file of its own, and a helper of the client without a type is no executor', () => {
+  const b = box(LIMITED);
+  const main = path.join(b.root, 'main.jsonl');
+  const sub = path.join(b.root, 'sub.jsonl');
+  const line = (id: string, n: number) => `${JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: n, output_tokens: 0 } } })}\n`;
+  const hook = (mode: string, event: Record<string, unknown>) => spawnSync(process.execPath, [CLAUDE, mode], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, transcript_path: main, ...event }), env: b.env, encoding: 'utf8' });
+  hook('prompt', { hook_event_name: 'UserPromptSubmit' });
+  fs.writeFileSync(main, line('m1', 100));
+  fs.writeFileSync(sub, line('s1', 40));
+  hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'Explore', prompt: 'x' } });
+  hook('subagent-stop', { hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: sub, last_assistant_message: 'done' });
+  fs.appendFileSync(main, line('m2', 7));
+  hook('subagent-stop', { hook_event_name: 'SubagentStop', agent_id: 'a2', agent_type: '', last_assistant_message: 'a summary' });
+  hook('stop', { hook_event_name: 'Stop' });
+  const rows = readJournal(b.rt.journal.file);
+  assert.deepEqual(rows.filter((r) => r.kind === 'executor.cost').map((r) => r.data?.tokens), [100, 40, 7], 'the main file, the file of the subordinate, the main file again: nothing twice');
+  assert.equal(rows.filter((r) => r.kind === 'executor.report_received').length, 1, 'the helper without a type is no report');
+});
+
+test('budget: the file of the session keeps its mark however many subordinates the session runs', () => {
+  const b = box(LIMITED);
+  const main = path.join(b.root, 'main.jsonl');
+  const line = (id: string) => `${JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: 10, output_tokens: 0 } } })}\n`;
+  const hook = (mode: string, event: Record<string, unknown>) => spawnSync(process.execPath, [CLAUDE, mode], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, transcript_path: main, ...event }), env: b.env, encoding: 'utf8' });
+  hook('prompt', { hook_event_name: 'UserPromptSubmit' });
+  fs.writeFileSync(main, line('m1'));
+  hook('stop', { hook_event_name: 'Stop' });
+  // The session file as it is after sixty subordinates, each with a file of its own.
+  const file = path.join(b.rt.stateDir, 'sessions', 'live.json');
+  const session = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (let i = 0; i < 60; i += 1) session.costMarks[`/tmp/sub-${i}.jsonl`] = 1;
+  fs.writeFileSync(file, JSON.stringify(session));
+  hook('prompt', { hook_event_name: 'UserPromptSubmit' });
+  fs.appendFileSync(main, line('m2'));
+  hook('stop', { hook_event_name: 'Stop' });
+  hook('prompt', { hook_event_name: 'UserPromptSubmit' });
+  hook('stop', { hook_event_name: 'Stop' });
+  assert.deepEqual(readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost').map((r) => r.data?.tokens), [10, 10]);
+});

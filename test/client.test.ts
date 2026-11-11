@@ -193,3 +193,32 @@ test('client: an approval from the queue in a run without a window is a row of t
   assert.equal(beforeAction(b.rt, call, CLIENT).rule, 'queue.approved');
   assert.ok(readJournal(b.rt.journal.file).some((x) => x.kind === 'policy.basis' && x.data?.rule === 'queue.approved'));
 });
+
+// ---- Found in a live client.
+
+test('client: without a window an approval is for the action in any session', () => {
+  const b = box();
+  const call = (session: string) => ({ cwd: b.cwd, tool: 'unknown__tool', input: { a: 1 }, session, headless: true });
+  const first = beforeAction(b.rt, call('run-1'), CLIENT);
+  assert.equal(first.outcome, 'defer');
+  assert.equal(beforeAction(b.rt, call('run-2'), CLIENT).queued, first.queued, 'the next run waits in the same place');
+  resolveQueued(b.rt, first.queued ?? '', 'approved');
+  assert.equal(beforeAction(b.rt, call('run-3'), CLIENT).rule, 'queue.approved');
+});
+
+test('client: an approval without a window stays in its project, and with a window it stays in its session', () => {
+  const b = box();
+  const headless = (rt: Runtime) => beforeAction(rt, { cwd: b.cwd, tool: 'unknown__tool', input: { a: 1 }, session: 'run-1', headless: true }, CLIENT);
+  const first = headless(b.rt);
+  resolveQueued(b.rt, first.queued ?? '', 'approved');
+  assert.equal(headless({ ...b.rt, project: 'p9z8y7x6' }).outcome, 'defer', 'another project waits on its own');
+  assert.equal(headless(b.rt).rule, 'queue.approved');
+  // With a window a deferred action is the action of one session.
+  const DEFER = { ...b.rt, merged: { ...b.rt.merged, rules: [{ id: 'later', outcome: 'defer' as const, tool: 'unknown__tool', level: 'person' as const }] } };
+  const windowed = (session: string) => beforeAction(DEFER, { cwd: b.cwd, tool: 'unknown__tool', input: { a: 2 }, session }, CLIENT);
+  const waits = windowed('s-a');
+  assert.equal(waits.outcome, 'defer');
+  resolveQueued(b.rt, waits.queued ?? '', 'approved');
+  assert.equal(windowed('s-b').outcome, 'defer');
+  assert.equal(windowed('s-a').rule, 'queue.approved');
+});

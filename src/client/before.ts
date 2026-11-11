@@ -315,7 +315,7 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   if (call.headless === true && r.outcome === 'ask') {
     // The human sees the command of a shell tool, and only the name of any other tool: the input
     // of a tool can hold the text of a file.
-    const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what: whatOf(call, clientTools), task: sessionTask(rt, call.session) });
+    const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what: whatOf(call, clientTools), task: sessionTask(rt, call.session), anySession: true });
     if (d.pass) {
       // The approval of the human is a fact of the journal. It lets this one call pass; it does
       // not confirm a grant of a task envelope.

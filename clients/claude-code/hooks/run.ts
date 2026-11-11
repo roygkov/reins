@@ -114,6 +114,8 @@ function pre(): void {
 
 // What the model spent since the last look: the new lines of the transcript of the session. A
 // line of the model carries its usage; the tokens that were read from the cache are not counted.
+const MAX_MARKS = 50;
+
 function spent(rt: Runtime, session: string | undefined): void {
   if (transcript === undefined) return;
   const file = transcript;
@@ -121,8 +123,10 @@ function spent(rt: Runtime, session: string | undefined): void {
   // hooks that run together never count the same lines.
   const part = withSession(rt, session, (now) => {
     const size = fs.statSync(file).size;
-    // Another file, or a file that became shorter: the count starts from its beginning.
-    const from = now.costFile === file && (now.costMark ?? 0) <= size ? (now.costMark ?? 0) : 0;
+    // Every file has its own mark: the session has its file, and each subordinate has one. A
+    // file that became shorter is counted from its beginning.
+    const mark = now.costMarks?.[file] ?? 0;
+    const from = mark <= size ? mark : 0;
     if (size <= from) return { next: null, result: null };
     const fd = fs.openSync(file, 'r');
     const chunk = Buffer.alloc(Math.min(size - from, 8 * 1024 * 1024));
@@ -133,7 +137,13 @@ function spent(rt: Runtime, session: string | undefined): void {
     const last = chunk.lastIndexOf(10);
     const end = last < 0 ? (chunk.length === 8 * 1024 * 1024 ? chunk.length - 1 : -1) : last;
     if (end < 0) return { next: null, result: null };
-    return { next: { ...now, costFile: file, costMark: from + end + 1 }, result: chunk.subarray(0, end) };
+    // The marks of the last files only: a session with many subordinates must not grow without end.
+    // The file that was counted now goes to the end: the file of the session itself is counted at
+    // every look, so its mark is never the one that is dropped.
+    const all = { ...(now.costMarks ?? {}) };
+    delete all[file];
+    all[file] = from + end + 1;
+    return { next: { ...now, costMarks: Object.fromEntries(Object.entries(all).slice(-MAX_MARKS)) }, result: chunk.subarray(0, end) };
   });
   if (part === null) return;
   const buffer = part;
@@ -181,6 +191,22 @@ function session(mode: string): void {
     if (rt === null) return;
     const e: SessionEvent = { cwd: value.cwd, client: 'claude_code' };
     if (typeof value.session_id === 'string' && value.session_id !== '') e.session = value.session_id;
+    // The last answer of the model has no action after it: what it spent is counted at the end
+    // of the turn, at the end of a subordinate and before a compaction.
+    if (mode === 'stop' || mode === 'subagent-stop' || mode === 'pre-compact') {
+      transcript = typeof value.transcript_path === 'string' && value.transcript_path.startsWith('/') ? value.transcript_path : undefined;
+      // A subordinate has a file of its own: what it spent counts in the task too.
+      const own = mode === 'subagent-stop' && typeof value.agent_transcript_path === 'string' && value.agent_transcript_path.startsWith('/') ? value.agent_transcript_path : undefined;
+      for (const file of [transcript, own]) {
+        if (file === undefined) continue;
+        transcript = file;
+        try {
+          spent(rt, e.session);
+        } catch {
+          // the count of the cost never stops an event of the session
+        }
+      }
+    }
     if (mode === 'session-start') {
       const { context } = sessionStart(rt, e);
       process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context.join('\n') } }));
@@ -195,7 +221,10 @@ function session(mode: string): void {
     else if (mode === 'session-end') sessionEnd(rt, e);
     else if (mode === 'pre-compact') beforeCompaction(rt, e);
     else if (mode === 'subagent-stop') {
-      const role = typeof value.agent_type === 'string' ? value.agent_type : undefined;
+      // The client also ends its own helpers here (the summary of a compaction): they have no
+      // type, they took no place, and their words are no report.
+      if (typeof value.agent_type !== 'string' || value.agent_type === '') return;
+      const role = value.agent_type;
       // The last words of the subordinate are its report, when the client gives them.
       const report = typeof value.last_assistant_message === 'string' && value.last_assistant_message !== '' ? value.last_assistant_message : undefined;
       executorReported(rt, { cwd: e.cwd, ...(e.session !== undefined ? { session: e.session } : {}), ...(role !== undefined ? { role } : {}), ...(report !== undefined ? { report } : {}) });

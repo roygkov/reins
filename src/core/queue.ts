@@ -82,8 +82,11 @@ function shown(what: string): string {
 
 // A call that the policy defers. An approval of the human for this call is used up and the call
 // passes. Else the call waits: once, however many times the agent tries it.
-export function deferCall(rt: Runtime, call: { session?: string; tool: string; input: unknown }, more: { rule: string; what: string; task: string }): { pass: true } | { pass: false; id: string } {
-  const key = queueKey(call.session, call.tool, call.input);
+// `anySession`: the approval is for the action in any session. A client without a window is a
+// new session at every run: an approval that is tied to one session would never be used.
+export function deferCall(rt: Runtime, call: { session?: string; tool: string; input: unknown }, more: { rule: string; what: string; task: string; anySession?: boolean }): { pass: true } | { pass: false; id: string } {
+  // In place of the session stands the project: an approval in one project is not an approval in another.
+  const key = queueKey(more.anySession === true ? `project ${rt.project}` : call.session, call.tool, call.input);
   const known = listQueue(rt).filter((q) => q.key === key);
   const approved = known.find((q) => q.state === 'approved');
   if (approved !== undefined) {
