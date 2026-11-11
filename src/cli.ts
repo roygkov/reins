@@ -19,7 +19,7 @@ import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, approveContract, loadTask, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
+import { applyEvent, approveContract, loadTask, verifyWork, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
@@ -304,6 +304,12 @@ function main(args: string[]): Out {
   }
   if (command === 'finish' && first !== undefined && rest.length === 0) {
     const rt = runtime();
+    // The work changed after the check: the publication ended without a verified result.
+    if (!verifyWork(rt, first)) {
+      const ended = loadTask(rt, first);
+      if (ended === null) throw new Stop('unknown_task');
+      return view(rt, ended);
+    }
     const r = applyEvent(rt, first, { type: 'finish' }, 'agent');
     if (!('task' in r)) throw new Stop(r.error);
     if (r.error !== undefined) throw new Stop(r.error);

@@ -70,7 +70,7 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   const repoPack = root.isRepo ? path.join(root.root, '.reins') : undefined;
   if (config.packs.project === undefined && config.repoPacks && repoPack !== undefined && fs.existsSync(path.join(repoPack, 'pack.json'))) config.packs.project = repoPack;
   const project = `p${crypto.createHash('sha1').update(cwd).digest('hex').slice(0, 8)}`;
-  const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file };
+  const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file, workDir: cwd };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
   if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;
   return rt;

@@ -14,6 +14,7 @@ import { closedContext } from '../packs/packs.ts';
 import { patchSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect } from './collect.ts';
+import { workState } from './work.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
 
 export type Runtime = {
@@ -34,6 +35,7 @@ export type Runtime = {
   projectPackDir?: string; // `.reins` of the repository of the client, also when it does not exist yet
   memoryDir?: string; // the directory of the memory records; absent: inside the state directory
   clientPaths?: string[]; // patterns of the paths of the client settings that register the harness
+  workDir?: string; // the directory where the client works: a script of a pack must not change it
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };
 
@@ -43,7 +45,7 @@ export type Origin = 'agent' | 'human' | 'harness';
 const ALLOWED: Record<Origin, readonly TaskEvent['type'][]> = {
   agent: ['report', 'ask', 'finish'],
   human: ['human', 'finish'],
-  harness: ['prepared', 'collect_failed', 'check', 'expire'],
+  harness: ['prepared', 'collect_failed', 'check', 'expire', 'invalidate'],
 };
 
 export type Opened =
@@ -200,6 +202,8 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
   const collect = manifest.collect;
   if (collect === undefined) return { task: prepared({ type: 'prepared', work: true, outputs: 0, bytes: 0 }), collected: null };
   const file = rt.merged.scriptFiles[collect.script];
+  // A collect script only reads. A change of the work of the client is a fact that it did not.
+  const workBefore = rt.workDir === undefined ? null : workState(rt.workDir);
   const result =
     file === undefined
       ? ({ ok: false, reason: 'exit' } as const)
@@ -208,7 +212,11 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
           flags: collect.flags ?? [],
           timeoutMs: collect.timeout_s !== undefined ? collect.timeout_s * 1000 : (rt.collectTimeoutMs ?? DEFAULT_COLLECT_TIMEOUT_MS),
           maxBytes: collect.max_bytes ?? DEFAULT_COLLECT_BYTES,
+          env: connectorEnv(rt, manifest),
         });
+  if (workBefore !== null && rt.workDir !== undefined) {
+    if (workState(rt.workDir) !== workBefore) return { task: prepared({ type: 'collect_failed', reason: 'changed_work' }), collected: null };
+  }
   if (!result.ok) return { task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
   // The run condition is the name of a flag. False: the task closes without the model.
   if (manifest.run_if !== undefined && result.flags[manifest.run_if] === false) {
@@ -216,6 +224,32 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
   }
   const task = prepared({ type: 'prepared', work: true, outputs: collect.outputs.length, bytes: result.bytes }, result.outputs);
   return { task, collected: task.state === 'executing' ? result.outputs : null };
+}
+
+// The variables of the read connectors that a manifest names: a script of the task gets these
+// and no variable of another connector.
+function connectorEnv(rt: Runtime, manifest: Manifest): string[] {
+  return (manifest.permissions.read ?? []).flatMap((name) => rt.merged.connectorEnv[name] ?? []);
+}
+
+// The directory of the work that a result of the task is about: the collect result that the
+// manifest names as the source.
+function sourceRoot(rt: Runtime, task: Task): string | null {
+  const name = task.manifest?.done.source;
+  const root = name === undefined ? undefined : readCollected(rt, task.id)?.[name];
+  return typeof root === 'string' && root !== '' ? root : null;
+}
+
+// An accepted result holds for the work that the check saw. False: the work changed after the
+// check, and the publication of the task ended without a verified result.
+export function verifyWork(rt: Runtime, id: string): boolean {
+  const task = loadTask(rt, id);
+  if (task === null || task.state !== 'publishing' || task.work === undefined) return true;
+  const root = sourceRoot(rt, task);
+  // The work had a fingerprint at the check. No fingerprint now is not "the same work".
+  if ((root === null ? null : workState(root)) === task.work) return true;
+  applyEvent(rt, id, { type: 'invalidate' }, 'harness');
+  return false;
 }
 
 export type Proposed = { ok: true; task: Task } | { ok: false; error: 'bad_contract'; details: Fault<string>[] };
@@ -304,6 +338,9 @@ const coreChecks = (task: Task): boolean => task.manifest !== undefined && task.
 export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Origin): Step | { error: 'unknown_task' | 'not_allowed' | 'busy' } {
   if (!TASK_ID.test(id)) return { error: 'unknown_task' };
   if (!ALLOWED[origin].includes(event.type)) return { error: 'not_allowed' };
+  // Every end of a publication first compares the work with the work that the check saw: a
+  // publication that expires or that the human stops keeps the label of the check only then.
+  if (event.type === 'expire' || event.type === 'finish' || (event.type === 'human' && event.decision === 'stop')) verifyWork(rt, id);
   const r = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return null;
@@ -430,6 +467,7 @@ function scriptCheck(rt: Runtime, task: Task): Answer {
   const collected = taskFile(rt, task.id, '.collect');
   const r = runCollect(file, { inputs: task.inputs, task: task.id, report: reportFile(rt, task.id), collected: fs.existsSync(collected) ? collected : null }, {
     outputs: ['result'], flags: [], timeoutMs: rt.checkScriptTimeoutMs ?? DEFAULT_CHECK_SCRIPT_MS, maxBytes: 64 * 1024,
+    ...(task.manifest !== undefined ? { env: connectorEnv(rt, task.manifest) } : {}),
   });
   if (!r.ok) return none('check_failed');
   const result = r.outputs.result;
@@ -452,7 +490,13 @@ export function runCheck(rt: Runtime, id: string): Checked {
   if (before.state !== 'checking' || !coreChecks(before)) return { error: 'not_checking' };
   const text = readReport(rt, id);
   // A report that cannot be read is a fault of the harness: no answer.
-  const answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : before.manifest?.done.kind === 'citations' ? citations(rt, before, text) : scriptCheck(rt, before);
+  // The answer holds for one state of the work: the work is read before the check and after it.
+  const root = sourceRoot(rt, before);
+  const workBefore = root === null ? null : workState(root);
+  let answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : before.manifest?.done.kind === 'citations' ? citations(rt, before, text) : scriptCheck(rt, before);
+  const work = root === null ? null : workState(root);
+  // The work changed while the check ran: nothing says which work the answer is about.
+  if (workBefore !== null && work !== workBefore) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
   const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
   if (answer.reason !== undefined) detail.reason = answer.reason;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -461,7 +505,7 @@ export function runCheck(rt: Runtime, id: string): Checked {
       if (task === null) return { error: 'unknown_task' };
       // The same wait: the same count of returns and the same report that the check read.
       if (task.state !== 'checking' || task.returns !== before.returns || readReport(rt, id) !== text) return { error: 'not_checking' };
-      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail })), answer };
+      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, ...(work !== null ? { work } : {}) })), answer };
     });
     if (r !== 'busy') return r;
   }

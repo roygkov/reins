@@ -1030,7 +1030,7 @@
   ]
  },
  {
-  "name": "only a citation check has a source",
+  "name": "a check by the human has no source",
   "base": "minimal",
   "patch": {
    "done": {
@@ -1174,6 +1174,35 @@
    "not_in_list package",
    "not_in_list done.kind",
    "unknown_field extra"
+  ]
+ },
+ {
+  "name": "a check by a script can name the source that its answer holds for",
+  "base": "review",
+  "pack": "default",
+  "patch": {
+   "done": {
+    "kind": "command",
+    "check": "tests",
+    "source": "worktree"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "only a citation check has a list of the changed files",
+  "base": "review",
+  "pack": "default",
+  "patch": {
+   "done": {
+    "kind": "command",
+    "check": "tests",
+    "source": "worktree",
+    "changed": "diff"
+   }
+  },
+  "errors": [
+   "not_allowed done.changed"
   ]
  }
 ]

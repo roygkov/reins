@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
-import { confirm, decideAction, loadTask, type Runtime } from '../core/runtime.ts';
+import { confirm, decideAction, loadTask, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario } from '../core/sessions.ts';
@@ -263,7 +263,9 @@ function taskFor(rt: Runtime, key: string, session: string | undefined): string 
     if (task.state === 'executing') return id;
     // A publication that nobody ended must not leave an approved write for ever: without a use
     // or another change of the task for this long, its envelope no longer answers.
-    if (task.state === 'publishing' && Date.now() - fs.statSync(path.join(rt.stateDir, 'tasks', name)).mtimeMs <= (rt.publishIdleMs ?? PUBLISH_IDLE_MS)) return id;
+    // An accepted result holds for the work that the check saw: after a change of the work the
+    // publication ends, and its envelope does not answer.
+    if (task.state === 'publishing' && Date.now() - fs.statSync(path.join(rt.stateDir, 'tasks', name)).mtimeMs <= (rt.publishIdleMs ?? PUBLISH_IDLE_MS) && verifyWork(rt, id)) return id;
   }
   return undefined;
 }

@@ -34,6 +34,7 @@ export type Task = {
   returns: number;
   level?: Level;
   label?: ResultLabel;
+  work?: string; // the fingerprint of the work that the accepted result holds for
 };
 
 export type TaskEvent =
@@ -41,7 +42,9 @@ export type TaskEvent =
   | { type: 'collect_failed'; reason: string }
   | { type: 'report'; size: number; fp: string }
   // `detail`: counts and a reason code of the check for the journal, never text.
-  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number> }
+  // `work`: the fingerprint of the work that the check saw.
+  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string }
+  | { type: 'invalidate' } // the work changed after the check: the answer does not hold any more
   | { type: 'ask' }
   | { type: 'human'; decision: 'answered' | 'accept' | 'return' | 'stop' }
   | { type: 'finish' } // the publication is over: nothing more will be written
@@ -191,7 +194,7 @@ export function step(task: Task, event: TaskEvent): Step {
     case 'check': {
       if (task.state !== 'checking' || done === undefined) return refuse(task);
       const detail = event.detail ?? {};
-      if (event.result === 'PASS') return accept(task, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
+      if (event.result === 'PASS') return accept(event.work === undefined ? task : { ...task, work: event.work }, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
       // No answer means "not ready". The silence of a check is never a success.
       const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { ...detail, check_kind: done.kind } };
       if (task.returns < done.retries) return back(task, [answer], 'check_fail', true);
@@ -203,6 +206,12 @@ export function step(task: Task, event: TaskEvent): Step {
     case 'ask': {
       if (task.state !== 'executing') return refuse(task);
       return { task: { ...task, state: 'waiting_human', waiting: 'gate' }, rows: [{ kind: 'task.waiting_human', data: { reason: 'gate' } }] };
+    }
+    case 'invalidate': {
+      // An accepted result holds for the work that the check saw. The work is not that any more:
+      // what would be published now was not checked.
+      if (task.state !== 'publishing') return refuse(task);
+      return close(task, 'not_verified', [{ kind: 'check.invalidated' }], 'work_changed');
     }
     case 'finish': {
       if (task.state !== 'publishing') return refuse(task);

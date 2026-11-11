@@ -2,7 +2,8 @@
 // The script gets the task inputs as JSON on its standard input and prints one JSON object:
 // { "outputs": { <name>: <any> }, "flags": { <name>: <boolean> } } with exactly the names of the manifest.
 // The script gets a small fixed environment, a time limit and an output limit.
-// Not enforced here: "read connectors only". That needs the client or a sandbox.
+// Of the variables of the connectors it gets only those of the read connectors of its manifest.
+// Not enforced here: the network and the files outside the work. That needs a sandbox of the system.
 
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -14,7 +15,8 @@ export type CollectResult =
   | { ok: true; outputs: Record<string, unknown>; flags: Record<string, boolean>; bytes: number }
   | { ok: false; reason: CollectReason };
 
-export type CollectOptions = { outputs: string[]; flags: string[]; timeoutMs: number; maxBytes: number };
+// `env`: the names of more variables that the script gets: those of its read connectors.
+export type CollectOptions = { outputs: string[]; flags: string[]; timeoutMs: number; maxBytes: number; env?: string[] };
 
 const PASSED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR'] as const;
 const SUPERVISOR = fileURLToPath(new URL('./collect-child.ts', import.meta.url));
@@ -22,7 +24,7 @@ const BACKSTOP_MS = 5000; // the supervisor enforces the limits; this is for a s
 
 export function runCollect(file: string, input: { inputs: Record<string, string | number> } & Record<string, unknown>, opts: CollectOptions): CollectResult {
   const env: Record<string, string> = {};
-  for (const key of PASSED_ENV) {
+  for (const key of [...PASSED_ENV, ...(opts.env ?? [])]) {
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }

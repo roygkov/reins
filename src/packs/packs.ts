@@ -39,7 +39,9 @@ export type PackRule = { id: string; outcome: 'ask' | 'defer' | 'deny'; tool?: s
 // What one pack says. Absent fields say nothing.
 export type PackSettings = {
   name: string;
-  connectors?: { read?: string[]; write?: string[] };
+  // `env`: the environment variables of a read connector. A script of a task gets the variables
+  // of the read connectors that its manifest names.
+  connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]> };
   envs?: { known?: string[]; production?: string[] };
   limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number };
   roles?: string[];
@@ -82,6 +84,7 @@ export type Merged = {
   models: Partial<Record<ModelLevel, string>>; // level -> name of the model; a lower pack replaces a name
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
   gate: GateData; // the rule data of the gate that the packs add, upper pack first
+  connectorEnv: Record<string, string[]>; // read connector -> its environment variables, from the organization pack
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -91,6 +94,10 @@ const MAX_NOTE_BYTES = 16 * 1024;
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
+
+const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+// Variables that decide what a script runs and where: a pack does not set them.
+const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP'];
 
 const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate'] as const;
 
@@ -190,11 +197,34 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     else settings.name = value.name;
   }
 
-  const connectors = section(errors, value.connectors, 'connectors', ['read', 'write']);
+  const connectors = section(errors, value.connectors, 'connectors', ['read', 'write', 'env']);
   if (connectors !== null) {
     const read = names(errors, connectors.read, 'connectors.read');
     const write = names(errors, connectors.write, 'connectors.write');
     settings.connectors = { ...(read !== undefined && { read }), ...(write !== undefined && { write }) };
+    if (connectors.env !== undefined) {
+      // Only the organization says which variables belong to a connector: a lower level could
+      // give a script the variables of a connector that its manifest does not name.
+      if (level !== 'organization') errors.push({ code: 'not_allowed', path: 'connectors.env' });
+      else if (!isObj(connectors.env)) errors.push({ code: 'not_object', path: 'connectors.env' });
+      else {
+        const env: Record<string, string[]> = {};
+        for (const [name, list] of Object.entries(connectors.env)) {
+          const at = `connectors.env.${name}`;
+          if (!(read ?? []).includes(name)) errors.push({ code: 'not_in_list', path: at });
+          else if (!Array.isArray(list)) errors.push({ code: 'not_array', path: at });
+          else {
+            const good: string[] = [];
+            list.forEach((item, i) => {
+              if (typeof item !== 'string' || !ENV_NAME.test(item) || RESERVED_ENV.includes(item)) errors.push({ code: 'bad_name', path: `${at}[${i}]` });
+              else if (!good.includes(item)) good.push(item);
+            });
+            env[name] = good;
+          }
+        }
+        settings.connectors.env = env;
+      }
+    }
   }
 
   const envs = section(errors, value.envs, 'envs', ['known', 'production']);
@@ -490,6 +520,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
     c[key] = list;
   };
   if (s.tools !== undefined) m.tools = s.tools;
+  if (s.connectors?.env !== undefined) m.connectorEnv = s.connectors.env;
   for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
   if (pack.note !== undefined) m.notes.push({ level: pack.level, text: pack.note });
   Object.assign(m.models, s.models ?? {});
@@ -548,7 +579,7 @@ export function closedContext(m: Merged): PackContext {
 }
 
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {}, gate: {} };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {}, gate: {}, connectorEnv: {} };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();

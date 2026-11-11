@@ -308,7 +308,8 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
   // The citation check reads the source that the collect step prepared, never a path of the agent.
   for (const key of ['source', 'changed'] as const) {
     if (d[key] === undefined) continue;
-    if (kind !== null && kind !== 'citations') r.add('not_allowed', `done.${key}`);
+    // The source also names the work that an answer of a check script holds for.
+    if (kind !== null && kind !== 'citations' && (key === 'changed' || !needsCheck)) r.add('not_allowed', `done.${key}`);
     else {
       const name = named(r, d[key], `done.${key}`, IDENT);
       if (name !== null && !outputs.includes(name)) r.add('unknown_output', `done.${key}`);

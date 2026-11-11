@@ -24,7 +24,7 @@ export const SIZE_CAP = 1 << 20; // bytes: a larger file is not read
 
 export type ItemFault = 'bad_item' | 'unknown_field' | 'bad_field' | 'no_location' | 'no_quote' | 'short_quote' | 'no_file' | 'not_in_change' | 'not_found';
 // `no_check`, `check_failed`: a check script of a pack that is missing or did not answer.
-export type AnswerReason = 'no_source' | 'deadline' | 'bad_report' | 'too_many' | 'faults' | 'no_check' | 'check_failed';
+export type AnswerReason = 'no_source' | 'deadline' | 'bad_report' | 'too_many' | 'faults' | 'no_check' | 'check_failed' | 'work_changed';
 export type Answer = {
   result: 'PASS' | 'FAIL' | 'none';
   reason?: AnswerReason;
