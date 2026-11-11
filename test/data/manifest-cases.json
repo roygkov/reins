@@ -1054,6 +1054,111 @@
   ]
  },
  {
+  "name": "the output can name the fields of an item and their values",
+  "base": "review",
+  "patch": {
+   "output": {
+    "fields": {
+     "severity": [
+      "blocking",
+      "note"
+     ],
+     "confidence": [
+      "likely"
+     ]
+    }
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "the fields of an item are an object of lists",
+  "base": "review",
+  "patch": {
+   "output": {
+    "fields": [
+     "severity"
+    ]
+   }
+  },
+  "errors": [
+   "not_object output.fields"
+  ]
+ },
+ {
+  "name": "a field of an item has a list of values",
+  "base": "review",
+  "patch": {
+   "output": {
+    "fields": {
+     "severity": "note",
+     "level": [],
+     "kind": [
+      "a",
+      7,
+      "two\nlines",
+      "a"
+     ]
+    }
+   }
+  },
+  "errors": [
+   "not_array output.fields.severity",
+   "empty output.fields.level",
+   "not_string output.fields.kind[1]",
+   "not_one_line output.fields.kind[2]",
+   "duplicate output.fields.kind[3]"
+  ]
+ },
+ {
+  "name": "a field of an item cannot take a name of the core",
+  "base": "review",
+  "patch": {
+   "output": {
+    "fields": {
+     "file": [
+      "a"
+     ],
+     "line": [
+      "a"
+     ],
+     "end": [
+      "a"
+     ],
+     "quote": [
+      "a"
+     ],
+     "text": [
+      "a"
+     ]
+    }
+   }
+  },
+  "errors": [
+   "not_allowed output.fields.file",
+   "not_allowed output.fields.line",
+   "not_allowed output.fields.end",
+   "not_allowed output.fields.quote",
+   "not_allowed output.fields.text"
+  ]
+ },
+ {
+  "name": "a field of an item has a plain name",
+  "base": "review",
+  "patch": {
+   "output": {
+    "fields": {
+     "Severity": [
+      "a"
+     ]
+    }
+   }
+  },
+  "errors": [
+   "bad_name output.fields.Severity"
+  ]
+ },
+ {
   "name": "every fault is reported, not only the first",
   "base": "review",
   "patch": {

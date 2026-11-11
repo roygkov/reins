@@ -9,7 +9,7 @@ import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
 import { isObj } from '../contracts/shape.ts';
-import { checkCitations, MAX_FINDINGS, type Answer } from '../check/citations.ts';
+import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect } from './collect.ts';
 import { TASK_STATES, confirmGrant, decideFor, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
 
@@ -234,7 +234,7 @@ export function confirm(rt: Runtime, id: string, key: string): boolean {
 }
 
 const REPORT_CAP = 1024 * 1024;
-const DEFAULT_CHECK_TIMEOUT_MS = 10_000;
+const DEFAULT_CHECK_TIMEOUT_MS = 5_000;
 const reportFile = (rt: Runtime, id: string): string => path.join(rt.stateDir, 'tasks', `${id}.report.txt`);
 
 // The last accepted report of a task. Kept beside the task, never in the journal.
@@ -275,11 +275,13 @@ function citations(rt: Runtime, task: Task, text: string): Answer {
     if (list === null) return none;
     changed = list;
   }
-  const deadline = Date.now() + (rt.checkTimeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS);
+  // The check runs under the lock of the task: it ends well before the lock can be taken as stale.
+  const deadline = Date.now() + Math.min(rt.checkTimeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS, LOCK_STALE_MS / 2);
   return checkCitations(text, {
     root,
     ...(changed !== undefined ? { changed } : {}),
-    maxFindings: Math.min(task.manifest?.output.max_items ?? MAX_FINDINGS, MAX_FINDINGS),
+    ...(task.manifest?.output.max_items !== undefined ? { maxItems: task.manifest.output.max_items } : {}),
+    ...(task.manifest?.output.fields !== undefined ? { fields: task.manifest.output.fields } : {}),
     expired: () => Date.now() > deadline,
   });
 }

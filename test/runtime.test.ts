@@ -47,9 +47,9 @@ const comment = (target: string): Action => ({ via: 'tool', kind: 'write', name:
 
 // The citation check in the runtime: the report of the agent is checked against the source that
 // the collect step named. The agent submits the text; the harness runs the check and gives the answer.
-const FINDING = '1. [note] [likely] bounds — src/a.ts:1 — wrong — evidence: quote "const limit = items.length;" — fix: x';
-const GOOD_REPORT = ['review: 1 findings (0 blocking)', FINDING].join('\n');
-const BAD_REPORT = ['review: 1 findings (0 blocking)', FINDING.replace('items.length;', 'items.size();')].join('\n');
+const ITEM = { file: 'src/a.ts', line: 1, quote: 'const limit = items.length;', text: 'wrong' };
+const GOOD_REPORT = JSON.stringify({ items: [ITEM] });
+const BAD_REPORT = JSON.stringify({ items: [{ ...ITEM, quote: 'const limit = items.size();' }] });
 const WITH_SOURCE = { collect: { outputs: ['diff', 'task', 'discussion', 'worktree', 'files'] }, done: { source: 'worktree' } };
 
 function reviewed(change: unknown = WITH_SOURCE, worktree?: unknown, files: unknown = [{ path: 'src/a.ts' }]): Runtime {
@@ -358,7 +358,7 @@ for (const [name, change, worktree] of [
 test('runtime: a finding outside the changed files fails when the manifest names the list', () => {
   const rt = reviewed({ ...WITH_SOURCE, done: { source: 'worktree', changed: 'files' } });
   const id = open(rt);
-  const report = ['review: 1 findings (0 blocking)', FINDING.replace('src/a.ts', 'src/b.ts').replace('limit', 'other')].join('\n');
+  const report = JSON.stringify({ items: [{ ...ITEM, file: 'src/b.ts', quote: 'const other = items.length;' }] });
   const r = submitReport(rt, id, report);
   assert.ok('step' in r);
   assert.deepEqual([r.answer?.result, r.answer?.faults], ['FAIL', [{ n: 1, fault: 'not_in_change' }]]);
@@ -427,4 +427,15 @@ test('runtime: the list of changed files can use "./" and repeated separators', 
   const r = submitReport(rt, id, GOOD_REPORT);
   assert.ok('step' in r);
   assert.equal(r.answer?.result, 'PASS');
+});
+
+test('runtime: the fields of an item come from the manifest of the task', () => {
+  const rt = reviewed({ ...WITH_SOURCE, output: { fields: { severity: ['blocking', 'note'] } } });
+  const id = open(rt);
+  const bare = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in bare);
+  assert.deepEqual([bare.answer?.result, bare.answer?.faults], ['FAIL', [{ n: 1, fault: 'bad_field' }]]);
+  const full = submitReport(rt, id, JSON.stringify({ items: [{ ...ITEM, severity: 'note' }] }));
+  assert.ok('step' in full);
+  assert.deepEqual([full.answer?.result, full.step.task.state], ['PASS', 'closed']);
 });

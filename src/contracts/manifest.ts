@@ -44,7 +44,7 @@ export type Manifest = {
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
   done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string };
-  output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
+  output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
 
@@ -78,6 +78,8 @@ export type ManifestError = Fault<ManifestErrorCode>;
 const NAME = /^[a-z][a-z0-9-]{0,62}$/; // scenario, connector, action, role, check, environment
 const IDENT = /^[a-z][a-z0-9_]{0,62}$/; // input, output, flag
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/; // an object of the pack, relative, no ".."
+// The fields of an item of a result that the core reads. A manifest cannot give them another meaning.
+export const ITEM_CORE_FIELDS: readonly string[] = ['file', 'line', 'end', 'quote', 'text'];
 const PLACEHOLDER = /\{([^{}]*)\}/g;
 
 const TOP = ['manifest', 'version', 'name', 'title', 'package', 'state', 'description', 'trigger', 'collect', 'run_if', 'model', 'permissions', 'done', 'output', 'memory'] as const;
@@ -321,10 +323,32 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
 }
 
 function output(r: Report, value: unknown): void {
-  const o = fields(r, value, 'output', ['format', 'sections', 'max_items', 'max_bytes', 'to'], ['format']);
+  const o = fields(r, value, 'output', ['format', 'sections', 'fields', 'max_items', 'max_bytes', 'to'], ['format']);
   if (o === null) return;
   choice(r, o.format, 'output.format', OUTPUT_FORMATS);
   (list(r, o.sections, 'output.sections') ?? []).forEach((s, i) => text(r, s, `output.sections[${i}]`));
+  // The fields of one item of the result and the values that each can take. The words of a
+  // format (a severity, a confidence) live here, in a pack, not in the core.
+  if (o.fields !== undefined) {
+    if (!isObj(o.fields)) r.add('not_object', 'output.fields');
+    else {
+      for (const [name, values] of Object.entries(o.fields)) {
+        const at = `output.fields.${name}`;
+        if (ITEM_CORE_FIELDS.includes(name)) r.add('not_allowed', at);
+        else if (!IDENT.test(name)) r.add('bad_name', at);
+        const items = list(r, values, at);
+        if (items === null) continue;
+        if (items.length === 0) r.add('empty', at);
+        const seen = new Set<unknown>();
+        items.forEach((v, i) => {
+          if (typeof v !== 'string') r.add('not_string', `${at}[${i}]`);
+          else if (!oneLine(v)) r.add('not_one_line', `${at}[${i}]`);
+          else if (seen.has(v)) r.add('duplicate', `${at}[${i}]`);
+          seen.add(v);
+        });
+      }
+    }
+  }
   positive(r, o.max_items, 'output.max_items');
   positive(r, o.max_bytes, 'output.max_bytes');
   if (o.max_items === undefined && o.max_bytes === undefined) r.add('missing_limit', 'output');

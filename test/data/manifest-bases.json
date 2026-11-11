@@ -1,99 +1,36 @@
 [
- {
-  "name": "review",
-  "manifest": {
-   "manifest": 1,
-   "name": "change-review",
-   "title": "Ревью изменения",
-   "package": "project",
-   "trigger": {
-    "kind": "command",
-    "inputs": [
-     {
-      "name": "change_id",
-      "type": "id"
-     }
-    ]
-   },
-   "collect": {
-    "script": "collect/change",
-    "outputs": [
-     "diff",
-     "task",
-     "discussion",
-     "worktree"
-    ],
-    "flags": [
-     "has_new_commits"
-    ]
-   },
-   "run_if": "has_new_commits",
-   "model": {
-    "level": "medium",
-    "raise_to": "strong",
-    "executors": [
-     {
-      "role": "reviewer",
-      "count": 1
-     }
-    ]
-   },
-   "permissions": {
-    "read": [
-     "code-host",
-     "tracker"
-    ],
-    "write": [
-     {
-      "action": "comment",
-      "target": "change/{change_id}",
-      "env": "work",
-      "limit": 20,
-      "confirm": "once"
-     }
-    ]
-   },
-   "done": {
-    "kind": "citations",
-    "retries": 2,
-    "source": "worktree"
-   },
-   "output": {
-    "format": "list",
-    "max_items": 10
-   },
-   "memory": {
-    "write": [
-     "pitfall"
-    ],
-    "class": "veto"
-   }
+  {
+    "name": "review",
+    "manifest": {
+      "manifest": 1,
+      "name": "change-review",
+      "title": "Ревью изменения",
+      "package": "project",
+      "trigger": { "kind": "command", "inputs": [{ "name": "change_id", "type": "id" }] },
+      "collect": { "script": "collect/change", "outputs": ["diff", "task", "discussion", "worktree"], "flags": ["has_new_commits"] },
+      "run_if": "has_new_commits",
+      "model": { "level": "medium", "raise_to": "strong", "executors": [{ "role": "reviewer", "count": 1 }] },
+      "permissions": {
+        "read": ["code-host", "tracker"],
+        "write": [{ "action": "comment", "target": "change/{change_id}", "env": "work", "limit": 20, "confirm": "once" }]
+      },
+      "done": { "kind": "citations", "retries": 2, "source": "worktree" },
+      "output": { "format": "list", "max_items": 10 },
+      "memory": { "write": ["pitfall"], "class": "veto" }
+    }
+  },
+  {
+    "name": "minimal",
+    "manifest": {
+      "manifest": 1,
+      "name": "draft-message",
+      "title": "Черновик сообщения",
+      "package": "person",
+      "trigger": { "kind": "command" },
+      "model": { "level": "weak" },
+      "permissions": { "read": [] },
+      "done": { "kind": "human", "retries": 0 },
+      "output": { "format": "text", "max_bytes": 4000 }
+    }
   }
- },
- {
-  "name": "minimal",
-  "manifest": {
-   "manifest": 1,
-   "name": "draft-message",
-   "title": "Черновик сообщения",
-   "package": "person",
-   "trigger": {
-    "kind": "command"
-   },
-   "model": {
-    "level": "weak"
-   },
-   "permissions": {
-    "read": []
-   },
-   "done": {
-    "kind": "human",
-    "retries": 0
-   },
-   "output": {
-    "format": "text",
-    "max_bytes": 4000
-   }
-  }
- }
 ]

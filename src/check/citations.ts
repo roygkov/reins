@@ -1,105 +1,61 @@
-// The citation check, a kind of the done check: every finding of a report names a file and a line
+// The citation check, a kind of the done check: every item of a report names a file and a line
 // and quotes the source, and the quote is found there. It proves that a claim rests on the source.
 // It does not prove that the claim is true: the label of the result is "form verified".
-// Specification: docs/spec/harness-manifest, page 4, rule 4; harness-instance-mr-review, page 4.
+// Specification: docs/spec/harness-manifest, page 4, rules 4, 6 and 7.
 //
-// The parser and the match (the form of a finding, the window, the least quote, the size limit) are
-// the port of agentic v0.5.8 lib/review.js. There the outcome was a metric; here it is the answer of
-// the check. So a finding that cannot be checked is a fault of the report, and only a fault of the
-// harness itself (no source, the deadline) gives no answer.
+// The report is data, not prose: one JSON object `{"items": [...]}`. The core knows four fields of
+// an item: `file`, `line` (and `end` for a range), `quote`, and a free `text`. Every other field
+// and its values come from the manifest of the scenario (`output.fields`): what a finding is, and
+// which words grade it, is the business of a pack.
+//
+// The match (the window, the least quote, the size limit, the path check) is the port of agentic
+// v0.5.8 lib/review.js. An item that cannot be checked is a fault of the report; only a fault of
+// the harness itself (no source, the deadline) gives no answer.
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { ITEM_CORE_FIELDS } from '../contracts/manifest.ts';
+import { isObj } from '../contracts/shape.ts';
 
-export const MAX_FINDINGS = 10;
+export const MAX_ITEMS = 10;
 export const WINDOW = 3; // lines around the cited line or range where the quote can be
 export const MIN_QUOTE = 8; // characters of a quote that are not spaces
 export const SIZE_CAP = 1 << 20; // bytes: a larger file is not read
-export const SEVERITIES = ['blocking', 'should-fix', 'note'] as const;
-export const CONFIDENCES = ['confirmed', 'likely', 'question'] as const;
 
-export type Finding = {
-  severity: (typeof SEVERITIES)[number];
-  level: (typeof CONFIDENCES)[number] | null;
-  category: string | null;
-  file: string | null;
-  from: number | null;
-  to: number | null;
-  quote: string | null;
-  evidence: 'quote' | 'trace' | null;
-  parsed: boolean;
-  plan: boolean; // the place is not `file:line`
-};
-
-export type FindingFault = 'not_parsed' | 'no_level' | 'no_location' | 'no_quote' | 'short_quote' | 'no_file' | 'not_in_change' | 'not_found';
-export type AnswerReason = 'no_source' | 'deadline' | 'no_header' | 'count_mismatch' | 'too_many' | 'faults';
+export type ItemFault = 'bad_item' | 'unknown_field' | 'bad_field' | 'no_location' | 'no_quote' | 'short_quote' | 'no_file' | 'not_in_change' | 'not_found';
+export type AnswerReason = 'no_source' | 'deadline' | 'bad_report' | 'too_many' | 'faults';
 export type Answer = {
   result: 'PASS' | 'FAIL' | 'none';
   reason?: AnswerReason;
-  n: number; // the findings that were read
-  faults: { n: number; fault: FindingFault }[]; // at most one for a finding, `n` counts from 1
+  n: number; // the items that were read
+  faults: { n: number; fault: ItemFault }[]; // at most one for an item, `n` counts from 1
 };
 
 export type CitationOptions = {
   root: string; // the source: an absolute path of a directory
-  changed?: readonly string[]; // the files of the change, relative to the root; a finding must be in one of them
-  maxFindings?: number;
+  changed?: readonly string[]; // the files of the change, relative to the root; an item must be in one of them
+  maxItems?: number;
+  fields?: Readonly<Record<string, readonly string[]>>; // the fields of an item that the manifest names, with their values
   expired?: () => boolean; // the deadline of the caller, asked before each file
 };
 
 const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
-// ` — `, ` - ` and ` -- ` as the separator between the parts of a finding
-const SEP = /\s+(?:—|–|--|-)\s+/;
-const FINDING_RE = /^\s*\d+[.)]\s*\[(blocking|should-fix|note)\]\s*(?:\[(confirmed|likely|question)\]\s*)?(.*)$/;
-// `path:line` or `path:a-b`; the backticks around it are formatting
-const LOC_RE = /^`?([^\s`:]+):(\d+)(?:\s*[-–]\s*(\d+))?`?$/;
-const QUOTE_RE = /["“”]([^"“”]*)["“”]/g;
-const HEADER_RE = /^\s*review:\s*(\d+)\s+findings?\b/i;
 
-// One numbered line of a report, or null when the line is no finding.
-function parseLine(line: string): Finding | null {
-  const m = FINDING_RE.exec(line);
-  if (!m) return null;
-  const f: Finding = {
-    severity: m[1] as Finding['severity'], level: (m[2] as Finding['level'] | undefined) ?? null,
-    category: null, file: null, from: null, to: null, quote: null, evidence: null, parsed: false, plan: false,
-  };
-  const rest = norm(m[3] ?? '');
-  const segs = rest.split(SEP);
-  const place = segs[1];
-  if (segs.length < 2 || place === undefined) return f;
-  f.category = segs[0] ?? null;
-  const loc = LOC_RE.exec(place.trim());
-  if (!loc) {
-    f.plan = true;
-    return f;
+// The list of items of a report, or null when the text is not the one object `{"items": [...]}`.
+// A code fence around the object is formatting; any other text around it is not allowed.
+function readItems(text: string): unknown[] | null {
+  const body = text.trim().replace(/^```[^\n]*\r?\n/, '').replace(/\r?\n```$/, '');
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    return null;
   }
-  f.file = loc[1] ?? null;
-  f.from = Number(loc[2]);
-  f.to = loc[3] !== undefined ? Number(loc[3]) : f.from;
-  if (f.to < f.from) [f.from, f.to] = [f.to, f.from];
-  // The quote: the last "…" before the fix (` — fix:`), or the last one of the line when no fix follows.
-  const fixAt = rest.search(/\s+(?:—|–|--|-)\s+fix:/i);
-  const before = fixAt >= 0 ? rest.slice(0, fixAt) : rest;
-  const ev = /evidence:\s*(quote|trace)\b/i.exec(before);
-  f.evidence = ev ? (ev[1]?.toLowerCase() as Finding['evidence']) : null;
-  let q: string | null = null;
-  for (const mm of before.matchAll(QUOTE_RE)) q = mm[1] ?? null;
-  if (q === null) return f;
-  f.quote = norm(q);
-  f.parsed = true;
-  return f;
+  if (!isObj(value) || Object.keys(value).length !== 1 || !Array.isArray(value.items)) return null;
+  return value.items;
 }
 
-// All findings of a report: the numbered lines with a severity.
-export function parseFindings(text: string): Finding[] {
-  const out: Finding[] = [];
-  for (const line of text.split('\n')) {
-    const f = parseLine(line);
-    if (f !== null) out.push(f);
-  }
-  return out;
-}
+const isLine = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1;
 
 const weight = (q: string): number => q.replace(/\s+/g, '').length;
 
@@ -144,18 +100,30 @@ function locate(realRoot: string, file: string): string | null {
   }
 }
 
-function faultOf(realRoot: string, f: Finding, changed: readonly string[] | undefined): FindingFault | null {
-  if (f.category === null) return 'not_parsed';
-  if (f.level === null) return 'no_level';
-  if (f.plan || f.file === null || f.from === null || f.to === null) return 'no_location';
-  if (!f.parsed || f.quote === null) return 'no_quote';
-  if (weight(f.quote) < MIN_QUOTE) return 'short_quote';
-  const real = locate(realRoot, f.file);
+function faultOf(realRoot: string, item: unknown, options: CitationOptions): ItemFault | null {
+  if (!isObj(item)) return 'bad_item';
+  const named = options.fields ?? {};
+  for (const key of Object.keys(item)) {
+    if (!ITEM_CORE_FIELDS.includes(key) && !Object.hasOwn(named, key)) return 'unknown_field';
+  }
+  for (const [key, values] of Object.entries(named)) {
+    const value = item[key];
+    if (typeof value !== 'string' || !values.includes(value)) return 'bad_field';
+  }
+  if (item.text !== undefined && typeof item.text !== 'string') return 'bad_field';
+  const { file, line, end } = item;
+  if (typeof file !== 'string' || file === '' || !isLine(line) || (end !== undefined && !isLine(end))) return 'no_location';
+  const from = Math.min(line, end ?? line);
+  const to = Math.max(line, end ?? line);
+  if (typeof item.quote !== 'string') return 'no_quote';
+  const quote = norm(item.quote);
+  if (weight(quote) < MIN_QUOTE) return 'short_quote';
+  const real = locate(realRoot, file);
   if (real === null) return 'no_file';
-  if (changed !== undefined) {
+  if (options.changed !== undefined) {
     const rel = path.relative(realRoot, real).split(path.sep).join('/');
     // By the real path, or by the path as the report wrote it (a link inside the source).
-    if (!changed.includes(rel) && !changed.includes(path.posix.normalize(f.file))) return 'not_in_change';
+    if (!options.changed.includes(rel) && !options.changed.includes(path.posix.normalize(file))) return 'not_in_change';
   }
   let text: string;
   try {
@@ -164,27 +132,25 @@ function faultOf(realRoot: string, f: Finding, changed: readonly string[] | unde
     return 'no_file';
   }
   const lines = text.split('\n');
-  const lo = Math.max(1, f.from - WINDOW);
-  const hi = Math.min(lines.length, f.to + WINDOW);
-  return matches(f.quote, norm(lines.slice(lo - 1, hi).join('\n'))) ? null : 'not_found';
+  const lo = Math.max(1, from - WINDOW);
+  const hi = Math.min(lines.length, to + WINDOW);
+  return matches(quote, norm(lines.slice(lo - 1, hi).join('\n'))) ? null : 'not_found';
 }
 
-// The answer of the check for the text of a report. PASS: the report gives its count of findings,
-// the count agrees, and every finding is found in the source. No answer is never a pass.
+// The answer of the check for the text of a report. PASS: the report is the object with the list
+// of items, and every item is found in the source. An empty list is a valid report. No answer is
+// never a pass.
 export function checkCitations(text: string, options: CitationOptions): Answer {
-  const findings = parseFindings(text);
-  const n = findings.length;
+  const items = readItems(text);
+  const n = items?.length ?? 0;
   const realRoot = realDir(options.root);
   if (realRoot === null) return { result: 'none', reason: 'no_source', n, faults: [] };
-  // The count line is the first line of the report that is not empty.
-  const header = HEADER_RE.exec(text.split('\n').find((line) => line.trim() !== '') ?? '');
-  if (!header) return { result: 'FAIL', reason: 'no_header', n, faults: [] };
-  if (Number(header[1]) !== n) return { result: 'FAIL', reason: 'count_mismatch', n, faults: [] };
-  if (n > (options.maxFindings ?? MAX_FINDINGS)) return { result: 'FAIL', reason: 'too_many', n, faults: [] };
+  if (items === null) return { result: 'FAIL', reason: 'bad_report', n, faults: [] };
+  if (n > Math.min(options.maxItems ?? MAX_ITEMS, MAX_ITEMS)) return { result: 'FAIL', reason: 'too_many', n, faults: [] };
   const faults: Answer['faults'] = [];
-  for (const [i, f] of findings.entries()) {
+  for (const [i, item] of items.entries()) {
     if (options.expired?.() === true) return { result: 'none', reason: 'deadline', n, faults: [] };
-    const fault = faultOf(realRoot, f, options.changed);
+    const fault = faultOf(realRoot, item, options);
     if (fault !== null) faults.push({ n: i + 1, fault });
   }
   return faults.length > 0 ? { result: 'FAIL', reason: 'faults', n, faults } : { result: 'PASS', n, faults };

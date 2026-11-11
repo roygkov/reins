@@ -29,6 +29,6 @@
     }]
   },
   "done": {"kind": "citations", "retries": 2, "source": "worktree"},
-  "output": {"format": "list", "max_items": 10},
+  "output": {"format": "list", "max_items": 10, "fields": {"severity": ["high", "low"]}},
   "memory": {"write": ["pitfall"], "class": "veto"}
 }

@@ -1,6 +1,6 @@
 [
  {
-  "name": "every finding has a quote that is in the source",
+  "name": "every item has a quote that is in the source",
   "files": {
    "src/a.ts": [
     "line one",
@@ -8,42 +8,44 @@
     "line three"
    ]
   },
-  "report": [
-   "review: 1 findings (1 blocking)",
-   "1. [blocking] [confirmed] bounds — src/a.ts:2 — the limit is one too large — evidence: trace \"const limit = items.length + 1;\" — fix: drop the + 1",
-   "not checked: nothing"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 2,
+     "quote": "const limit = items.length + 1;",
+     "text": "the limit is one too large"
+    }
+   ]
+  },
   "result": "PASS",
   "n": 1,
   "faults": []
  },
  {
-  "name": "a review with no findings passes when it says so",
+  "name": "a report with no items passes when it says so",
   "files": {
    "src/a.ts": [
-    "line one"
+    "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 0 findings (0 blocking)",
-   "not checked: nothing"
-  ],
+  "report": {
+   "items": []
+  },
   "result": "PASS",
   "n": 0,
   "faults": []
  },
  {
-  "name": "a report without the count line fails",
+  "name": "a report that is not JSON fails",
   "files": {
    "src/a.ts": [
-    "line one"
+    "const limit = items.length;"
    ]
   },
-  "report": [
-   "I found no problems."
-  ],
+  "raw": "I found no problems.",
   "result": "FAIL",
-  "reason": "no_header",
+  "reason": "bad_report",
   "n": 0,
   "faults": []
  },
@@ -51,60 +53,87 @@
   "name": "an empty report fails",
   "files": {
    "src/a.ts": [
-    "line one"
+    "const limit = items.length;"
    ]
   },
-  "report": [],
+  "raw": "",
   "result": "FAIL",
-  "reason": "no_header",
+  "reason": "bad_report",
   "n": 0,
   "faults": []
  },
  {
-  "name": "the count line must agree with the findings",
+  "name": "a report without the list of items fails",
   "files": {
    "src/a.ts": [
-    "const limit = items.length + 1;"
+    "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 2 findings (0 blocking)",
-   "1. [note] [question] bounds — src/a.ts:1 — unclear — evidence: quote \"const limit = items.length + 1;\" — fix: confirm"
-  ],
-  "result": "FAIL",
-  "reason": "count_mismatch",
-  "n": 1,
-  "faults": []
- },
- {
-  "name": "a finding with an unknown severity is not counted, so the count does not agree",
-  "files": {
-   "src/a.ts": [
-    "const limit = items.length + 1;"
-   ]
+  "report": {
+   "findings": []
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [critical] [question] bounds — src/a.ts:1 — unclear — evidence: quote \"const limit = items.length + 1;\" — fix: confirm"
-  ],
   "result": "FAIL",
-  "reason": "count_mismatch",
+  "reason": "bad_report",
   "n": 0,
   "faults": []
  },
  {
-  "name": "more findings than the limit fail",
+  "name": "a report that is a list fails",
   "files": {
    "src/a.ts": [
-    "const limit = items.length + 1;"
+    "const limit = items.length;"
+   ]
+  },
+  "report": [
+   {
+    "file": "src/a.ts",
+    "line": 1,
+    "quote": "const limit = items.length;"
+   }
+  ],
+  "result": "FAIL",
+  "reason": "bad_report",
+  "n": 0,
+  "faults": []
+ },
+ {
+  "name": "a report with an unknown top field fails",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "report": {
+   "items": [],
+   "verdict": "ok"
+  },
+  "result": "FAIL",
+  "reason": "bad_report",
+  "n": 0,
+  "faults": []
+ },
+ {
+  "name": "more items than the limit fail",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
    ]
   },
   "max": 1,
-  "report": [
-   "review: 2 findings (0 blocking)",
-   "1. [note] [question] bounds — src/a.ts:1 — unclear — evidence: quote \"const limit = items.length + 1;\" — fix: confirm",
-   "2. [note] [question] bounds — src/a.ts:1 — unclear again — evidence: quote \"const limit = items.length + 1;\" — fix: confirm"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;"
+    },
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "too_many",
   "n": 2,
@@ -114,15 +143,18 @@
   "name": "a quote that is not in the source fails",
   "files": {
    "src/a.ts": [
-    "line one",
-    "const limit = items.length;",
-    "line three"
+    "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [should-fix] [likely] bounds — src/a.ts:2 — wrong — evidence: trace \"const limit = items.length + 1;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length + 1;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 1,
@@ -134,7 +166,7 @@
   "name": "a quote four lines away from the cited line fails",
   "files": {
    "src/a.ts": [
-    "const limit = items.length + 1;",
+    "const limit = items.length;",
     "b",
     "c",
     "d",
@@ -142,10 +174,15 @@
     "f"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] bounds — src/a.ts:5 — wrong — evidence: trace \"const limit = items.length + 1;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 5,
+     "quote": "const limit = items.length;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 1,
@@ -157,7 +194,7 @@
   "name": "a quote three lines away from the cited line passes",
   "files": {
    "src/a.ts": [
-    "const limit = items.length + 1;",
+    "const limit = items.length;",
     "b",
     "c",
     "d",
@@ -165,10 +202,15 @@
     "f"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] bounds — src/a.ts:4 — wrong — evidence: trace \"const limit = items.length + 1;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 4,
+     "quote": "const limit = items.length;"
+    }
+   ]
+  },
   "result": "PASS",
   "n": 1,
   "faults": []
@@ -187,30 +229,74 @@
     "const   tail = done(a);"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] flow - `src/a.ts:2-8` - wrong - evidence: trace \"return compute(a, b); ... const tail = done(a);\" - fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 2,
+     "end": 8,
+     "quote": "return compute(a, b); ... const tail = done(a);"
+    }
+   ]
+  },
   "result": "PASS",
   "n": 1,
   "faults": []
  },
  {
-  "name": "a quote in the fix is not the evidence",
+  "name": "a range written from its end is the same range",
+  "files": {
+   "src/a.ts": [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "const limit = items.length;"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 8,
+     "quote": "const limit = items.length;",
+     "end": 2
+    }
+   ]
+  },
+  "result": "PASS",
+  "n": 1,
+  "faults": []
+ },
+ {
+  "name": "an item without a quote fails",
   "files": {
    "src/a.ts": [
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] bounds — src/a.ts:1 — wrong — evidence: trace — fix: write \"const limit = items.length;\""
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1
+    },
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": 7
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
-  "n": 1,
+  "n": 2,
   "faults": [
-   "1 no_quote"
+   "1 no_quote",
+   "2 no_quote"
   ]
  },
  {
@@ -220,10 +306,15 @@
     "x = 1;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] bounds — src/a.ts:1 — wrong — evidence: quote \"x = 1;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "x = 1;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 1,
@@ -232,57 +323,76 @@
   ]
  },
  {
-  "name": "a finding without a file and a line fails",
+  "name": "an item without a file and a line fails",
   "files": {
    "src/a.ts": [
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] scope — the plan, step 2 — not done — evidence: quote \"const limit = items.length;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "line": 1,
+     "quote": "const limit = items.length;"
+    },
+    {
+     "file": "src/a.ts",
+     "quote": "const limit = items.length;"
+    },
+    {
+     "file": "src/a.ts",
+     "line": 0,
+     "quote": "const limit = items.length;"
+    },
+    {
+     "file": "src/a.ts",
+     "line": "1",
+     "quote": "const limit = items.length;"
+    },
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "end": 1.5
+    },
+    {
+     "file": "",
+     "line": 1,
+     "quote": "const limit = items.length;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
-  "n": 1,
+  "n": 6,
   "faults": [
-   "1 no_location"
+   "1 no_location",
+   "2 no_location",
+   "3 no_location",
+   "4 no_location",
+   "5 no_location",
+   "6 no_location"
   ]
  },
  {
-  "name": "a finding without the confidence level fails",
+  "name": "an item that is not an object fails",
   "files": {
    "src/a.ts": [
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] bounds — src/a.ts:1 — wrong — evidence: quote \"const limit = items.length;\" — fix: x"
-  ],
-  "result": "FAIL",
-  "reason": "faults",
-  "n": 1,
-  "faults": [
-   "1 no_level"
-  ]
- },
- {
-  "name": "a finding that is only a severity fails",
-  "files": {
-   "src/a.ts": [
-    "const limit = items.length;"
+  "report": {
+   "items": [
+    "src/a.ts:1",
+    null
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] something is wrong somewhere"
-  ],
   "result": "FAIL",
   "reason": "faults",
-  "n": 1,
+  "n": 2,
   "faults": [
-   "1 not_parsed"
+   "1 bad_item",
+   "2 bad_item"
   ]
  },
  {
@@ -292,10 +402,15 @@
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] bounds — src/b.ts:1 — wrong — evidence: quote \"const limit = items.length;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/b.ts",
+     "line": 1,
+     "quote": "const limit = items.length;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 1,
@@ -310,10 +425,15 @@
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 1 findings (0 blocking)",
-   "1. [note] [likely] bounds — ../outside.ts:1 — wrong — evidence: quote \"const secret = 'outside';\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "../outside.ts",
+     "line": 1,
+     "quote": "const secret = 'outside';"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 1,
@@ -334,11 +454,20 @@
   "changed": [
    "src/a.ts"
   ],
-  "report": [
-   "review: 2 findings (0 blocking)",
-   "1. [note] [likely] bounds — src/a.ts:1 — wrong — evidence: quote \"const limit = items.length;\" — fix: x",
-   "2. [note] [likely] bounds — src/b.ts:1 — wrong — evidence: quote \"const other = items.length;\" — fix: x"
-  ],
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;"
+    },
+    {
+     "file": "src/b.ts",
+     "line": 1,
+     "quote": "const other = items.length;"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 2,
@@ -347,56 +476,283 @@
   ]
  },
  {
-  "name": "every fault is reported, one for each finding",
+  "name": "the fields that the manifest names are in every item",
   "files": {
    "src/a.ts": [
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "review: 3 findings (1 blocking)",
-   "1. [blocking] [confirmed] bounds — src/a.ts:1 — wrong — evidence: quote \"const limit = items.length;\" — fix: x",
-   "2. [note] [likely] bounds — src/a.ts:1 — wrong — evidence: quote \"const limit = items.size;\" — fix: x",
-   "3. [note] bounds — src/zz.ts:1 — wrong — evidence: quote \"abc\" — fix: x"
-  ],
+  "fields": {
+   "severity": [
+    "blocking",
+    "should-fix",
+    "note"
+   ],
+   "confidence": [
+    "confirmed",
+    "likely",
+    "question"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "severity": "note",
+     "confidence": "likely",
+     "text": "unclear"
+    }
+   ]
+  },
+  "result": "PASS",
+  "n": 1,
+  "faults": []
+ },
+ {
+  "name": "an item without a named field fails",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "fields": {
+   "severity": [
+    "blocking",
+    "should-fix",
+    "note"
+   ],
+   "confidence": [
+    "confirmed",
+    "likely",
+    "question"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "severity": "note"
+    }
+   ]
+  },
+  "result": "FAIL",
+  "reason": "faults",
+  "n": 1,
+  "faults": [
+   "1 bad_field"
+  ]
+ },
+ {
+  "name": "a value outside the list of a named field fails",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "fields": {
+   "severity": [
+    "blocking",
+    "should-fix",
+    "note"
+   ],
+   "confidence": [
+    "confirmed",
+    "likely",
+    "question"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "severity": "critical",
+     "confidence": "likely"
+    },
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "severity": [
+      "note"
+     ],
+     "confidence": "likely"
+    }
+   ]
+  },
+  "result": "FAIL",
+  "reason": "faults",
+  "n": 2,
+  "faults": [
+   "1 bad_field",
+   "2 bad_field"
+  ]
+ },
+ {
+  "name": "a field that the manifest does not name fails",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "severity": "note"
+    }
+   ]
+  },
+  "result": "FAIL",
+  "reason": "faults",
+  "n": 1,
+  "faults": [
+   "1 unknown_field"
+  ]
+ },
+ {
+  "name": "the text of an item is a string",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "text": {
+      "a": 1
+     }
+    }
+   ]
+  },
+  "result": "FAIL",
+  "reason": "faults",
+  "n": 1,
+  "faults": [
+   "1 bad_field"
+  ]
+ },
+ {
+  "name": "a field name from the prototype of an object is not a named field",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "constructor": "x"
+    }
+   ]
+  },
+  "result": "FAIL",
+  "reason": "faults",
+  "n": 1,
+  "faults": [
+   "1 unknown_field"
+  ]
+ },
+ {
+  "name": "every fault is reported, one for each item",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "fields": {
+   "severity": [
+    "blocking",
+    "should-fix",
+    "note"
+   ],
+   "confidence": [
+    "confirmed",
+    "likely",
+    "question"
+   ]
+  },
+  "report": {
+   "items": [
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.length;",
+     "severity": "blocking",
+     "confidence": "confirmed"
+    },
+    {
+     "file": "src/a.ts",
+     "line": 1,
+     "quote": "const limit = items.size;",
+     "severity": "note",
+     "confidence": "likely"
+    },
+    {
+     "file": "src/zz.ts",
+     "line": 1,
+     "quote": "abc",
+     "confidence": "likely"
+    }
+   ]
+  },
   "result": "FAIL",
   "reason": "faults",
   "n": 3,
   "faults": [
    "2 not_found",
-   "3 no_level"
+   "3 bad_field"
   ]
  },
  {
-  "name": "the count line is the first line of the report",
+  "name": "a report inside a code fence is read",
   "files": {
    "src/a.ts": [
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "Here is my review.",
-   "review: 0 findings (0 blocking)"
-  ],
+  "raw": "```json\n{\"items\": [{\"file\": \"src/a.ts\", \"line\": 1, \"quote\": \"const limit = items.length;\"}]}\n```\n",
+  "result": "PASS",
+  "n": 1,
+  "faults": []
+ },
+ {
+  "name": "text around the report is not allowed",
+  "files": {
+   "src/a.ts": [
+    "const limit = items.length;"
+   ]
+  },
+  "raw": "Here is the report:\n{\"items\": [{\"file\": \"src/a.ts\", \"line\": 1, \"quote\": \"const limit = items.length;\"}]}",
   "result": "FAIL",
-  "reason": "no_header",
+  "reason": "bad_report",
   "n": 0,
   "faults": []
  },
  {
-  "name": "empty lines before the count line are allowed",
+  "name": "a code fence with other line ends and a tag is read",
   "files": {
    "src/a.ts": [
     "const limit = items.length;"
    ]
   },
-  "report": [
-   "",
-   "  ",
-   "review: 0 findings (0 blocking)"
-  ],
+  "raw": "```JSON \r\n{\"items\": [{\"file\": \"src/a.ts\", \"line\": 1, \"quote\": \"const limit = items.length;\"}]}\r\n```",
   "result": "PASS",
-  "n": 0,
+  "n": 1,
   "faults": []
  }
 ]
