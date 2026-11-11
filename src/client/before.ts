@@ -13,6 +13,7 @@ import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
 import { confirm, decideAction, loadTask, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
+import { currentScenario } from '../core/sessions.ts';
 import { sessionTask } from './session.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { shellAction } from '../gate/index.ts';
@@ -157,7 +158,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|memory\s+(veto|decide|restore|import)|craft\s+(accept|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|approve|memory\s+(veto|decide|restore|import)|craft\s+(accept|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
     if (named !== null) return { guard: { outcome: 'ask', rule: named } };
     return { action: shell.action, layers: shell.layers, command };
@@ -189,9 +190,9 @@ function packLayers(rt: Runtime, call: ToolCall, action: Action, command: string
   return out;
 }
 
-// The task that executes and whose envelope names this write. A grant names one action on one
-// target: the task is found by the grant, not by the session of the client.
-function taskFor(rt: Runtime, key: string): string | undefined {
+// The task whose envelope names this write and that executes or publishes. A task that a
+// session holds answers only that session; a task that no session holds answers any.
+function taskFor(rt: Runtime, key: string, session: string | undefined): string | undefined {
   let names: string[];
   try {
     names = fs.readdirSync(path.join(rt.stateDir, 'tasks')).sort();
@@ -203,6 +204,9 @@ function taskFor(rt: Runtime, key: string): string | undefined {
     if (id === undefined) continue;
     const task = loadTask(rt, id);
     if (task === null || !task.envelope.some((g) => grantKey(g.action, g.target, g.env) === key)) continue;
+    // A task that a session holds answers only that session, and only as its current task: a
+    // suspended task and a task of another session do not open their envelope here.
+    if (task.session !== undefined && (task.session !== session || currentScenario(rt, session) !== task.id)) continue;
     if (task.state === 'executing') return id;
     // A publication that nobody ended must not leave an approved write for ever: without a use
     // or another change of the task for this long, its envelope no longer answers.
@@ -245,7 +249,7 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   }
   if (action.via === 'tool' && action.kind === 'write') {
     const key = grantKey(action.name, action.target, action.env.name);
-    const id = taskFor(rt, key);
+    const id = taskFor(rt, key, call.session);
     const decision = id === undefined ? null : decideAction(rt, id, action, layers);
     if (id !== undefined && decision !== null) {
       // The question for the whole task: the answer of the human comes back as "the tool ran".

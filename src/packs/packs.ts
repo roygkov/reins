@@ -47,6 +47,7 @@ export type PackSettings = {
   memory?: { types?: string[]; veto_days?: number };
   tools?: Record<string, ToolRule>;
   rules?: PackRule[];
+  models?: Partial<Record<ModelLevel, string>>; // the name of the model of the client for a level
 };
 
 export type LoadedPack = {
@@ -70,6 +71,7 @@ export type Merged = {
   tools: Record<string, ToolRule>; // the tools of the connectors, from the organization pack
   rules: (PackRule & { level: PackLevel })[]; // the rules of all connected packs
   notes: { level: PackLevel; text: string }[]; // the notes of the connected packs, upper pack first
+  models: Partial<Record<ModelLevel, string>>; // level -> name of the model; a lower pack replaces a name
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
 };
 
@@ -81,7 +83,7 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -229,6 +231,15 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     if (level !== 'organization') errors.push({ code: 'not_allowed', path: 'tools' });
     else if (!isObj(value.tools)) errors.push({ code: 'not_object', path: 'tools' });
     else settings.tools = toolRules(errors, value.tools, settings.connectors?.write ?? [], settings.envs?.known ?? []);
+  }
+  const models = section(errors, value.models, 'models', LEVELS);
+  if (models !== null) {
+    const out: Partial<Record<ModelLevel, string>> = {};
+    for (const [level, name] of Object.entries(models)) {
+      if (typeof name !== 'string' || name === '' || name.length > 100 || /[\r\n]/.test(name)) errors.push({ code: 'bad_name', path: `models.${level}` });
+      else out[level as ModelLevel] = name;
+    }
+    settings.models = out;
   }
   if (value.rules !== undefined) {
     if (!Array.isArray(value.rules)) errors.push({ code: 'not_array', path: 'rules' });
@@ -427,6 +438,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   if (s.tools !== undefined) m.tools = s.tools;
   for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
   if (pack.note !== undefined) m.notes.push({ level: pack.level, text: pack.note });
+  Object.assign(m.models, s.models ?? {});
   const veto = s.memory?.veto_days;
   if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
   narrow('readConnectors', s.connectors?.read);
@@ -463,8 +475,21 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
 }
 
 // Merges packs that are already read, upper level first. Pure except for reading the manifest files.
+// The context that a manifest of a merge is checked against. In a merge a list that no pack gave
+// means "nothing", not "not checked": the check fails closed.
+export function closedContext(m: Merged): PackContext {
+  return {
+    ...m.context,
+    readConnectors: m.context.readConnectors ?? [],
+    writeActions: m.context.writeActions ?? [],
+    scripts: m.context.scripts ?? [],
+    checks: m.context.checks ?? [],
+    roles: m.context.roles ?? [],
+  };
+}
+
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [] };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {} };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();
@@ -484,16 +509,8 @@ export function mergePacks(loaded: LoadedPack[]): Merged {
     }
   }
 
+  const closed = closedContext(m);
   // Manifests are checked against the whole merge: a limit of the person holds for a scenario of the project.
-  // In a merge a list that no pack gave means "nothing", not "not checked": the check fails closed.
-  const closed: PackContext = {
-    ...m.context,
-    readConnectors: m.context.readConnectors ?? [],
-    writeActions: m.context.writeActions ?? [],
-    scripts: m.context.scripts ?? [],
-    checks: m.context.checks ?? [],
-    roles: m.context.roles ?? [],
-  };
   const seen = new Set<string>();
   for (const pack of connected) {
     for (const file of pack.manifestFiles) {

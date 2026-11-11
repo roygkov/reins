@@ -3,10 +3,10 @@
 // never reach the core: a request is only the fact that it happened.
 // Specification: docs/spec/harness-client, page 1.
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyEvent, loadTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
+import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
+import { forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, withSession } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { readJournal } from '../journal/writer.ts';
@@ -15,20 +15,8 @@ import { listRecords } from '../memory/store.ts';
 
 export type SessionEvent = { session?: string; cwd: string; client?: string };
 
-const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
-const nameOf = (session: string | undefined): string =>
-  session !== undefined && SESSION.test(session) ? session : crypto.createHash('sha256').update(session ?? '').digest('hex').slice(0, 16);
-const fileOf = (rt: Runtime, session: string | undefined): string => path.join(rt.stateDir, 'sessions', `${nameOf(session)}.json`);
-
-type SessionFile = { task?: string; work?: string | null; requests?: number };
-function readSession(rt: Runtime, session: string | undefined): SessionFile | null {
-  try {
-    const known: unknown = JSON.parse(fs.readFileSync(fileOf(rt, session), 'utf8'));
-    return known !== null && typeof known === 'object' ? (known as SessionFile) : null;
-  } catch {
-    return null;
-  }
-}
+const nameOf = sessionName;
+const fileOf = sessionFile;
 
 // The free task that the session file names, when it still executes.
 function current(rt: Runtime, session: string | undefined): { id?: string; stale: boolean } {
@@ -41,25 +29,13 @@ function current(rt: Runtime, session: string | undefined): { id?: string; stale
 // The free task of a session: an action outside a scenario belongs to it, so every decision of
 // the policy has a task in the journal. A session without a request event gets one at its first action.
 export function sessionTask(rt: Runtime, session: string | undefined): string {
-  const now = current(rt, session);
-  if (now.id !== undefined) return now.id;
-  const file = fileOf(rt, session);
-  const task = openFreeTask(rt);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  try {
-    // Hooks of parallel calls are separate processes: only the first one names the task.
-    if (now.stale) fs.rmSync(file, { force: true });
-    fs.writeFileSync(file, JSON.stringify({ task: task.id }), { flag: 'wx' });
-    return task.id;
-  } catch {
-    try {
-      const other = (JSON.parse(fs.readFileSync(file, 'utf8')) as { task?: unknown }).task;
-      if (typeof other === 'string' && loadTask(rt, other) !== null) return other;
-    } catch {
-      // the other writer is not done: this call keeps its own task
-    }
-    return task.id;
-  }
+  // The look and the write run under the lock of the session file: hooks of parallel calls are
+  // separate processes, and only one of them opens the task.
+  return withSession(rt, session, (now) => {
+    if (typeof now.task === 'string' && loadTask(rt, now.task)?.state === 'executing') return { next: null, result: now.task };
+    const task = openFreeTask(rt);
+    return { next: { ...now, task: task.id }, result: task.id };
+  });
 }
 
 // The handoff: what a session leaves for the next one. Facts of the journal and of the task
@@ -96,6 +72,7 @@ const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' :
 
 // The start of a session: what the agent must know before it acts.
 export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] } {
+  noteDirectory(rt, e.cwd, e.session);
   // Housekeeping that needs no human: tasks past their term end, new patterns become proposals.
   sweep(rt);
   propose(rt);
@@ -133,15 +110,17 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
 
 // A request of the human: the free task of the request before it ends, a new one opens.
 export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
-  const before = current(rt, e.session).id;
-  if (before !== undefined) applyEvent(rt, before, { type: 'expire' }, 'harness');
-  const requests = (readSession(rt, e.session)?.requests ?? 0) + 1;
-  const task = openFreeTask(rt);
-  const file = fileOf(rt, e.session);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
   // The state of the work tree at the request: at the stop it says whether the request changed the work.
-  fs.writeFileSync(file, JSON.stringify({ task: task.id, work: workState(e.cwd), requests }));
-  return { task: task.id };
+  const work = workState(e.cwd);
+  // The count of requests and the new task change in one step under the lock of the session file:
+  // two request events of one session must not lose a count.
+  const { before, task } = withSession(rt, e.session, (file) => {
+    const opened = openFreeTask(rt);
+    return { next: { ...file, task: opened.id, work, requests: (file.requests ?? 0) + 1 }, result: { before: file.task, task: opened.id } };
+  });
+  if (typeof before === 'string' && loadTask(rt, before)?.state === 'executing') applyEvent(rt, before, { type: 'expire' }, 'harness');
+  noteDirectory(rt, e.cwd, e.session);
+  return { task };
 }
 
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result
@@ -170,6 +149,20 @@ export function sessionEnd(rt: Runtime, e: SessionEvent): { closed: string[] } {
     if ('task' in r && r.error === undefined) closed.push(id);
   }
   writeHandoff(rt, e.session);
-  fs.rmSync(fileOf(rt, e.session), { force: true });
+  // The removal runs under the lock of the session file: a hook that still writes must not bring the file back.
+  withSession(rt, e.session, () => ({ next: 'remove', result: undefined }));
+  forgetDirectory(rt, e.cwd, e.session);
   return { closed };
+}
+
+// A session takes a task: the task of a scenario or of a contract continues there, and it is the
+// current task of that session. This is how a suspended task comes back, and how a task moves to
+// another session. A task belongs to the harness, not to the session that opened it. A contract
+// that the human did not approve is not a task to take: only its approval starts it.
+export function resumeTask(rt: Runtime, id: string, session: string | undefined): boolean {
+  if (session === undefined) return false;
+  const task = mutateTask(rt, id, (t) => (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract' ? null : { ...t, session }));
+  if (task === null) return false;
+  patchSession(rt, session, { scenario: id });
+  return true;
 }

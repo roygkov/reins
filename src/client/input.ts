@@ -28,6 +28,7 @@ export type TaskInput = {
   report: ReportSpec;
   writes: Grant[]; // the writes that the scenario can ask for; the policy decides each one
   protocol: string[];
+  model: { level: string; name?: string; raise_to?: string }; // the level for this task; `name` when a pack names the model
   memory?: { id: string; type: string; text: string }[]; // records of the memory about this work, with their ids
   pack_notes?: { level: string; text: string }[]; // the notes of the packs, upper pack first
 };
@@ -41,7 +42,7 @@ const ITEM: Record<string, string> = {
 };
 
 // The input of a scenario task that executes or publishes its result; null for any other task.
-export function taskInput(task: Task, collected: Record<string, unknown> | null, command = 'reins'): TaskInput | null {
+export function taskInput(task: Task, collected: Record<string, unknown> | null, command = 'reins', models: Partial<Record<string, string>> = {}): TaskInput | null {
   const m = task.manifest;
   if (m === undefined || (task.state !== 'executing' && task.state !== 'publishing')) return null;
   const report: ReportSpec = { check: m.done.kind, returns_left: Math.max(0, m.done.retries - task.returns) };
@@ -67,7 +68,15 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
     'Write to no system before the report passes. When the answer says `state: "publishing"`, the writes of `writes` can be made on the word of the human; no other write.',
     `After the publication, or when the human wants none, run: ${command} finish ${task.id}.`,
   );
-  const input: TaskInput = { task: task.id, scenario: m.name, title: m.title, collected: collected ?? {}, report, writes: task.envelope, protocol };
+  const level = task.level ?? m.model.level;
+  const model: TaskInput['model'] = { level };
+  const name = models[level];
+  if (name !== undefined) model.name = name;
+  if (m.model.raise_to !== undefined && task.raised !== true && m.model.raise_to !== level) {
+    model.raise_to = m.model.raise_to;
+    protocol.push(`When the work needs the higher level of the model, run once: ${command} raise ${task.id}.`);
+  }
+  const input: TaskInput = { task: task.id, scenario: m.name, title: m.title, collected: collected ?? {}, report, writes: task.envelope, model, protocol };
   if (m.description !== undefined) input.description = m.description;
   if (task.instructions !== undefined) input.instructions = task.instructions;
   return input;

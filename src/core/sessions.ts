@@ -1,0 +1,120 @@
+// What the harness keeps about a session of a client: its free task, its current scenario task,
+// the state of the work tree at the last request. And which session last spoke in a directory:
+// a command of the client has no session of its own, so the directory names it.
+
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { Runtime } from './runtime.ts';
+
+// `executors`: the subordinate executors of the session that run now, each with its role, the task
+// that it belongs to and the time of its start.
+export type SessionFile = { task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
+
+const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
+export const sessionName = (session: string | undefined): string =>
+  session !== undefined && SESSION.test(session) ? session : crypto.createHash('sha256').update(session ?? '').digest('hex').slice(0, 16);
+export const sessionFile = (rt: Runtime, session: string | undefined): string => path.join(rt.stateDir, 'sessions', `${sessionName(session)}.json`);
+// A directory is named as the file system has it: a path through a link and the real path are one directory.
+const realDir = (dir: string): string => {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+};
+const dirFile = (rt: Runtime, cwd: string): string => path.join(rt.stateDir, 'dirs', `${crypto.createHash('sha256').update(realDir(cwd)).digest('hex').slice(0, 24)}.json`);
+
+export function readSession(rt: Runtime, session: string | undefined): SessionFile | null {
+  try {
+    const known: unknown = JSON.parse(fs.readFileSync(sessionFile(rt, session), 'utf8'));
+    return known !== null && typeof known === 'object' ? (known as SessionFile) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Reads the session file, lets the caller change it, and writes it back, all under one lock:
+// hooks and commands are separate processes that write one file, and one change must not drop
+// the fields of another. `change` returns the new content, null to leave the file as it is, or
+// 'remove' to delete the file.
+export function withSession<T>(rt: Runtime, session: string | undefined, change: (now: SessionFile) => { next: SessionFile | null | 'remove'; result: T }): T {
+  const file = sessionFile(rt, session);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const lock = `${file}.lock`;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  let owned = false;
+  for (let attempt = 0; attempt < 300 && !owned; attempt += 1) {
+    try {
+      fs.closeSync(fs.openSync(lock, 'wx'));
+      owned = true;
+    } catch {
+      try {
+        // A lock that nobody released: its holder is gone.
+        if (Date.now() - fs.statSync(lock).mtimeMs > 2000) fs.rmSync(lock, { force: true });
+      } catch {
+        // the lock went away: try again
+      }
+      Atomics.wait(wait, 0, 0, 10);
+    }
+  }
+  // Three seconds without the lock: its holder is taken for dead and the lock is taken over.
+  if (!owned) {
+    fs.rmSync(lock, { force: true });
+    fs.closeSync(fs.openSync(lock, 'w'));
+  }
+  try {
+    const { next, result } = change(readSession(rt, session) ?? {});
+    if (next === 'remove') fs.rmSync(file, { force: true });
+    else if (next !== null) {
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(next));
+      fs.renameSync(tmp, file);
+    }
+    return result;
+  } finally {
+    fs.rmSync(lock, { force: true });
+  }
+}
+
+// Changes some fields of the session file and keeps the others.
+export function patchSession(rt: Runtime, session: string | undefined, change: SessionFile): void {
+  withSession(rt, session, (now) => ({ next: { ...now, ...change }, result: undefined }));
+}
+
+// The scenario task that the session works on now. A new scenario in the session takes this place:
+// the task before it stays open but is suspended until a resume.
+export const currentScenario = (rt: Runtime, session: string | undefined): string | undefined => readSession(rt, session)?.scenario;
+
+export function noteDirectory(rt: Runtime, cwd: string, session: string | undefined): void {
+  if (session === undefined || !SESSION.test(session)) return;
+  const file = dirFile(rt, cwd);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ session }));
+}
+
+// The session of a directory, or of the nearest directory above it: a command that runs in a
+// subdirectory of the place where the session spoke belongs to that session.
+export function sessionOfDirectory(rt: Runtime, cwd: string): string | undefined {
+  let dir = realDir(cwd);
+  for (;;) {
+    try {
+      const value = JSON.parse(fs.readFileSync(dirFile(rt, dir), 'utf8')) as { session?: unknown };
+      if (typeof value.session === 'string' && SESSION.test(value.session)) return value.session;
+    } catch {
+      // nothing is noted for this directory
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+export function forgetDirectory(rt: Runtime, cwd: string, session: string | undefined): void {
+  try {
+    const value = JSON.parse(fs.readFileSync(dirFile(rt, cwd), 'utf8')) as { session?: unknown };
+    if (value.session === session) fs.rmSync(dirFile(rt, cwd), { force: true });
+  } catch {
+    // nothing to forget
+  }
+}

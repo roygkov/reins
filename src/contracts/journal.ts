@@ -35,7 +35,8 @@ export type EventKind = (typeof EVENT_KINDS)[number];
 
 export const TASK_KINDS = ['scenario', 'contract', 'free'] as const;
 // The kind of a task follows the scenario name, the form of the input or the facts. Never the words of the prompt.
-export const TASK_KIND_REASONS = ['scenario_name', 'input_form', 'facts'] as const;
+// human_word: the human asked for a task with a contract.
+export const TASK_KIND_REASONS = ['scenario_name', 'input_form', 'facts', 'human_word'] as const;
 export const EXECUTORS = ['main', 'sub'] as const;
 export const CHECK_RESULTS = ['PASS', 'FAIL'] as const;
 

@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import { afterAction, beforeAction, type ClientTools, type Reply, type ToolCall } from '../../../src/client/before.ts';
 import { loadRuntime } from '../../../src/client/config.ts';
+import { executorReported, executorStarted } from '../../../src/client/executors.ts';
 import { agentStopped, humanRequest, sessionEnd, sessionStart, type SessionEvent } from '../../../src/client/session.ts';
 import { isObj } from '../../../src/contracts/shape.ts';
 import type { Runtime } from '../../../src/core/runtime.ts';
@@ -81,6 +82,17 @@ function pre(): void {
       return;
     }
     r = beforeAction(rt, call, TOOLS);
+    // A subordinate executor starts through these tools. The core gives it a place only when the
+    // call itself passes: a call that is refused or asked about takes no place.
+    if ((call.tool === 'Agent' || call.tool === 'Task') && r.outcome === 'allow') {
+      // Without a type the client starts its general-purpose agent, and names it so when it ends.
+      const role = typeof call.input.subagent_type === 'string' ? call.input.subagent_type : 'general-purpose';
+      const started = executorStarted(rt, { cwd: call.cwd, ...(call.session !== undefined ? { session: call.session } : {}), ...(role !== undefined ? { role } : {}) });
+      if (started.outcome === 'deny') {
+        say('deny', `reins: ${started.rule}: the task ${started.task} has no place for this subordinate executor`);
+        return;
+      }
+    }
   } catch {
     if (!isRead) say('ask', 'reins: failure of the decision: the human decides');
     return;
@@ -125,6 +137,10 @@ function session(mode: string): void {
       }
     }
     else if (mode === 'session-end') sessionEnd(rt, e);
+    else if (mode === 'subagent-stop') {
+      const role = typeof value.agent_type === 'string' ? value.agent_type : undefined;
+      executorReported(rt, { cwd: e.cwd, ...(e.session !== undefined ? { session: e.session } : {}), ...(role !== undefined ? { role } : {}) });
+    }
   } catch {
     // no output: the client goes on
   }
@@ -133,5 +149,5 @@ function session(mode: string): void {
 export function main(mode: string | undefined): void {
   if (mode === 'pre') pre();
   else if (mode === 'post') post();
-  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end'].includes(mode)) session(mode);
+  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end', 'subagent-stop'].includes(mode)) session(mode);
 }

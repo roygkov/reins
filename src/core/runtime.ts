@@ -8,10 +8,13 @@ import path from 'node:path';
 import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
-import { isObj } from '../contracts/shape.ts';
+import { validateManifest, type Manifest } from '../contracts/manifest.ts';
+import { isObj, type Fault } from '../contracts/shape.ts';
+import { closedContext } from '../packs/packs.ts';
+import { patchSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect } from './collect.ts';
-import { TASK_STATES, confirmGrant, decideFor, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
+import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
 
 export type Runtime = {
   merged: Merged;
@@ -129,7 +132,8 @@ export function readCollected(rt: Runtime, id: string): Record<string, unknown> 
 function record(rt: Runtime, task: Task, rows: RowDraft[]): void {
   for (const r of rows) {
     const row: RowInput = { kind: r.kind, project: rt.project, task: task.id };
-    if (rt.session !== undefined) row.session = rt.session;
+    const session = task.session ?? rt.session;
+    if (session !== undefined) row.session = session;
     if (task.scenario !== undefined) {
       row.scenario = task.scenario;
       row.scenario_v = task.version ?? 1;
@@ -149,7 +153,7 @@ function commit(rt: Runtime, s: Step): Step {
 
 // Opens a task of a scenario by its name. The trigger is refused before any task exists when
 // the scenario is unknown or disabled or the inputs do not fit.
-export function openScenario(rt: Runtime, name: string, inputs: Inputs): Opened {
+export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { session?: string } = {}): Opened {
   const scenario = rt.merged.scenarios.find((s) => s.name === name);
   if (scenario === undefined) return { ok: false, error: 'unknown_scenario' };
   if (scenario.manifest.state === 'disabled') return { ok: false, error: 'disabled' };
@@ -158,12 +162,27 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs): Opened 
   const made = newScenarioTask(newId(), manifest, { ...inputs });
   if ('errors' in made) return { ok: false, error: 'bad_inputs', details: made.errors };
   if (scenario.instructions !== undefined) made.task.instructions = scenario.instructions;
+  hold(rt, made.task, opts.session);
   commit(rt, { task: made.task, rows: made.rows });
+  return { ok: true, ...prepareTask(rt, made.task) };
+}
 
+// The session that holds a task. The task becomes the current scenario task of that session:
+// the task that the session worked on before stays open, but is suspended.
+function hold(rt: Runtime, task: Task, session: string | undefined): void {
+  if (session === undefined) return;
+  task.session = session;
+  patchSession(rt, session, { scenario: task.id });
+}
+
+// The preparation of a task that has a manifest: the collect script and the run condition.
+function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<string, unknown> | null } {
+  const manifest = start.manifest;
+  if (manifest === undefined) return { task: start, collected: null };
   // The preparation can take long, and the human can stop the task meanwhile. So the end of the
   // preparation is written under the lock, to the task as it is on the disk, and only when that
   // task still prepares. A stopped task stays stopped.
-  const id = made.task.id;
+  const id = start.id;
   const prepared = (event: TaskEvent, outputs?: Record<string, unknown>): Task => {
     // A busy lock is tried again: the end of a preparation must not be lost.
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -173,30 +192,104 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs): Opened 
         if (outputs !== undefined) writeAtomic(taskFile(rt, id, '.collect'), outputs);
         return commit(rt, step(now, event)).task;
       });
-      if (done !== 'busy') return done ?? made.task;
+      if (done !== 'busy') return done ?? start;
     }
-    return loadTask(rt, id) ?? made.task;
+    return loadTask(rt, id) ?? start;
   };
 
   const collect = manifest.collect;
-  if (collect === undefined) return { ok: true, task: prepared({ type: 'prepared', work: true, outputs: 0, bytes: 0 }), collected: null };
+  if (collect === undefined) return { task: prepared({ type: 'prepared', work: true, outputs: 0, bytes: 0 }), collected: null };
   const file = rt.merged.scriptFiles[collect.script];
   const result =
     file === undefined
       ? ({ ok: false, reason: 'exit' } as const)
-      : runCollect(file, { inputs: made.task.inputs }, {
+      : runCollect(file, { inputs: start.inputs }, {
           outputs: collect.outputs,
           flags: collect.flags ?? [],
           timeoutMs: collect.timeout_s !== undefined ? collect.timeout_s * 1000 : (rt.collectTimeoutMs ?? DEFAULT_COLLECT_TIMEOUT_MS),
           maxBytes: collect.max_bytes ?? DEFAULT_COLLECT_BYTES,
         });
-  if (!result.ok) return { ok: true, task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
+  if (!result.ok) return { task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
   // The run condition is the name of a flag. False: the task closes without the model.
   if (manifest.run_if !== undefined && result.flags[manifest.run_if] === false) {
-    return { ok: true, task: prepared({ type: 'prepared', work: false, flag: manifest.run_if }), collected: null };
+    return { task: prepared({ type: 'prepared', work: false, flag: manifest.run_if }), collected: null };
   }
   const task = prepared({ type: 'prepared', work: true, outputs: collect.outputs.length, bytes: result.bytes }, result.outputs);
-  return { ok: true, task, collected: task.state === 'executing' ? result.outputs : null };
+  return { task, collected: task.state === 'executing' ? result.outputs : null };
+}
+
+export type Proposed = { ok: true; task: Task } | { ok: false; error: 'bad_contract'; details: Fault<string>[] };
+
+// A contract: a manifest for one task, proposed by the agent. It is checked by the same code as
+// a manifest of a pack, against the same packs, so it cannot ask for more than they allow. The
+// limits are mandatory. Nothing runs before the human approves it.
+export function proposeContract(rt: Runtime, value: unknown, opts: { session?: string } = {}): Proposed {
+  const details: Fault<string>[] = validateManifest(value, closedContext(rt.merged));
+  if (details.length === 0 && isObj(value)) {
+    const m = value as unknown as Manifest;
+    if (m.package !== 'person') details.push({ code: 'not_allowed', path: 'package' });
+    if (m.trigger.kind !== 'command') details.push({ code: 'not_allowed', path: 'trigger.kind' });
+    if (m.model.token_limit === undefined) details.push({ code: 'missing', path: 'model.token_limit' });
+    // A contract has no inputs: its targets are written out in full.
+    if ((m.trigger.inputs ?? []).length > 0) details.push({ code: 'not_allowed', path: 'trigger.inputs' });
+    if (rt.merged.scenarios.some((s) => s.name === m.name)) details.push({ code: 'duplicate', path: 'name' });
+  }
+  if (details.length > 0) return { ok: false, error: 'bad_contract', details };
+  const made = newContractTask(newId(), structuredClone(value) as Manifest);
+  // The proposal knows its session, but it is not the current task of the session yet: a
+  // proposal that the human refuses must not suspend the task before it.
+  if (opts.session !== undefined) made.task.session = opts.session;
+  commit(rt, { task: made.task, rows: made.rows });
+  return { ok: true, task: made.task };
+}
+
+// The approval of a contract by the human: the task starts as a scenario task would.
+export function approveContract(rt: Runtime, id: string): { task: Task; collected: Record<string, unknown> | null } | { error: 'unknown_task' | 'busy' | 'not_a_proposal' } {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const approved = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    if (task === null) return 'unknown_task' as const;
+    if (task.kind !== 'contract' || task.state !== 'waiting_human' || task.waiting !== 'contract') return 'not_a_proposal' as const;
+    return commit(rt, step(task, { type: 'human', decision: 'accept' })).task;
+  });
+  if (typeof approved === 'string') return { error: approved };
+  if (approved.session !== undefined) patchSession(rt, approved.session, { scenario: approved.id });
+  return prepareTask(rt, approved);
+}
+
+// The agent asks for the higher level of the model that the manifest allows. Once for a task.
+export function raiseLevel(rt: Runtime, id: string): { task: Task } | { error: 'unknown_task' | 'busy' | 'not_allowed' } {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const r = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    if (task === null) return 'unknown_task' as const;
+    const to = task.manifest?.model.raise_to;
+    if (task.state !== 'executing' || to === undefined || task.raised === true || to === task.level) return 'not_allowed' as const;
+    const next: Task = { ...task, level: to, raised: true };
+    writeAtomic(taskFile(rt, id), next);
+    const row: RowInput = { kind: 'executor.level_raised', project: rt.project, task: id, level: to };
+    if (next.session !== undefined) row.session = next.session;
+    if (next.scenario !== undefined) {
+      row.scenario = next.scenario;
+      row.scenario_v = next.version ?? 1;
+    }
+    rt.journal.write(row);
+    return next;
+  });
+  return typeof r === 'string' ? { error: r } : { task: r };
+}
+
+// Changes a task under its lock, outside the task loop: what the harness notes about the task
+// (who holds it, which executors run). null: the task is unknown or the change gave nothing.
+export function mutateTask(rt: Runtime, id: string, change: (task: Task) => Task | null): Task | null {
+  if (!TASK_ID.test(id)) return null;
+  const r = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    const next = task === null ? null : change(task);
+    if (next !== null) writeAtomic(taskFile(rt, id), next);
+    return next;
+  });
+  return r === 'busy' ? null : r;
 }
 
 export function openFreeTask(rt: Runtime): Task {
@@ -217,6 +310,8 @@ export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Or
     // A check that the core runs itself takes the report as text and gives its own answer:
     // nobody else can move such a task into the check or out of it.
     if (coreChecks(task) && (event.type === 'report' || event.type === 'check')) return 'not_allowed' as const;
+    // The approval of a contract starts a preparation: only `approveContract` does both.
+    if (task.waiting === 'contract' && event.type === 'human' && event.decision === 'accept') return 'not_allowed' as const;
     return commit(rt, step(task, event));
   });
   if (r === 'busy') return { error: 'busy' };

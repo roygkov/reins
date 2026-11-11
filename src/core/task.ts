@@ -13,7 +13,8 @@ export type TaskKind = (typeof TASK_KINDS)[number];
 export const TASK_STATES = ['preparing', 'executing', 'checking', 'waiting_human', 'publishing', 'closed', 'skipped'] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 // Why a task waits: the gate asked, the check failed past the limit, or the result needs an approval.
-export type WaitReason = 'gate' | 'check' | 'approval';
+// contract: the task has a contract that the human has not approved yet.
+export type WaitReason = 'gate' | 'check' | 'approval' | 'contract';
 export type Inputs = Record<string, string | number>;
 
 export type Task = {
@@ -25,6 +26,8 @@ export type Task = {
   version?: number;
   manifest?: Manifest; // the copy the task started with; a later change of the file does not reach it
   instructions?: string; // the text for the model, also a copy
+  session?: string; // the session of the client that holds the task now
+  raised?: boolean; // the level of the model was raised once
   inputs: Inputs;
   envelope: Grant[];
   use: TaskUse;
@@ -107,6 +110,22 @@ export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs):
     level: manifest.model.level,
   };
   return { task, rows: [{ kind: 'task.opened' }, { kind: 'task.kind_decided', data: { kind: 'scenario', reason: 'scenario_name' } }] };
+}
+
+// A task with a contract: a manifest for one task, proposed by the agent. Nothing runs before
+// the human approves it (harness-core, page 5).
+export function newContractTask(id: string, manifest: Manifest): { task: Task; rows: RowDraft[] } {
+  const task: Task = {
+    id, kind: 'contract', state: 'waiting_human', waiting: 'contract', scenario: manifest.name, version: manifest.version ?? 1,
+    manifest, inputs: {}, envelope: grantsOf(manifest, {}), use: { confirmed: [], used: {} }, returns: 0, level: manifest.model.level,
+  };
+  return {
+    task,
+    rows: [
+      { kind: 'task.opened' }, { kind: 'task.kind_decided', data: { kind: 'contract', reason: 'human_word' } },
+      { kind: 'task.contract_proposed' }, { kind: 'task.waiting_human', data: { reason: 'contract' } },
+    ],
+  };
 }
 
 // A free task has no manifest: no collect, no envelope, no check. Its result is "not verified".
@@ -198,6 +217,12 @@ export function step(task: Task, event: TaskEvent): Step {
         return close(task, task.state === 'publishing' ? (task.label ?? 'not_verified') : 'not_verified', [decided], 'stopped');
       }
       if (task.state !== 'waiting_human') return refuse(task);
+      // The approval of a contract starts the preparation. Nothing else answers a proposal.
+      if (task.waiting === 'contract') {
+        if (event.decision !== 'accept') return refuse(task);
+        const { waiting: _, ...rest } = task;
+        return { task: { ...rest, state: 'preparing' }, rows: [decided, { kind: 'task.contract_approved' }] };
+      }
       if (task.waiting === 'gate') {
         if (event.decision !== 'answered') return refuse(task);
         const { waiting: _, ...rest } = task;

@@ -13,10 +13,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError, loadRuntime } from './client/config.ts';
+import { resumeTask } from './client/session.ts';
+import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, loadTask, openScenario, openTasks, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
+import { applyEvent, approveContract, loadTask, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { sweep } from './core/sweep.ts';
@@ -71,7 +73,9 @@ function view(rt: Runtime, task: Task): Out {
   const out: Out = { ok: true, task: task.id, state: task.state };
   if (task.label !== undefined) out.label = task.label;
   if (task.waiting !== undefined) out.waiting = task.waiting;
-  const input = taskInput(task, readCollected(rt, task.id));
+  // A contract that waits for the human: the human reads what it asks for.
+  if (task.waiting === 'contract') out.contract = task.manifest;
+  const input = taskInput(task, readCollected(rt, task.id), 'reins', rt.merged.models);
   if (input !== null) {
     input.collected = byReference(rt, task.id, input.collected);
     // The notes of the packs: rules of work that hold for every task (language, tone).
@@ -120,7 +124,9 @@ function open(rt: Runtime, name: string, pairs: string[]): Out {
   // A scenario whose done check the core cannot run would stay in "checking" for ever: it is not opened.
   const kind = rt.merged.scenarios.find((s) => s.name === name)?.manifest.done.kind;
   if (kind !== undefined && !RUNNABLE.includes(kind)) throw new Stop('check_not_supported', { check: kind });
-  const opened = openScenario(rt, name, inputs);
+  // The task belongs to the session that last spoke in this directory.
+  const session = sessionOfDirectory(rt, process.cwd());
+  const opened = openScenario(rt, name, inputs, session === undefined ? {} : { session });
   if (!opened.ok) throw new Stop(opened.error, 'details' in opened ? { details: opened.details } : {});
   return view(rt, opened.task);
 }
@@ -157,9 +163,40 @@ function main(args: string[]): Out {
   if (command === 'open' && first !== undefined) return open(runtime(), first, rest);
   if (command === 'input' && first !== undefined && rest.length === 0) {
     const rt = runtime();
+    if (loadTask(rt, first) === null) throw new Stop('unknown_task');
+    // Reading the input takes the task for the session of this directory: a suspended task comes
+    // back, a task of an ended session continues here.
+    resumeTask(rt, first, sessionOfDirectory(rt, process.cwd()));
     const task = loadTask(rt, first);
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
+  }
+  // The agent proposes a contract for one task. It waits for the human.
+  if (command === 'propose' && first !== undefined && rest.length === 0) {
+    let value: unknown;
+    try {
+      value = JSON.parse(fs.readFileSync(first, 'utf8'));
+    } catch {
+      throw new Stop('no_file');
+    }
+    const rt = runtime();
+    const session = sessionOfDirectory(rt, process.cwd());
+    const r = proposeContract(rt, value, session === undefined ? {} : { session });
+    if (!r.ok) throw new Stop(r.error, { details: r.details });
+    return view(rt, r.task);
+  }
+  // The word of the human: the contract is approved and the work starts.
+  if (command === 'approve' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    const r = approveContract(rt, first);
+    if ('error' in r) throw new Stop(r.error);
+    return view(rt, r.task);
+  }
+  if (command === 'raise' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    const r = raiseLevel(rt, first);
+    if ('error' in r) throw new Stop(r.error);
+    return view(rt, r.task);
   }
   // The word of the human: the barriers ask nothing for these minutes. Zero ends the pause.
   if (command === 'pause') {
@@ -261,7 +298,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
 }
 
 let out: Out;
