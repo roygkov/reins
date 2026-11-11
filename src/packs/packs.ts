@@ -51,6 +51,7 @@ export type PackSettings = {
   rules?: PackRule[];
   models?: Partial<Record<ModelLevel, string>>; // the name of the model of the client for a level
   gate?: GateData;
+  journal?: { keep_days?: number }; // how long the archive of the journal is kept
 };
 
 // Rule data of the shell gate that a pack adds: the names that mean production in this
@@ -84,6 +85,7 @@ export type Merged = {
   models: Partial<Record<ModelLevel, string>>; // level -> name of the model; a lower pack replaces a name
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
   gate: GateData; // the rule data of the gate that the packs add, upper pack first
+  journalKeepDays?: number; // the term of the archive of the journal: the longest that a pack names
   connectorEnv: Record<string, string[]>; // read connector -> its environment variables, from the organization pack
 };
 
@@ -99,7 +101,7 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 // Variables that decide what a script runs and where: a pack does not set them.
 const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP'];
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -283,6 +285,11 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   if (value.rules !== undefined) {
     if (!Array.isArray(value.rules)) errors.push({ code: 'not_array', path: 'rules' });
     else settings.rules = packRules(errors, value.rules);
+  }
+  const journal = section(errors, value.journal, 'journal', ['keep_days']);
+  if (journal !== null) {
+    const keep = limit(errors, journal.keep_days, 'journal.keep_days');
+    settings.journal = keep === undefined ? {} : { keep_days: keep };
   }
   const gate = section(errors, value.gate, 'gate', [...GATE_LISTS, 'forms']);
   if (gate !== null) settings.gate = gateData(errors, gate);
@@ -529,6 +536,8 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
     if (list !== undefined) m.gate[key] = [...(m.gate[key] ?? []), ...list.filter((x) => !(m.gate[key] ?? []).includes(x))];
   }
   if (s.gate?.forms !== undefined) m.gate.forms = [...(m.gate.forms ?? []), ...s.gate.forms];
+  const keep = s.journal?.keep_days;
+  if (keep !== undefined && (m.journalKeepDays === undefined || keep > m.journalKeepDays)) m.journalKeepDays = keep;
   const veto = s.memory?.veto_days;
   if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
   narrow('readConnectors', s.connectors?.read);

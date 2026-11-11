@@ -25,8 +25,8 @@ import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
 import { sweep } from './core/sweep.ts';
 import { listProposals, propose, resolveProposal } from './craft/craft.ts';
-import { summarize } from './journal/metrics.ts';
-import { readJournal } from './journal/writer.ts';
+import { eight, summarize } from './journal/metrics.ts';
+import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, countUses, importRecords, listRecords, recordsForInput, restoreRecord, vetoRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
@@ -224,7 +224,9 @@ function main(args: string[]): Out {
     return {
       ok: true,
       days,
-      metrics: summarize(readJournal(rt.journal.file), Date.now() - days * 24 * 60 * 60 * 1000),
+      metrics: summarize(readJournalSince(rt.stateDir, Date.now() - days * 24 * 60 * 60 * 1000), Date.now() - days * 24 * 60 * 60 * 1000),
+      // The eight numbers of the week and of the week before it.
+      eight: eight(readJournalSince(rt.stateDir, Date.now() - 14 * 24 * 60 * 60 * 1000)),
       open_tasks: openTasks(rt).length,
       packs: rt.merged.packs.map((p) => ({ level: p.level, name: p.name, connected: p.connected, errors: p.errors })),
       rejected: rt.merged.rejected,

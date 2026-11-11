@@ -9,7 +9,7 @@ import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime
 import { forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, withSession } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
-import { readJournal } from '../journal/writer.ts';
+import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, propose } from '../craft/craft.ts';
 import { listRecords } from '../memory/store.ts';
 
@@ -48,7 +48,8 @@ function writeHandoff(rt: Runtime, session: string | undefined): void {
   if (requests === 0) return;
   const name = nameOf(session);
   // A decision of the policy and an attempt on the harness itself both end in a question or a refusal.
-  const decisions = readJournal(rt.journal.file).filter((r) => r.session === name && (r.kind === 'policy.decision' || r.kind === 'policy.protected_attempt'));
+  // A session is not older than a week: the archive before that is not read.
+  const decisions = readJournalSince(rt.stateDir, Date.now() - 7 * 24 * 60 * 60 * 1000).filter((r) => r.session === name && (r.kind === 'policy.decision' || r.kind === 'policy.protected_attempt'));
   const handoff: Handoff = {
     ended: new Date().toISOString(), requests,
     questions: decisions.filter((r) => r.data?.outcome === 'ask').length,

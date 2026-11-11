@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, openTasks, type Runtime } from './runtime.ts';
 import type { Task } from './task.ts';
+import { pruneArchive } from '../journal/writer.ts';
 
 const HOUR = 60 * 60 * 1000;
 // A free task: half a day. A scenario task: a day. A publication: an hour, as its envelope.
@@ -24,5 +25,17 @@ export function sweep(rt: Runtime, now: number = Date.now()): string[] {
     const r = applyEvent(rt, task.id, { type: 'expire' }, 'harness');
     if ('task' in r && r.error === undefined) closed.push(task.id);
   }
+  // A question that nobody answered for a day waits for nothing any more.
+  try {
+    const pending = path.join(rt.stateDir, 'pending');
+    for (const name of fs.readdirSync(pending)) {
+      const file = path.join(pending, name);
+      if (now - fs.statSync(file).mtimeMs > 24 * HOUR) fs.rmSync(file, { force: true });
+    }
+  } catch {
+    // no questions wait
+  }
+  // The archive of the journal past the term that the packs name goes away.
+  pruneArchive(rt.stateDir, rt.merged.journalKeepDays, now);
   return closed;
 }

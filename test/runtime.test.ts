@@ -226,7 +226,7 @@ test('runtime: an event for an unknown task is refused', () => {
 test('journal: a row that fails the check is not written, and the failure is counted', () => {
   const rt = runtime();
   const before = readJournal(rt.journal.file).length;
-  const r = rt.journal.write({ kind: 'task.returned', project: 'p1', task: 't1', data: { reason: 'free text is not a reason' } });
+  const r = rt.journal.write({ kind: 'task.started', project: 'p1', task: 't1', data: { reason: 'free text is not a reason' } });
   assert.equal(r.written, false);
   assert.deepEqual(r.errors.map((e) => `${e.code} ${e.path}`), ['free_text data.reason']);
   assert.equal(rt.journal.failures, 1);
@@ -236,9 +236,9 @@ test('journal: a row that fails the check is not written, and the failure is cou
 
 test('journal: rows are only added, and a broken line does not hide the others', () => {
   const rt = runtime();
-  rt.journal.write({ kind: 'memory.read', project: 'p1' });
+  rt.journal.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } });
   fs.appendFileSync(rt.journal.file, 'not json\n');
-  rt.journal.write({ kind: 'memory.read', project: 'p1' });
+  rt.journal.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } });
   assert.deepEqual(readJournal(rt.journal.file).map((r) => r.kind), ['memory.read', 'memory.read']);
   assert.equal(fs.readFileSync(rt.journal.file, 'utf8').split('\n').length, 4);
 });

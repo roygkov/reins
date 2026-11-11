@@ -8,7 +8,7 @@ import path from 'node:path';
 import type { JournalRow } from '../contracts/journal.ts';
 import { isObj } from '../contracts/shape.ts';
 import type { Runtime } from '../core/runtime.ts';
-import { readJournal } from '../journal/writer.ts';
+import { readJournalSince } from '../journal/writer.ts';
 
 export type Pattern = { pattern: 'repeated_question' | 'check_fails_often'; key: string; n: number };
 export type Proposal = Pattern & { id: string; created: string; state: 'open' | 'accepted' | 'rejected' };
@@ -72,7 +72,7 @@ function save(rt: Runtime, p: Proposal): void {
 // Looks at the journal of the last two weeks and makes a proposal for every pattern that has
 // none yet. A pattern that the human resolved is not proposed again.
 export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
-  const rows = readJournal(rt.journal.file).filter((r) => Date.parse(r.ts) >= now - PERIOD_MS);
+  const rows = readJournalSince(rt.stateDir, now - PERIOD_MS).filter((r) => Date.parse(r.ts) >= now - PERIOD_MS);
   const known = new Set(listProposals(rt).map((p) => `${p.pattern} ${p.key}`));
   const made: Proposal[] = [];
   for (const found of detect(rows)) {

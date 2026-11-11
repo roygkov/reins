@@ -77,3 +77,67 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
   }
   return m;
 }
+
+// The eight numbers of the specification (harness-journal, page 5): each answers one question of
+// the human. `value` is for the last period, `prev` for the period before it, `n` is the count of
+// the rows that the value stands on. A number without rows has no value.
+export type Number8 = { value: number | null; prev: number | null; n: number };
+export const EIGHT = ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures'] as const;
+export type Eight = Record<(typeof EIGHT)[number], Number8>;
+
+const round = (x: number): number => Math.round(x * 100) / 100;
+const share = (part: number, whole: number): { value: number | null; n: number } => ({ value: whole === 0 ? null : round(Math.min(part / whole, 1)), n: whole });
+
+function period(rows: JournalRow[], from: number, to: number): Record<(typeof EIGHT)[number], { value: number | null; n: number }> {
+  let closed = 0, verified = 0, started = 0, returned = 0, skipped = 0, asks = 0, yes = 0, tokens = 0, given = 0, used = 0, measured = 0, better = 0, failures = 0;
+  const costTasks = new Set<string>();
+  for (const row of rows) {
+    const time = Date.parse(row.ts);
+    if (Number.isNaN(time) || time < from || time >= to) continue;
+    const data = row.data ?? {};
+    switch (row.kind) {
+      case 'task.closed':
+        closed += 1;
+        if (typeof data.label === 'string' && data.label !== 'not_verified') verified += 1;
+        break;
+      case 'task.started': started += 1; break;
+      case 'task.returned': returned += 1; break;
+      case 'task.skipped': skipped += 1; break;
+      case 'policy.decision': if (data.outcome === 'ask') asks += 1; break;
+      case 'policy.protected_attempt': if (data.outcome === 'ask') asks += 1; break;
+      // The "yes" of the human: an answer to a question about one action, or the one approval of a task.
+      case 'task.human_decision': if (data.decision === 'answered' || data.decision === 'confirm') yes += 1; break;
+      case 'executor.cost':
+        if (typeof data.tokens === 'number') tokens += data.tokens;
+        if (row.task !== undefined) costTasks.add(row.task);
+        break;
+      case 'memory.read': if (typeof data.n === 'number') given += data.n; break;
+      case 'memory.record_used': used += 1; break;
+      case 'craft.effect_measured':
+        measured += 1;
+        if (data.effect === 'better') better += 1;
+        break;
+      case 'harness.failure': case 'harness.step_timeout': case 'harness.client_shape_changed': failures += 1; break;
+      default: break;
+    }
+  }
+  return {
+    verified_share: share(verified, closed),
+    returns_per_task: { value: started === 0 ? null : round(returned / started), n: started },
+    gate_yes_share: share(yes, asks),
+    no_model_share: share(skipped, skipped + started),
+    cost_per_scenario: { value: costTasks.size === 0 ? null : Math.round(tokens / costTasks.size), n: costTasks.size },
+    memory_use: share(used, given),
+    proposal_effect: share(better, measured),
+    harness_failures: { value: failures, n: failures },
+  };
+}
+
+export function eight(rows: JournalRow[], now: number = Date.now(), days = 7): Eight {
+  const span = days * 24 * 60 * 60 * 1000;
+  const last = period(rows, now - span, now + 1);
+  const before = period(rows, now - 2 * span, now - span);
+  const out = {} as Eight;
+  for (const name of EIGHT) out[name] = { value: last[name].value, prev: before[name].value, n: last[name].n };
+  return out;
+}

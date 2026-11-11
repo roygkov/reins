@@ -287,6 +287,19 @@ function reply(d: Decision, more: { task?: string; grant?: string } = {}): Reply
 }
 
 export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
+  const r = decideBefore(rt, call, clientTools);
+  const file = pendingFile(rt, call);
+  // A question waits for its answer: a run of the same call is the "yes" of the human. A question
+  // for a whole task already wrote what it waits for. Any other outcome waits for nothing.
+  if (r.outcome !== 'ask') fs.rmSync(file, { force: true });
+  else if (!(r.scope === 'task' && fs.existsSync(file))) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ ask: true }));
+  }
+  return r;
+}
+
+function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
   const read = readCall(rt, call, clientTools);
   if ('guard' in read) {
     record(rt, call, [{ kind: 'policy.protected_attempt', data: { rule: read.guard.rule, outcome: read.guard.outcome } }]);
@@ -343,7 +356,6 @@ function queued(rt: Runtime, call: ToolCall, action: Action, command: string | u
 // `asked`: false when the client did not show the question to the human (a mode of the client
 // that skips permission questions). Then the run of the tool is no approval.
 export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true): { confirmed: boolean } {
-  if (Object.hasOwn(clientTools, call.tool)) return { confirmed: false };
   if (!asked) {
     fs.rmSync(pendingFile(rt, call), { force: true });
     return { confirmed: false };
@@ -358,7 +370,12 @@ export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTool
   }
   if (pending === null || typeof pending !== 'object') return { confirmed: false };
   const { task, key } = pending as { task?: unknown; key?: unknown };
-  if (typeof task !== 'string' || typeof key !== 'string') return { confirmed: false };
+  if (typeof task !== 'string' || typeof key !== 'string') {
+    // A question about this one action: the human said "yes". The fact goes to the journal.
+    record(rt, call, [{ kind: 'task.human_decision', data: { decision: 'answered' } }]);
+    return { confirmed: false };
+  }
+  if (Object.hasOwn(clientTools, call.tool)) return { confirmed: false };
   const read = readCall(rt, call, clientTools);
   if ('guard' in read || read.action.kind !== 'write' || grantKey(read.action.name, read.action.target, read.action.env.name) !== key) return { confirmed: false };
   if (!confirm(rt, task, key)) return { confirmed: false };
