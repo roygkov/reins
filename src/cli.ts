@@ -16,6 +16,7 @@ import { ConfigError, loadRuntime } from './client/config.ts';
 import { taskInput } from './client/input.ts';
 import { applyEvent, loadTask, openScenario, openTasks, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
+import { addRecord, listRecords, vetoRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
 class Stop extends Error {
@@ -138,6 +139,24 @@ function main(args: string[]): Out {
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
   }
+  if (command === 'memory') {
+    const rt = runtime();
+    if (first === undefined) return { ok: true, records: listRecords(rt) };
+    if (first === 'veto' && rest.length === 1 && rest[0] !== undefined) {
+      if (!vetoRecord(rt, rest[0])) throw new Stop('unknown_record');
+      return { ok: true, record: rest[0], state: 'vetoed' };
+    }
+    // `add <type> <text> [task=<id>] [path=<p>]...` is the agent; `decide <text> [path=<p>]...` is the human.
+    if ((first === 'add' && rest.length >= 2) || (first === 'decide' && rest.length >= 1)) {
+      const [type, text, ...more] = first === 'add' ? rest : ['decision', ...rest];
+      const paths = more.filter((m) => m.startsWith('path=')).map((m) => m.slice(5));
+      const task = more.find((m) => m.startsWith('task='))?.slice(5);
+      const r = addRecord(rt, { type: type ?? '', text: text ?? '', paths, by: first === 'add' ? 'agent' : 'human', ...(task !== undefined ? { task } : {}) });
+      if (!r.ok) throw new Stop(r.error);
+      return { ok: true, record: r.record };
+    }
+    throw new Stop('usage');
+  }
   if (command === 'tasks' && first === undefined) {
     return {
       ok: true,
@@ -169,7 +188,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text>', 'memory veto <id>'] });
 }
 
 let out: Out;

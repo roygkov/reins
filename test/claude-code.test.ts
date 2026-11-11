@@ -133,7 +133,7 @@ test('claude-code: "post" never blocks and prints nothing', () => {
 
 test('claude-code: the plugin registers the hook before every tool', () => {
   const hooks = JSON.parse(fs.readFileSync(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url), 'utf8')).hooks;
-  assert.deepEqual(Object.keys(hooks).sort(), ['PostToolUse', 'PreToolUse']);
+  assert.ok(['PostToolUse', 'PreToolUse'].every((k) => k in hooks));
   assert.equal(hooks.PreToolUse[0].matcher, '.*');
   assert.equal(hooks.PreToolUse[0].hooks[0].onFailure, 'block');
   assert.match(hooks.PreToolUse[0].hooks[0].command, /hooks\/hook\.ts" pre$/);

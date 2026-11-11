@@ -11,7 +11,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
-import { confirm, decideAction, loadTask, openFreeTask, type Runtime } from '../core/runtime.ts';
+import { confirm, decideAction, loadTask, type Runtime } from '../core/runtime.ts';
+import { sessionTask } from './session.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { shellAction } from '../gate/index.ts';
 import type { ToolRule } from '../packs/packs.ts';
@@ -146,7 +147,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+stop(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|memory\s+(veto|decide))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
     if (named !== null) return { guard: { outcome: 'ask', rule: named } };
     return { action: shell.action, layers: shell.layers };
@@ -184,39 +185,6 @@ function taskFor(rt: Runtime, key: string): string | undefined {
     if (task.state === 'publishing' && Date.now() - fs.statSync(path.join(rt.stateDir, 'tasks', name)).mtimeMs <= (rt.publishIdleMs ?? PUBLISH_IDLE_MS)) return id;
   }
   return undefined;
-}
-
-// An action outside a scenario belongs to the free task of the session: every decision of the
-// policy has a task in the journal. One free task for one session of the client; the event
-// "request of the human", which opens a task for each request, is not connected yet.
-function sessionTask(rt: Runtime, session: string | undefined): string {
-  const name = session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(session) ? session : crypto.createHash('sha256').update(session ?? '').digest('hex').slice(0, 16);
-  const file = path.join(rt.stateDir, 'sessions', `${name}.json`);
-  let stale = false; // the file names a task that is closed or gone
-  try {
-    const known: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const id = known !== null && typeof known === 'object' ? (known as { task?: unknown }).task : undefined;
-    if (typeof id === 'string' && loadTask(rt, id)?.state === 'executing') return id;
-    stale = true;
-  } catch {
-    // no task for this session yet
-  }
-  const task = openFreeTask(rt);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  try {
-    // Hooks of parallel calls are separate processes: only the first one names the task.
-    if (stale) fs.rmSync(file, { force: true });
-    fs.writeFileSync(file, JSON.stringify({ task: task.id }), { flag: 'wx' });
-    return task.id;
-  } catch {
-    try {
-      const other = (JSON.parse(fs.readFileSync(file, 'utf8')) as { task?: unknown }).task;
-      if (typeof other === 'string' && loadTask(rt, other) !== null) return other;
-    } catch {
-      // the other writer is not done: this call keeps its own task
-    }
-    return task.id;
-  }
 }
 
 function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data'>[]): void {

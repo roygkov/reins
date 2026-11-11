@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import { afterAction, beforeAction, type ClientTools, type Reply, type ToolCall } from '../../../src/client/before.ts';
 import { loadRuntime } from '../../../src/client/config.ts';
+import { agentStopped, humanRequest, sessionEnd, sessionStart, type SessionEvent } from '../../../src/client/session.ts';
 import { isObj } from '../../../src/contracts/shape.ts';
 import type { Runtime } from '../../../src/core/runtime.ts';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +101,28 @@ function post(): void {
   }
 }
 
+// The events of the session. They never block the client: a failure here costs context, not a barrier.
+function session(mode: string): void {
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(0, 'utf8'));
+    if (!isObj(value) || typeof value.cwd !== 'string' || !value.cwd.startsWith('/')) return;
+    const rt = runtime(value.cwd);
+    if (rt === null) return;
+    const e: SessionEvent = { cwd: value.cwd, client: 'claude_code' };
+    if (typeof value.session_id === 'string' && value.session_id !== '') e.session = value.session_id;
+    if (mode === 'session-start') {
+      const { context } = sessionStart(rt, e);
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context.join('\n') } }));
+    } else if (mode === 'prompt') humanRequest(rt, e);
+    else if (mode === 'stop') agentStopped(rt, e);
+    else if (mode === 'session-end') sessionEnd(rt, e);
+  } catch {
+    // no output: the client goes on
+  }
+}
+
 export function main(mode: string | undefined): void {
   if (mode === 'pre') pre();
   else if (mode === 'post') post();
+  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end'].includes(mode)) session(mode);
 }
