@@ -28,6 +28,7 @@ export type TaskInput = {
   report: ReportSpec;
   writes: Grant[]; // the writes that the scenario can ask for; the policy decides each one
   protocol: string[];
+  memory?: { id: string; type: string; text: string }[]; // records of the memory about this work, with their ids
   pack_notes?: { level: string; text: string }[]; // the notes of the packs, upper pack first
 };
 

@@ -12,7 +12,7 @@ import { findRoot } from '../gate/index.ts';
 import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 
 // The keys of the file: of the harness, and of the gate (src/gate/config.cjs).
-const KEYS = ['packs', 'state_dir', 'repo_packs', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+const KEYS = ['packs', 'state_dir', 'memory_dir', 'repo_packs', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -24,7 +24,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean } {
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string } {
   const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
   let text: string;
   try {
@@ -50,7 +50,11 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   const stateDir = value.state_dir ?? path.join(os.homedir(), '.local', 'state', 'reins');
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) throw bad;
   if (value.repo_packs !== undefined && typeof value.repo_packs !== 'boolean') throw bad;
-  return { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  // The memory records can live in a directory of the instance, for example a repository with history.
+  if (value.memory_dir !== undefined && (typeof value.memory_dir !== 'string' || !path.isAbsolute(value.memory_dir))) throw bad;
+  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  if (typeof value.memory_dir === 'string') out.memoryDir = value.memory_dir;
+  return out;
 }
 
 // The runtime of one call of a client. `cwd` is the directory where the client works: its token
@@ -68,5 +72,6 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   const project = `p${crypto.createHash('sha1').update(cwd).digest('hex').slice(0, 8)}`;
   const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
+  if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;
   return rt;
 }

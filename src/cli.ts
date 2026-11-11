@@ -13,6 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError, loadRuntime } from './client/config.ts';
+import { isObj } from './contracts/shape.ts';
+import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
 import { applyEvent, loadTask, openScenario, openTasks, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
@@ -21,7 +23,7 @@ import { sweep } from './core/sweep.ts';
 import { listProposals, propose, resolveProposal } from './craft/craft.ts';
 import { summarize } from './journal/metrics.ts';
 import { readJournal } from './journal/writer.ts';
-import { addRecord, listRecords, vetoRecord } from './memory/store.ts';
+import { addRecord, brokenRecords, countUses, importRecords, listRecords, recordsForInput, restoreRecord, vetoRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
 class Stop extends Error {
@@ -42,6 +44,7 @@ function runtime(): Runtime {
 }
 
 const INLINE_BYTES = 2000;
+const MEMORY_INPUT_BYTES = 4000;
 
 // A large collected result does not go into the context of the model: it is written to a file
 // beside the task and the input names the file. The model reads what it needs from there.
@@ -73,6 +76,14 @@ function view(rt: Runtime, task: Task): Out {
     input.collected = byReference(rt, task.id, input.collected);
     // The notes of the packs: rules of work that hold for every task (language, tone).
     if (rt.merged.notes.length > 0) input.pack_notes = rt.merged.notes;
+    // The memory about the places of this work: the changed files when the scenario names them.
+    const changed = task.manifest?.done.changed === undefined ? undefined : readCollected(rt, task.id)?.[task.manifest.done.changed];
+    const places = Array.isArray(changed) ? changed.map((f) => (typeof f === 'string' ? f : isObj(f) && typeof f.path === 'string' ? f.path : '')).filter((p) => p !== '') : [];
+    const records = recordsForInput(rt, { paths: places, maxBytes: MEMORY_INPUT_BYTES });
+    if (records.length > 0) {
+      input.memory = records;
+      input.protocol.push('`memory` holds records about this work. When a record helped, cite its id in the report: the harness counts that as a use of the record.');
+    }
     out.input = input;
   }
   // The publication: the writes that the task names can be made now, then `finish` closes the task.
@@ -123,9 +134,13 @@ function report(rt: Runtime, id: string, source: string): Out {
   }
   // A task that waits for its check answer (a busy lock, a process that died): the check runs
   // again from the report that is kept. The new text is not read.
-  const r = loadTask(rt, id)?.state === 'checking' ? runCheck(rt, id) : submitReport(rt, id, text);
+  const waits = loadTask(rt, id)?.state === 'checking';
+  const r = waits ? runCheck(rt, id) : submitReport(rt, id, text);
   if ('error' in r) throw new Stop(r.error === 'not_checking' ? 'check_not_supported' : r.error);
   if (r.step.error !== undefined) throw new Stop(r.step.error);
+  // A record of the memory that an accepted report cites by its id was used. A report that came
+  // back, and a text that the harness did not read, count nothing.
+  if (!waits && (r.answer === undefined || r.answer.result === 'PASS')) countUses(rt, text);
   const task = r.step.task;
   const out: Out = { ok: true, task: task.id, state: task.state };
   if (task.label !== undefined) out.label = task.label;
@@ -178,17 +193,38 @@ function main(args: string[]): Out {
   }
   if (command === 'memory') {
     const rt = runtime();
-    if (first === undefined) return { ok: true, records: listRecords(rt) };
+    if (first === undefined) {
+      const broken = brokenRecords(rt);
+      return broken.length > 0 ? { ok: true, records: listRecords(rt), broken } : { ok: true, records: listRecords(rt) };
+    }
     if (first === 'veto' && rest.length === 1 && rest[0] !== undefined) {
       if (!vetoRecord(rt, rest[0])) throw new Stop('unknown_record');
       return { ok: true, record: rest[0], state: 'vetoed' };
     }
-    // `add <type> <text> [task=<id>] [path=<p>]...` is the agent; `decide <text> [path=<p>]...` is the human.
+    if (first === 'restore' && rest.length === 1 && rest[0] !== undefined) {
+      if (!restoreRecord(rt, rest[0])) throw new Stop('unknown_record');
+      return { ok: true, record: rest[0], state: 'active' };
+    }
+    if (first === 'import' && rest.length === 1 && rest[0] !== undefined) {
+      try {
+        return { ok: true, ...importRecords(rt, rest[0]) };
+      } catch {
+        throw new Stop('no_file');
+      }
+    }
+    // `add <type> <text> [task=<id>] [path=<p>]...` is the agent; `decide <text> because=<reason> ...` is the human.
     if ((first === 'add' && rest.length >= 2) || (first === 'decide' && rest.length >= 1)) {
       const [type, text, ...more] = first === 'add' ? rest : ['decision', ...rest];
-      const paths = more.filter((m) => m.startsWith('path=')).map((m) => m.slice(5));
-      const task = more.find((m) => m.startsWith('task='))?.slice(5);
-      const r = addRecord(rt, { type: type ?? '', text: text ?? '', paths, by: first === 'add' ? 'agent' : 'human', ...(task !== undefined ? { task } : {}) });
+      const value = (name: string): string | undefined => more.find((m) => m.startsWith(`${name}=`))?.slice(name.length + 1);
+      const input: Parameters<typeof addRecord>[1] = { type: type ?? '', text: text ?? '', paths: more.filter((m) => m.startsWith('path=')).map((m) => m.slice(5)), by: first === 'add' ? 'agent' : 'human' };
+      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes'] as const) {
+        const v = value(key);
+        if (v !== undefined) input[key] = v;
+      }
+      // The places of a record are relative to the repository where the client works.
+      const root = findRoot(process.cwd());
+      if (root.isRepo) input.root = root.root;
+      const r = addRecord(rt, input);
       if (!r.ok) throw new Stop(r.error);
       return { ok: true, record: r.record };
     }
@@ -225,7 +261,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text>', 'memory veto <id>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
 }
 
 let out: Out;

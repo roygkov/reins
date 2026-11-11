@@ -29,6 +29,7 @@ export type Runtime = {
   publishIdleMs?: number; // how long the envelope of a publication answers without any use
   gateConfig?: Record<string, unknown>; // the rule data of the gate; absent: the gate loads its own layers
   projectPackDir?: string; // `.reins` of the repository of the client, also when it does not exist yet
+  memoryDir?: string; // the directory of the memory records; absent: inside the state directory
   clientPaths?: string[]; // patterns of the paths of the client settings that register the harness
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };

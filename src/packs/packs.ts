@@ -44,7 +44,7 @@ export type PackSettings = {
   limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number };
   roles?: string[];
   checks?: string[];
-  memory?: { types?: string[] };
+  memory?: { types?: string[]; veto_days?: number };
   tools?: Record<string, ToolRule>;
   rules?: PackRule[];
 };
@@ -70,6 +70,7 @@ export type Merged = {
   tools: Record<string, ToolRule>; // the tools of the connectors, from the organization pack
   rules: (PackRule & { level: PackLevel })[]; // the rules of all connected packs
   notes: { level: PackLevel; text: string }[]; // the notes of the connected packs, upper pack first
+  vetoDays?: number; // the veto window of a memory record: the longest that a pack names
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -216,10 +217,12 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   const checks = names(errors, value.checks, 'checks');
   if (checks !== undefined) settings.checks = checks;
 
-  const memory = section(errors, value.memory, 'memory', ['types']);
+  const memory = section(errors, value.memory, 'memory', ['types', 'veto_days']);
   if (memory !== null) {
     const types = names(errors, memory.types, 'memory.types', RECORD_TYPES);
-    settings.memory = { ...(types !== undefined && { types }) };
+    // How long a record that the harness wrote waits for a veto of the human.
+    const veto = limit(errors, memory.veto_days, 'memory.veto_days');
+    settings.memory = { ...(types !== undefined && { types }), ...(veto !== undefined && { veto_days: veto }) };
   }
   if (value.tools !== undefined) {
     // Only the organization says what a tool does: a lower level could turn a write into a read.
@@ -424,6 +427,8 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   if (s.tools !== undefined) m.tools = s.tools;
   for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
   if (pack.note !== undefined) m.notes.push({ level: pack.level, text: pack.note });
+  const veto = s.memory?.veto_days;
+  if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
   narrow('readConnectors', s.connectors?.read);
   narrow('writeActions', s.connectors?.write);
   narrow('memoryTypes', s.memory?.types);

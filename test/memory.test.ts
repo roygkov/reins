@@ -13,6 +13,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import { openFreeTask, openScenario, type Runtime } from '../src/core/runtime.ts';
 import { addRecord, findRecords, listRecords, vetoRecord } from '../src/memory/store.ts';
 import { sessionStart } from '../src/client/session.ts';
+import { beforeAction } from '../src/client/before.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -111,7 +112,7 @@ test('memory: the agent writes only what the manifest of its task allows', () =>
 
 test('memory: the human writes a record of any type, and it is active at once', () => {
   const b = box();
-  const r = addRecord(b.rt, { type: 'decision', text: 'The report is data, not prose.', paths: [], by: 'human' }, T0);
+  const r = addRecord(b.rt, { type: 'decision', text: 'The report is data, not prose.', because: 'One format for every client.', paths: [], by: 'human' }, T0);
   assert.ok(r.ok);
   assert.deepEqual([r.record.state, r.record.veto_until], ['active', undefined]);
 });
@@ -147,10 +148,258 @@ test('memory: the command line adds, lists and vetoes records', () => {
   const added = reins(b, ['memory', 'add', 'pitfall', TEXT, `task=${task}`, 'path=src/Limit.java']);
   assert.deepEqual([added.code, added.json.ok, added.json.record.state], [0, true, 'pending']);
   assert.deepEqual(reins(b, ['memory', 'add', 'decision', TEXT, `task=${task}`]).json, { ok: false, error: 'human_only' });
-  const decided = reins(b, ['memory', 'decide', 'The report is data.']);
+  assert.deepEqual(reins(b, ['memory', 'decide', 'The report is data.']).json, { ok: false, error: 'no_reason' });
+  const decided = reins(b, ['memory', 'decide', 'The report is data.', 'because=One format for every client.']);
   assert.deepEqual([decided.json.record.type, decided.json.record.state], ['decision', 'active']);
   const listed = reins(b, ['memory']);
   assert.deepEqual(listed.json.records.map((r: any) => [r.type, r.state]), [['pitfall', 'pending'], ['decision', 'active']]);
   assert.deepEqual(reins(b, ['memory', 'veto', added.json.record.id]).json, { ok: true, record: added.json.record.id, state: 'vetoed' });
   assert.deepEqual(reins(b, ['memory', 'veto', added.json.record.id]).json, { ok: false, error: 'unknown_record' });
+});
+
+// ---- The memory by the specification: the place of a record, its use, its age, its history.
+import { countUses, importRecords, recordsForInput, restoreRecord, scrub } from '../src/memory/store.ts';
+
+function repo(b: Box): string {
+  fs.mkdirSync(path.join(b.cwd, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(b.cwd, 'src/Limit.java'), 'int limit = items.length;\n');
+  return b.cwd;
+}
+
+test('memory: a record is a file that a human can read, in the directory that the runtime names', () => {
+  const b = box();
+  b.rt.memoryDir = path.join(b.root, 'notes');
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: ['src/Limit.java'], by: 'human' }, T0);
+  assert.ok(r.ok);
+  const file = path.join(b.root, 'notes', 'pitfall', `${r.record.id}.md`);
+  const text = fs.readFileSync(file, 'utf8');
+  assert.match(text, /^---\nid: m[0-9a-f]{10}\ntype: pitfall\n/);
+  assert.ok(text.endsWith(`---\n${TEXT}\n`));
+  assert.deepEqual(listRecords(b.rt, T0).map((x) => x.text), [TEXT], 'the file is read back as it was written');
+  // A human edits the file by hand: the store reads the new text.
+  fs.writeFileSync(file, text.replace(TEXT, 'Edited by hand.'));
+  assert.deepEqual(listRecords(b.rt, T0).map((x) => x.text), ['Edited by hand.']);
+});
+
+test('memory: a decision needs its reason, and it can replace an older decision', () => {
+  const b = box();
+  assert.deepEqual(addRecord(b.rt, { type: 'decision', text: 'Reports are data.', paths: [], by: 'human' }, T0), { ok: false, error: 'no_reason' });
+  const first = addRecord(b.rt, { type: 'decision', text: 'Reports are prose.', because: 'It is easy to write.', paths: [], by: 'human' }, T0);
+  assert.ok(first.ok);
+  const second = addRecord(b.rt, { type: 'decision', text: 'Reports are data.', because: 'A format of one reviewer must not live in the core.', rejected: 'prose with a parser', supersedes: first.record.id, paths: [], by: 'human' }, T0 + 1000);
+  assert.ok(second.ok);
+  assert.deepEqual(listRecords(b.rt, T0 + 2000).map((x) => [x.id, x.state]), [[first.record.id, 'replaced'], [second.record.id, 'active']]);
+  assert.deepEqual(findRecords(b.rt, { paths: [] }, T0 + 2000).map((x) => x.id), [second.record.id]);
+  assert.deepEqual(addRecord(b.rt, { type: 'decision', text: 'x', because: 'y', supersedes: 'mffffffffff', paths: [], by: 'human' }, T0), { ok: false, error: 'unknown_record' });
+});
+
+test('memory: a record about a place goes stale when the place changes', () => {
+  const b = box();
+  const root = repo(b);
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: ['src/Limit.java'], root, by: 'human' }, T0);
+  assert.ok(r.ok);
+  assert.match(r.record.anchor?.fp ?? '', /^[0-9a-f]{12}$/);
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'active');
+  fs.writeFileSync(path.join(root, 'src/Limit.java'), 'int limit = items.length + 1;\n');
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale');
+  assert.deepEqual(findRecords(b.rt, { paths: ['src/Limit.java'] }, T0), [], 'a stale record does not reach a task');
+  // The human looks at it and says that it still holds: the record gets the new fingerprint.
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'active');
+  fs.rmSync(path.join(root, 'src/Limit.java'));
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale', 'a place that is gone makes the record stale');
+});
+
+test('memory: a record that no report cited for its term goes stale, a cited one stays', () => {
+  const b = box();
+  const used = addRecord(b.rt, { type: 'pitfall', text: 'Used.', paths: [], by: 'human' }, T0);
+  const idle = addRecord(b.rt, { type: 'pitfall', text: 'Idle.', paths: [], by: 'human' }, T0 + 1000);
+  assert.ok(used.ok && idle.ok);
+  const cited = countUses(b.rt, `I followed ${used.record.id} here, and ${used.record.id} again. Not a record: m123.`, T0 + 100 * DAY);
+  assert.deepEqual(cited, [used.record.id], 'an id is counted once for one report');
+  const later = T0 + 190 * DAY;
+  assert.deepEqual(listRecords(b.rt, later).map((x) => [x.text, x.state, x.uses]), [['Used.', 'active', 1], ['Idle.', 'stale', 0]]);
+  assert.ok(readJournal(b.rt.journal.file).some((r) => r.kind === 'memory.record_used' && r.data?.record === used.record.id));
+});
+
+test('memory: a decision does not go stale by age', () => {
+  const b = box();
+  const r = addRecord(b.rt, { type: 'decision', text: 'Reports are data.', because: 'One format for every client.', paths: [], by: 'human' }, T0);
+  assert.ok(r.ok);
+  assert.equal(listRecords(b.rt, T0 + 400 * DAY)[0]?.state, 'active');
+});
+
+test('memory: a veto can be taken back by the human, with the history of the record kept', () => {
+  const b = box();
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: [], task: scenario(b), by: 'agent' }, T0);
+  assert.ok(r.ok);
+  vetoRecord(b.rt, r.record.id, T0 + 1000);
+  assert.equal(restoreRecord(b.rt, r.record.id, T0 + 2000), true);
+  const now = listRecords(b.rt, T0 + 3000)[0];
+  assert.equal(now?.state, 'active');
+  assert.deepEqual(now?.history.map((h) => h.state), ['pending', 'vetoed', 'active']);
+  assert.equal(restoreRecord(b.rt, 'mffffffffff', T0), false);
+});
+
+test('memory: secrets are cleaned from a record before it is written', () => {
+  assert.equal(scrub('token glpat-AbCdEf0123456789xyzQ in the config'), 'token [redacted] in the config');
+  assert.equal(scrub('AWS key AKIAIOSFODNN7EXAMPLE leaked'), 'AWS key [redacted] leaked');
+  assert.equal(scrub('password=hunter2secret and api_key: "abcDEF123456789012"'), 'password=[redacted] and api_key: [redacted]');
+  assert.equal(scrub('Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijk'), 'Bearer [redacted]');
+  assert.equal(scrub(TEXT), TEXT);
+  const b = box();
+  const r = addRecord(b.rt, { type: 'pitfall', text: 'The job needs password=hunter2secret to start.', paths: [], by: 'human' }, T0);
+  assert.ok(r.ok);
+  assert.equal(r.record.text, 'The job needs password=[redacted] to start.');
+});
+
+test('memory: the records for a task come with their ids, the most used first, inside a size limit', () => {
+  const b = box();
+  const ids: string[] = [];
+  for (const [text, paths] of [['About the limit file.', ['src/Limit.java']], ['About the whole project.', []], ['About another file.', ['src/Other.java']], ['Long. '.repeat(200), []]] as const) {
+    const r = addRecord(b.rt, { type: 'pitfall', text, paths: [...paths], by: 'human' }, T0);
+    assert.ok(r.ok);
+    ids.push(r.record.id);
+  }
+  countUses(b.rt, `see ${ids[1]}`, T0);
+  const got = recordsForInput(b.rt, { paths: ['a/src/Limit.java'], maxBytes: 600 }, T0);
+  assert.deepEqual(got.map((x) => x.id), [ids[1], ids[0]], 'the used record first; the other file and the record over the limit are left out');
+  assert.deepEqual(Object.keys(got[0] ?? {}).sort(), ['id', 'text', 'type']);
+});
+
+test('memory: records of another store are imported as records of the human', () => {
+  const b = box();
+  const file = path.join(b.root, 'import.jsonl');
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: 'decision', text: 'Reports are data.', because: 'One format.', created: '2026-10-01T10:00:00.000Z', source: 'D-2026-10-01-reports-data' }),
+    JSON.stringify({ type: 'pitfall', text: 'The limit counts from one.', paths: ['src/Limit.java'] }),
+    'not json',
+    JSON.stringify({ type: 'decision', text: 'No reason given.' }),
+  ].join('\n'));
+  const r = importRecords(b.rt, file, T0);
+  assert.deepEqual([r.added, r.skipped], [2, [{ line: 3, error: 'bad_json' }, { line: 4, error: 'no_reason' }]]);
+  const all = listRecords(b.rt, T0);
+  assert.deepEqual(all.map((x) => [x.type, x.state, x.by, x.created, x.source]), [
+    ['decision', 'active', 'human', '2026-10-01T10:00:00.000Z', 'D-2026-10-01-reports-data'],
+    ['pitfall', 'active', 'human', new Date(T0).toISOString(), undefined],
+  ]);
+  assert.deepEqual(importRecords(b.rt, file, T0).added, 0, 'a second import of the same file adds nothing');
+});
+
+test('memory: the veto window comes from the packs', () => {
+  const b = box();
+  b.rt.merged.vetoDays = 3;
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: [], task: scenario(b), by: 'agent' }, T0);
+  assert.ok(r.ok);
+  assert.equal(r.record.veto_until, new Date(T0 + 3 * DAY).toISOString());
+});
+
+test('memory: the input of a scenario task carries the records, and a report that cites one counts as its use', () => {
+  const b = box();
+  // The record is written through the command line: it belongs to the project of that client.
+  const r = reins(b, ['memory', 'decide', 'About the whole project.', 'because=It holds for every task.']).json;
+  assert.equal(r.ok, true);
+  const opened = reins(b, ['open', 'change-review', 'change_id=7']);
+  assert.deepEqual(opened.json.input.memory, [{ id: r.record.id, type: 'decision', text: 'About the whole project.' }]);
+  assert.ok(opened.json.input.protocol.some((line: string) => line.includes('memory')));
+  fs.mkdirSync(path.join(b.cwd, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(b.cwd, 'src/a.ts'), 'const limit = items.length;\n');
+  const file = path.join(b.root, 'report.json');
+  const item = { file: 'src/a.ts', line: 1, quote: 'const limit = items.length;', text: `By ${r.record.id}.` };
+  // A report that comes back counts nothing: only the accepted report is a use.
+  fs.writeFileSync(file, JSON.stringify({ items: [{ ...item, quote: 'no such quote at all' }] }));
+  assert.equal(reins(b, ['report', opened.json.task, file]).json.answer.result, 'FAIL');
+  assert.equal(reins(b, ['memory']).json.records[0].uses, 0);
+  fs.writeFileSync(file, JSON.stringify({ items: [item] }));
+  assert.equal(reins(b, ['report', opened.json.task, file]).json.answer.result, 'PASS');
+  assert.equal(reins(b, ['memory']).json.records[0].uses, 1);
+});
+
+test('memory: the directory of the records is closed for a direct write of the agent', () => {
+  const b = box();
+  b.rt.memoryDir = path.join(b.root, 'notes');
+  const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'write_file', input: { path: path.join(b.root, 'notes/pitfall/m0123456789.md') } }, { write_file: { kind: 'local', path: 'path' } });
+  assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.memory']);
+});
+
+test('memory: the agent cannot replace a record, and only a decision replaces a decision', () => {
+  const b = box();
+  const decision = addRecord(b.rt, { type: 'decision', text: 'Reports are data.', because: 'One format.', paths: [], by: 'human' }, T0);
+  assert.ok(decision.ok);
+  const task = scenario(b);
+  assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: 'x', paths: [], task, supersedes: decision.record.id, by: 'agent' }, T0), { ok: false, error: 'human_only' });
+  assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: 'x', paths: [], supersedes: decision.record.id, by: 'human' }, T0), { ok: false, error: 'bad_type' });
+  const pitfall = addRecord(b.rt, { type: 'pitfall', text: 'A pitfall.', paths: [], by: 'human' }, T0);
+  assert.ok(pitfall.ok);
+  assert.deepEqual(addRecord(b.rt, { type: 'decision', text: 'y', because: 'z', paths: [], supersedes: pitfall.record.id, by: 'human' }, T0), { ok: false, error: 'unknown_record' });
+  assert.deepEqual(listRecords(b.rt, T0).map((x) => x.state), ['active', 'active'], 'nothing was replaced');
+});
+
+test('memory: an old record of another store starts its term at the import', () => {
+  const b = box();
+  const file = path.join(b.root, 'old.jsonl');
+  fs.writeFileSync(file, JSON.stringify({ type: 'pitfall', text: 'An old pitfall.', created: '2026-01-01T00:00:00.000Z' }));
+  assert.equal(importRecords(b.rt, file, T0).added, 1);
+  assert.deepEqual(listRecords(b.rt, T0).map((x) => [x.created, x.state]), [['2026-01-01T00:00:00.000Z', 'active']]);
+  assert.equal(listRecords(b.rt, T0 + 181 * DAY)[0]?.state, 'stale');
+});
+
+test('memory: only a record that is out of use is restored', () => {
+  const b = box();
+  const first = addRecord(b.rt, { type: 'decision', text: 'Old.', because: 'a', paths: [], by: 'human' }, T0);
+  assert.ok(first.ok);
+  const second = addRecord(b.rt, { type: 'decision', text: 'New.', because: 'b', supersedes: first.record.id, paths: [], by: 'human' }, T0);
+  const draft = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: [], task: scenario(b), by: 'agent' }, T0);
+  assert.ok(second.ok && draft.ok);
+  assert.equal(restoreRecord(b.rt, first.record.id, T0), false, 'a replaced decision stays replaced');
+  assert.equal(restoreRecord(b.rt, draft.record.id, T0), false, 'a draft keeps its veto window');
+  assert.equal(restoreRecord(b.rt, second.record.id, T0), false, 'an active record needs no restore');
+});
+
+test('memory: a restored record whose place is gone is no longer tied to the place', () => {
+  const b = box();
+  const root = repo(b);
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: ['src/Limit.java'], root, by: 'human' }, T0);
+  assert.ok(r.ok);
+  fs.rmSync(path.join(root, 'src/Limit.java'));
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale');
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  const now = listRecords(b.rt, T0)[0];
+  assert.deepEqual([now?.state, now?.anchor], ['active', undefined]);
+});
+
+test('memory: a replaced decision cannot come back through a veto and a restore', () => {
+  const b = box();
+  const first = addRecord(b.rt, { type: 'decision', text: 'Old.', because: 'a', paths: [], by: 'human' }, T0);
+  assert.ok(first.ok);
+  assert.ok(addRecord(b.rt, { type: 'decision', text: 'New.', because: 'b', supersedes: first.record.id, paths: [], by: 'human' }, T0 + 1000).ok);
+  assert.equal(vetoRecord(b.rt, first.record.id, T0), false);
+  assert.equal(restoreRecord(b.rt, first.record.id, T0), false);
+  assert.deepEqual(listRecords(b.rt, T0).map((x) => x.state), ['replaced', 'active']);
+});
+
+test('memory: a shell command that names the memory directory, or restores or imports records, asks the human', () => {
+  const b = box();
+  b.rt.memoryDir = path.join(b.root, 'notes');
+  const tools = { shell: { kind: 'shell' as const, command: 'command' } };
+  for (const [command, rule] of [
+    [`echo x > ${b.root}/notes/pitfall/m0123456789.md`, 'protect.memory'],
+    ['reins memory restore m0123456789', 'protect.human-command'],
+    ['reins memory import /tmp/records.jsonl', 'protect.human-command'],
+  ] as const) {
+    const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command } }, tools);
+    assert.deepEqual([r.outcome, r.rule], ['ask', rule], command);
+  }
+  assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: 'reins memory add pitfall text task=t000000000000' } }, tools).outcome, 'allow');
+});
+
+test('memory: a record file that a human broke is shown, not skipped in silence', () => {
+  const b = box();
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: [], by: 'human' }, T0);
+  assert.ok(r.ok);
+  const dir = path.join(b.rt.stateDir, 'memory', 'pitfall');
+  fs.writeFileSync(path.join(dir, 'm0000000001.md'), '---\nid:m0000000001\n---\ntext\n');
+  fs.writeFileSync(path.join(dir, 'm0000000002.md'), fs.readFileSync(path.join(dir, `${r.record.id}.md`), 'utf8').replace(r.record.id, 'm0000000002').replace('state: active', 'state: alive'));
+  const out = reins(b, ['memory']).json;
+  assert.deepEqual(out.broken, ['pitfall/m0000000001.md', 'pitfall/m0000000002.md']);
 });
