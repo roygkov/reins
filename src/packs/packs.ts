@@ -20,10 +20,11 @@ export type PackErrorCode =
   | 'duplicate' | 'widens' | 'upper_not_connected';
 export type PackError = Fault<PackErrorCode>;
 
-export type RejectCode = ManifestErrorCode | 'bad_json' | 'too_large' | 'package_mismatch';
+export type RejectCode = ManifestErrorCode | 'bad_json' | 'too_large' | 'package_mismatch' | 'not_a_file';
 export type Rejected = { level: PackLevel; file: string; errors: Fault<RejectCode>[] };
 
-export type Scenario = { name: string; level: PackLevel; file: string; manifest: Manifest };
+// `instructions`: the text for the model, from the file `<manifest name>.md` beside the manifest.
+export type Scenario = { name: string; level: PackLevel; file: string; manifest: Manifest; instructions?: string };
 
 // What one pack says. Absent fields say nothing.
 export type PackSettings = {
@@ -57,6 +58,7 @@ export type Merged = {
 
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_DEPTH = 4;
+const MAX_INSTRUCTION_BYTES = 64 * 1024;
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
@@ -79,6 +81,25 @@ function readJson(file: string): ReadResult {
     return { value: JSON.parse(fs.readFileSync(file, 'utf8')) };
   } catch {
     return { error: 'bad_json' };
+  }
+}
+
+// The instruction text of a scenario: what the model must do. The manifest says what the harness
+// allows and checks; this file is the words for the model. No file: no instructions.
+function readInstructions(manifestFile: string): { text?: string } | { error: 'too_large' | 'not_a_file' } {
+  const file = manifestFile.replace(/\.json$/, '.md');
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(file);
+  } catch {
+    return {};
+  }
+  if (!stat.isFile()) return { error: 'not_a_file' };
+  if (stat.size > MAX_INSTRUCTION_BYTES) return { error: 'too_large' };
+  try {
+    return { text: fs.readFileSync(file, 'utf8') };
+  } catch {
+    return { error: 'not_a_file' };
   }
 }
 
@@ -379,8 +400,15 @@ export function mergePacks(loaded: LoadedPack[]): Merged {
         m.rejected.push({ level: pack.level, file: label, errors });
         continue;
       }
+      const words = readInstructions(file);
+      if ('error' in words) {
+        m.rejected.push({ level: pack.level, file: label, errors: [{ code: words.error, path: 'instructions' }] });
+        continue;
+      }
       seen.add(value.name);
-      m.scenarios.push({ name: value.name, level: pack.level, file, manifest: value });
+      const scenario: Scenario = { name: value.name, level: pack.level, file, manifest: value };
+      if (words.text !== undefined) scenario.instructions = words.text;
+      m.scenarios.push(scenario);
     }
   }
   return m;

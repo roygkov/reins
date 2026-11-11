@@ -149,6 +149,7 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs): Opened 
   const manifest = structuredClone(scenario.manifest);
   const made = newScenarioTask(newId(), manifest, { ...inputs });
   if ('errors' in made) return { ok: false, error: 'bad_inputs', details: made.errors };
+  if (scenario.instructions !== undefined) made.task.instructions = scenario.instructions;
   commit(rt, { task: made.task, rows: made.rows });
 
   const collect = manifest.collect;

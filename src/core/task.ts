@@ -23,6 +23,7 @@ export type Task = {
   scenario?: string;
   version?: number;
   manifest?: Manifest; // the copy the task started with; a later change of the file does not reach it
+  instructions?: string; // the text for the model, also a copy
   inputs: Inputs;
   envelope: Grant[];
   use: TaskUse;
