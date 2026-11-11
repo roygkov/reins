@@ -156,11 +156,26 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs): Opened 
   if (scenario.instructions !== undefined) made.task.instructions = scenario.instructions;
   commit(rt, { task: made.task, rows: made.rows });
 
+  // The preparation can take long, and the human can stop the task meanwhile. So the end of the
+  // preparation is written under the lock, to the task as it is on the disk, and only when that
+  // task still prepares. A stopped task stays stopped.
+  const id = made.task.id;
+  const prepared = (event: TaskEvent, outputs?: Record<string, unknown>): Task => {
+    // A busy lock is tried again: the end of a preparation must not be lost.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const done = withLock(rt, id, () => {
+        const now = loadTask(rt, id);
+        if (now === null || now.state !== 'preparing') return now;
+        if (outputs !== undefined) writeAtomic(taskFile(rt, id, '.collect'), outputs);
+        return commit(rt, step(now, event)).task;
+      });
+      if (done !== 'busy') return done ?? made.task;
+    }
+    return loadTask(rt, id) ?? made.task;
+  };
+
   const collect = manifest.collect;
-  if (collect === undefined) {
-    const s = commit(rt, step(made.task, { type: 'prepared', work: true, outputs: 0, bytes: 0 }));
-    return { ok: true, task: s.task, collected: null };
-  }
+  if (collect === undefined) return { ok: true, task: prepared({ type: 'prepared', work: true, outputs: 0, bytes: 0 }), collected: null };
   const file = rt.merged.scriptFiles[collect.script];
   const result =
     file === undefined
@@ -171,18 +186,13 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs): Opened 
           timeoutMs: collect.timeout_s !== undefined ? collect.timeout_s * 1000 : (rt.collectTimeoutMs ?? DEFAULT_COLLECT_TIMEOUT_MS),
           maxBytes: collect.max_bytes ?? DEFAULT_COLLECT_BYTES,
         });
-  if (!result.ok) {
-    const s = commit(rt, step(made.task, { type: 'collect_failed', reason: result.reason }));
-    return { ok: true, task: s.task, collected: null };
-  }
+  if (!result.ok) return { ok: true, task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
   // The run condition is the name of a flag. False: the task closes without the model.
   if (manifest.run_if !== undefined && result.flags[manifest.run_if] === false) {
-    const s = commit(rt, step(made.task, { type: 'prepared', work: false, flag: manifest.run_if }));
-    return { ok: true, task: s.task, collected: null };
+    return { ok: true, task: prepared({ type: 'prepared', work: false, flag: manifest.run_if }), collected: null };
   }
-  writeAtomic(taskFile(rt, made.task.id, '.collect'), result.outputs);
-  const s = commit(rt, step(made.task, { type: 'prepared', work: true, outputs: collect.outputs.length, bytes: result.bytes }));
-  return { ok: true, task: s.task, collected: result.outputs };
+  const task = prepared({ type: 'prepared', work: true, outputs: collect.outputs.length, bytes: result.bytes }, result.outputs);
+  return { ok: true, task, collected: task.state === 'executing' ? result.outputs : null };
 }
 
 export function openFreeTask(rt: Runtime): Task {
@@ -208,6 +218,23 @@ export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Or
   if (r === 'busy') return { error: 'busy' };
   if (r === 'not_allowed') return { error: 'not_allowed' };
   return r ?? { error: 'unknown_task' };
+}
+
+// The tasks that are not closed, by their id. A broken task file is no task.
+export function openTasks(rt: Runtime): Task[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(path.join(rt.stateDir, 'tasks')).sort();
+  } catch {
+    return [];
+  }
+  const out: Task[] = [];
+  for (const name of names) {
+    const id = /^(t[0-9a-f]{12})\.json$/.exec(name)?.[1];
+    const task = id === undefined ? null : loadTask(rt, id);
+    if (task !== null && task.state !== 'closed' && task.state !== 'skipped') out.push(task);
+  }
+  return out;
 }
 
 // The policy decision for one action of a task; null when the task is unknown or its lock is busy.

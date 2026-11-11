@@ -1109,5 +1109,183 @@
    "errors": 1,
    "rows": null
   }
+ },
+ {
+  "name": "the human stops a task that executes",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.human_decision decision=stop",
+    "policy.envelope_closed",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "the human stops a task that waits for its check",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "task.human_decision decision=stop",
+    "policy.envelope_closed",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "the human stops a task that waits for an answer to the gate",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "ask"
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.waiting_human reason=gate",
+    "task.human_decision decision=stop",
+    "policy.envelope_closed",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "the human stops a task before it starts: it had no envelope",
+  "task": "review",
+  "events": [
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.human_decision decision=stop",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "the human stops a free task",
+  "task": "free",
+  "events": [
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.human_decision decision=stop",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "a stopped task cannot be stopped again",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   },
+   {
+    "type": "finish"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 2,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.human_decision decision=stop",
+    "policy.envelope_closed",
+    "task.closed label=not_verified reason=stopped"
+   ]
+  }
  }
 ]

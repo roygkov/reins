@@ -301,3 +301,22 @@ test('before: a percent form of a space stays as it is on both sides', () => {
   const r = beforeAction(b.rt, call(b, 'tracker__add_comment', { change: 'a%20b' }), CLIENT);
   assert.deepEqual([r.outcome, r.rule], ['ask', 'default.write'], 'the value is a plain target, not an unknown one');
 });
+
+test('before: a command that stops a task is the word of the human: the client asks', () => {
+  const b = box();
+  for (const command of ['reins stop t000000000000', 'cd /tmp && reins  stop t000000000000', 'node /x/src/cli.ts stop t000000000000', "reins 'stop' t000000000000", 'reins "stop" t000000000000', '\\reins stop t000000000000', "'reins' stop t000000000000"]) {
+    const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  for (const command of ['reins finish t000000000000', 'reins tasks', 'git stash; echo stop']) {
+    assert.equal(beforeAction(b.rt, call(b, 'shell', { command }), CLIENT).outcome, 'allow', command);
+  }
+});
+
+test('before: the stop command inside a command substitution or an ANSI quote asks too', () => {
+  const b = box();
+  for (const command of ['echo `reins stop t000000000000`', 'echo $(reins stop t000000000000)', "reins $'stop' t000000000000"]) {
+    const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+});

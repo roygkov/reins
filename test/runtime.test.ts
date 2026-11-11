@@ -468,3 +468,21 @@ test('runtime: only the agent or the human ends a publication', () => {
   const again = applyEvent(rt, id, { type: 'finish' }, 'agent');
   assert.ok('task' in again && again.error === 'bad_event');
 });
+
+test('runtime: the end of a preparation waits for a busy lock and is not lost', () => {
+  const rt = reviewed();
+  rt.lockWaitMs = 100;
+  // The lock is held when the collect ends and goes away a moment later. The process that removes
+  // it leaves the process group of the script: the supervisor kills that group when the script ends.
+  const tasks = path.join(rt.stateDir, 'tasks');
+  const file = rt.merged.scriptFiles['collect/change'];
+  assert.ok(file !== undefined);
+  const body = fs.readFileSync(file, 'utf8');
+  // A function as the replacement: `$'` in a replacement string has a special meaning.
+  fs.writeFileSync(file, body.replace('cat >/dev/null\n', () => `cat >/dev/null\nid=$(ls "${tasks}" | grep -E '^t[0-9a-f]{12}\\.json$' | head -1 | sed 's/\\.json$//')\n: > "${tasks}/$id.lock"\npython3 -I -c 'import os,sys,time\nif os.fork(): os._exit(0)\nos.setsid()\ntime.sleep(0.25)\nos.remove(sys.argv[1])' "${tasks}/$id.lock" >/dev/null 2>&1\n`), { mode: 0o755 });
+  const opened = openScenario(rt, 'change-review', { change_id: '7' });
+  assert.ok(opened.ok);
+  assert.equal(opened.task.state, 'executing');
+  assert.equal(fs.existsSync(path.join(tasks, `${opened.task.id}.lock`)), false, 'the lock was held and then released');
+  assert.ok(opened.collected !== null);
+});

@@ -5,6 +5,8 @@
 //   reins input <task>                   prints the input of an open task again
 //   reins report <task> <file|->         submits the report of the model, prints the answer
 //   reins finish <task>                  ends the publication of an accepted result, closes the task
+//   reins stop <task>                    the human stops a task in any open state
+//   reins tasks                          the tasks that are not closed
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
 
@@ -12,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError, loadRuntime } from './client/config.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, loadTask, openScenario, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
+import { applyEvent, loadTask, openScenario, openTasks, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 
 type Out = Record<string, unknown>;
@@ -136,6 +138,29 @@ function main(args: string[]): Out {
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
   }
+  if (command === 'tasks' && first === undefined) {
+    return {
+      ok: true,
+      tasks: openTasks(runtime()).map((t) => {
+        const row: Out = { task: t.id, kind: t.kind, state: t.state };
+        if (t.scenario !== undefined) row.scenario = t.scenario;
+        if (Object.keys(t.inputs).length > 0) row.inputs = t.inputs;
+        return row;
+      }),
+    };
+  }
+  // The word of the human: a task ends here, whatever its state. A client with the hook asks
+  // the human before it runs this command.
+  if (command === 'stop' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    const r = applyEvent(rt, first, { type: 'human', decision: 'stop' }, 'human');
+    if (!('task' in r)) throw new Stop(r.error);
+    // A task that is closed already cannot be stopped: the answer says what it is.
+    if (r.error !== undefined) throw new Stop(r.error, { state: r.task.state, ...(r.task.label !== undefined ? { label: r.task.label } : {}) });
+    const out: Out = { ok: true, task: r.task.id, state: r.task.state, stopped: true };
+    if (r.task.label !== undefined) out.label = r.task.label;
+    return out;
+  }
   if (command === 'finish' && first !== undefined && rest.length === 0) {
     const rt = runtime();
     const r = applyEvent(rt, first, { type: 'finish' }, 'agent');
@@ -144,12 +169,16 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>'] });
 }
 
 let out: Out;
+let stopped = false;
 try {
   out = main(process.argv.slice(2));
+  // `stopped` is for the exit code only: a stop that worked is a success of the command.
+  stopped = out.stopped === true;
+  delete out.stopped;
 } catch (e) {
   if (!(e instanceof Stop)) throw e;
   out = e.out;
@@ -159,5 +188,5 @@ process.stdout.write(`${JSON.stringify(out)}\n`);
 // closed with a verified result. Exit code 2: the task did not close as verified.
 const verified = (out.state === 'closed' || out.state === 'publishing') && out.label !== 'not_verified';
 const reported = 'returns_left' in out;
-const done = out.state === undefined || verified || (!reported && (out.state === 'executing' || out.state === 'skipped'));
+const done = stopped || out.state === undefined || verified || (!reported && (out.state === 'executing' || out.state === 'skipped'));
 process.exitCode = out.ok !== true ? 1 : done ? 0 : 2;

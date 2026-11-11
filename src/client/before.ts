@@ -144,7 +144,10 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     if (typeof command !== 'string') return { action: UNKNOWN, layers: [] };
     const shell = shellAction(command, call.cwd, rt.gateConfig);
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
-    const named = shell.result?.decision === 'deny' ? null : namedInCommand(rt, command);
+    // `reins stop` is the word of the human. The agent can type the command, so the client asks.
+    // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+stop(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
     if (named !== null) return { guard: { outcome: 'ask', rule: named } };
     return { action: shell.action, layers: shell.layers };
   }

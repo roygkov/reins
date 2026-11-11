@@ -46,6 +46,8 @@
     reins open <сценарий> имя=значение
     reins report <задача> <файл>
     reins finish <задача>
+    reins stop <задача>
+    reins tasks
 
 Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, затем `/reins:run <сценарий> имя=значение`.
 

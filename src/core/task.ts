@@ -191,8 +191,12 @@ export function step(task: Task, event: TaskEvent): Step {
     }
     case 'human': {
       const decided: RowDraft = { kind: 'task.human_decision', data: { decision: event.decision } };
-      // The human can stop a publication. The result keeps the label that it already has.
-      if (task.state === 'publishing') return event.decision === 'stop' ? close(task, task.label ?? 'not_verified', [decided], 'stopped') : refuse(task);
+      // The human can stop a task in any open state. A result that was accepted before keeps its
+      // label; any other task ends without a verified result.
+      if (event.decision === 'stop') {
+        if (task.state === 'closed' || task.state === 'skipped') return refuse(task);
+        return close(task, task.state === 'publishing' ? (task.label ?? 'not_verified') : 'not_verified', [decided], 'stopped');
+      }
       if (task.state !== 'waiting_human') return refuse(task);
       if (task.waiting === 'gate') {
         if (event.decision !== 'answered') return refuse(task);
@@ -200,7 +204,6 @@ export function step(task: Task, event: TaskEvent): Step {
         return { task: { ...rest, state: 'executing' }, rows: [decided] };
       }
       if (event.decision === 'accept') return accept(task, 'approved_by_human', [decided]);
-      if (event.decision === 'stop') return close(task, 'not_verified', [decided], 'stopped');
       // One more try: after a human check it counts as a send-back, after the limit it does not.
       if (event.decision === 'return') return back(task, [decided], 'human', task.waiting === 'approval');
       return refuse(task);

@@ -291,3 +291,52 @@ test('cli: a task that waits for its check answer gets it at the next report', (
   assert.equal(r.code, 0, r.stdout);
   assert.deepEqual([r.json.state, r.json.label, r.json.answer.result], ['publishing', 'verified_form', 'PASS']);
 });
+
+test('cli: the human stops a task in any open state', () => {
+  const b = box();
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  const stopped = reins(b, ['stop', id]);
+  assert.equal(stopped.code, 0, stopped.stdout);
+  assert.deepEqual(stopped.json, { ok: true, task: id, state: 'closed', label: 'not_verified' });
+  assert.deepEqual(journal(b).slice(-3), ['task.human_decision', 'policy.envelope_closed', 'task.closed']);
+  assert.deepEqual([reins(b, ['stop', id]).code, reins(b, ['stop', id]).json.error], [1, 'bad_event']);
+  assert.deepEqual([reins(b, ['stop', 'tffffffffffff']).code, reins(b, ['stop', 'tffffffffffff']).json.error], [1, 'unknown_task']);
+});
+
+test('cli: a stopped publication keeps the label that the check gave', () => {
+  const b = box();
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'high' }]));
+  assert.deepEqual(reins(b, ['stop', id]).json, { ok: true, task: id, state: 'closed', label: 'verified_form' });
+});
+
+test('cli: the open tasks are listed', () => {
+  const b = box();
+  const one = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  const two = reins(b, ['open', 'change-review', 'change_id=8']).json.task;
+  reins(b, ['stop', one]);
+  const r = reins(b, ['tasks']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.json, { ok: true, tasks: [{ task: two, kind: 'scenario', state: 'executing', scenario: 'change-review', inputs: { change_id: '8' } }] });
+});
+
+test('cli: a task that the human stops during the preparation stays stopped', () => {
+  const b = box();
+  // The collect script stops its own task while it runs: the state of a stop from another shell.
+  const stop = `id=$(ls "${b.state}/tasks" | grep -E '^t[0-9a-f]{12}\\.json$' | head -1 | sed 's/\\.json$//')\nREINS_CONFIG="${b.config}" "${process.execPath}" "${CLI}" stop "$id" >/dev/null`;
+  const out = { outputs: { diff: 'd', task: 1, discussion: [], worktree: b.tree }, flags: { has_new_commits: true } };
+  fs.writeFileSync(path.join(b.root, 'project/collect/change.sh'), `#!/bin/sh\ncat >/dev/null\n${stop}\nprintf '%s' '${JSON.stringify(out)}'\n`, { mode: 0o755 });
+  const r = reins(b, ['open', 'change-review', 'change_id=7']);
+  assert.deepEqual([r.json.state, r.json.label, r.json.input], ['closed', 'not_verified', undefined], r.stdout);
+  assert.deepEqual(journal(b), ['task.opened', 'task.kind_decided', 'task.human_decision', 'task.closed'], 'nothing is written after the stop');
+  assert.deepEqual(reins(b, ['tasks']).json.tasks, []);
+  assert.equal(fs.existsSync(path.join(b.state, 'tasks', `${r.json.task}.collect.json`)), false, 'nothing is kept for the model');
+});
+
+test('cli: a stop of a closed task says what the task is', () => {
+  const b = box();
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'high' }]));
+  reins(b, ['finish', id]);
+  assert.deepEqual(reins(b, ['stop', id]).json, { ok: false, error: 'bad_event', state: 'closed', label: 'verified_form' });
+});
