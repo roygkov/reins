@@ -122,7 +122,9 @@ function spent(rt: Runtime, session: string | undefined): void {
   const file = transcript;
   // The part of the file that this look counts is taken under the lock of the session file: two
   // hooks that run together never count the same lines.
+  let since = Number.NaN;
   const part = withSession(rt, session, (now) => {
+    since = typeof now.since === 'string' ? Date.parse(now.since) : Number.NaN;
     const size = fs.statSync(file).size;
     // Every file has its own mark: the session has its file, and each subordinate has one. A
     // file that became shorter is counted from its beginning.
@@ -161,6 +163,10 @@ function spent(rt: Runtime, session: string | undefined): void {
     const message = isObj(value) && isObj(value.message) ? value.message : null;
     const usage = message !== null && isObj(message.usage) ? message.usage : null;
     if (message === null || usage === null) continue;
+    // A line from before the first look of the harness at the session: the harness can join a
+    // session that runs for hours, and what it spent before is not the cost of a task of now.
+    const at = isObj(value) && typeof value.timestamp === 'string' ? Date.parse(value.timestamp) : Number.NaN;
+    if (Number.isFinite(at) && Number.isFinite(since) && at < since) continue;
     // One answer of the model can stand in several lines: it is counted once.
     if (message.id !== undefined && message.id === last) continue;
     last = message.id;

@@ -247,6 +247,21 @@ test('budget: a contract task stops also at a shell command that the gate reads 
   assert.equal(loadTask(b.rt, proposed.task.id)?.waiting, 'scope');
 });
 
+test('budget: what a session spent before the harness saw it is not counted', () => {
+  // The harness can join a session that runs for hours: the plugin was installed in the middle.
+  const b = box();
+  const transcript = path.join(b.root, 'old-session.jsonl');
+  const line = (id: string, at: string) => `${JSON.stringify({ type: 'assistant', timestamp: at, message: { id, usage: { input_tokens: 1000, output_tokens: 500 } } })}\n`;
+  fs.writeFileSync(transcript, line('m1', '2020-01-01T00:00:00.000Z') + line('m2', '2020-01-01T00:05:00.000Z'));
+  const post = () => spawnSync(process.execPath, [CLAUDE, 'post'], { input: JSON.stringify({ session_id: 'joined', cwd: b.cwd, hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: {}, transcript_path: transcript }), env: b.env, encoding: 'utf8' });
+  const counted = (): number => readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost').reduce((n, r) => n + Number((r.data as { tokens: number }).tokens), 0);
+  post();
+  assert.equal(counted(), 0, 'the lines are older than the first look of the harness');
+  fs.appendFileSync(transcript, line('m3', new Date(Date.now() + 1000).toISOString()));
+  post();
+  assert.equal(counted(), 1500, 'a line after the first look is counted');
+});
+
 test('budget: another transcript file is counted from its start', () => {
   const b = box(LIMITED);
   const line = `${JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: { input_tokens: 100, output_tokens: 50 } } })}\n`;

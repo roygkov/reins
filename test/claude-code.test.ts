@@ -161,8 +161,9 @@ test('claude-code: a config key that nothing reads is refused, a key of the gate
 test('claude-code: an adapter that cannot start asks the human before an action', () => {
   const copy = path.join(SB, 'broken-plugin');
   fs.cpSync(path.dirname(path.dirname(HOOK)), copy, { recursive: true });
-  // The copy is outside the repository: its imports of the core do not resolve.
-  const p = spawnSync(process.execPath, [path.join(copy, 'hooks/hook.ts'), 'pre'], { input: event(null, 'PreToolUse', 'Bash', { command: 'ls' }), encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });
+  // The copy is outside the repository: its imports of the core do not resolve. The config of the
+  // machine where the test runs is not read: it can name a source.
+  const p = spawnSync(process.execPath, [path.join(copy, 'hooks/hook.ts'), 'pre'], { input: event(null, 'PreToolUse', 'Bash', { command: 'ls' }), encoding: 'utf8', env: { PATH: process.env.PATH ?? '', REINS_CONFIG: path.join(SB, 'no-config.json') } });
   assert.equal(p.status, 0);
   assert.equal(JSON.parse(p.stdout).hookSpecificOutput.permissionDecision, 'ask');
   const q = spawnSync(process.execPath, [path.join(copy, 'hooks/hook.ts'), 'post'], { input: '', encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });

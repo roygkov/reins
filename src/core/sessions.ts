@@ -11,7 +11,8 @@ import type { Runtime } from './runtime.ts';
 // that it belongs to and the time of its start.
 // `compacted`: the last time the client compacted the context of the session.
 // `costMarks`: how far the cost is counted in each file of the client, by the path of the file.
-export type SessionFile = { costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
+// `since`: the time when the harness saw the session first.
+export type SessionFile = { since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
 
 const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
 export const sessionName = (session: string | undefined): string =>
@@ -66,7 +67,9 @@ export function withSession<T>(rt: Runtime, session: string | undefined, change:
     fs.closeSync(fs.openSync(lock, 'w'));
   }
   try {
-    const { next, result } = change(readSession(rt, session) ?? {});
+    // A session that the harness sees first gets the time of this look: what the session did
+    // before it is not the business of the harness.
+    const { next, result } = change(readSession(rt, session) ?? { since: new Date().toISOString() });
     if (next === 'remove') fs.rmSync(file, { force: true });
     else if (next !== null) {
       const tmp = `${file}.${process.pid}.tmp`;
