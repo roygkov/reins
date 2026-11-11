@@ -173,14 +173,15 @@ export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; lab
   const id = current(rt, e.session).id;
   if (id === undefined) return {};
   const before = readSession(rt, e.session)?.work;
-  const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000' }, 'agent');
-  if (!('task' in r) || r.error !== undefined) return {};
   // A fact, not the words of the agent: the work tree is not what it was at the request.
+  // Outside a repository there is no fact about the work: nothing is said.
   const now = workState(e.cwd);
+  const changed = typeof before === 'string' && now !== null ? now !== before : undefined;
+  const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000', ...(changed === true ? { changed: true } : {}) }, 'agent');
+  if (!('task' in r) || r.error !== undefined) return {};
   const out: { task: string; label?: string; changed?: boolean } = { task: id };
   if (r.task.label !== undefined) out.label = r.task.label;
-  // Outside a repository there is no fact about the work: nothing is said.
-  if (typeof before === 'string' && now !== null) out.changed = now !== before;
+  if (changed !== undefined) out.changed = changed;
   return out;
 }
 

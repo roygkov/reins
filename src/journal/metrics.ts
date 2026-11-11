@@ -5,7 +5,7 @@
 import type { JournalRow } from '../contracts/journal.ts';
 
 export type Metrics = {
-  tasks: { opened: number; closed: number; by_label: Record<string, number> };
+  tasks: { opened: number; closed: number; by_label: Record<string, number>; changed_not_verified: number };
   scenarios: Record<string, { opened: number; accepted: number; returns: number }>;
   checks: { PASS: number; FAIL: number; none: number };
   decisions: { allow: number; ask: number; defer: number; deny: number };
@@ -18,7 +18,7 @@ export type Metrics = {
 // The counts of the rows from `since` (milliseconds) on. A row whose time cannot be read is skipped.
 export function summarize(rows: JournalRow[], since = 0): Metrics {
   const m: Metrics = {
-    tasks: { opened: 0, closed: 0, by_label: {} }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
+    tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0 },
   };
@@ -36,6 +36,8 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         m.tasks.closed += 1;
         const label = String(data.label ?? 'unknown');
         m.tasks.by_label[label] = (m.tasks.by_label[label] ?? 0) + 1;
+        // Free requests that changed the work and that nothing verified.
+        if (row.scenario === undefined && data.changed === 1) m.tasks.changed_not_verified += 1;
         break;
       }
       case 'task.returned':
@@ -98,6 +100,9 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
     const data = row.data ?? {};
     switch (row.kind) {
       case 'task.closed':
+        // A result is the end of a scenario task, or of a free request that changed the work. A
+        // free request that changed nothing is a question: it has no result, verified or not.
+        if (row.scenario === undefined && data.changed !== 1) break;
         closed += 1;
         if (typeof data.label === 'string' && data.label !== 'not_verified') verified += 1;
         break;
@@ -109,6 +114,8 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
       // The "yes" of the human: an answer to a question about one action, or the one approval of a task.
       case 'task.human_decision': if (data.decision === 'answered' || data.decision === 'confirm') yes += 1; break;
       case 'executor.cost':
+        // The cost of a scenario: what a free request spent is not counted here.
+        if (row.scenario === undefined) break;
         if (typeof data.tokens === 'number') tokens += data.tokens;
         if (row.task !== undefined) costTasks.add(row.task);
         break;

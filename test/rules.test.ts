@@ -117,7 +117,7 @@ test('status: the journal is read into counts', () => {
   decide(b, 'tracker__get_change', {});
   decide(b, 'launch_rocket', {});
   const m = summarize(readJournal(b.rt.journal.file));
-  assert.deepEqual(m.tasks, { opened: 3, closed: 0, by_label: {} });
+  assert.deepEqual(m.tasks, { opened: 3, closed: 0, by_label: {}, changed_not_verified: 0 });
   assert.deepEqual(m.scenarios, { 'change-review': { opened: 2, accepted: 1, returns: 1 } });
   assert.deepEqual(m.checks, { PASS: 1, FAIL: 1, none: 0 });
   assert.deepEqual(m.decisions, { allow: 1, ask: 2, defer: 0, deny: 0 });
@@ -131,7 +131,7 @@ test('status: only rows inside the period are counted', () => {
     { ts: '2026-11-10T11:00:00.000Z', v: 1, kind: 'task.closed', project: 'p', task: 't2', data: { label: 'not_verified' } },
   ] as never[];
   const m = summarize(rows, Date.parse('2026-11-05T00:00:00Z'));
-  assert.deepEqual(m.tasks, { opened: 1, closed: 1, by_label: { not_verified: 1 } });
+  assert.deepEqual(m.tasks, { opened: 1, closed: 1, by_label: { not_verified: 1 }, changed_not_verified: 0 });
 });
 
 test('status: the command line shows the counts, the open tasks and the packs', () => {

@@ -81,12 +81,18 @@ test('stop: a request that changed the work tree ends as "not verified", and the
   fs.writeFileSync(path.join(b.cwd, 'src/a.ts'), 'const limit = 1;\n');
   const stopped = agentStopped(b.rt, e(b));
   assert.deepEqual([stopped.label, stopped.changed], ['not_verified', true]);
+  // The journal keeps the fact: this result was a change of the work that nothing verified.
+  const closed = readJournal(b.rt.journal.file).filter((r) => r.kind === 'task.closed');
+  assert.deepEqual(closed.map((r) => r.data), [{ label: 'not_verified', changed: 1 }]);
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
 });
 
 test('stop: a request that changed nothing says nothing about a result', () => {
   const b = box();
   humanRequest(b.rt, e(b));
   assert.equal(agentStopped(b.rt, e(b)).changed, false);
+  // A question leaves no mark of a change in the journal.
+  assert.deepEqual(readJournal(b.rt.journal.file).filter((r) => r.kind === 'task.closed').map((r) => r.data), [{ label: 'not_verified' }]);
   // A change that was there before the request is not a change of the request.
   fs.writeFileSync(path.join(b.cwd, 'src/a.ts'), 'const limit = 1;\n');
   humanRequest(b.rt, e(b));

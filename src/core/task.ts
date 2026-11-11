@@ -45,7 +45,8 @@ export type Task = {
 export type TaskEvent =
   | { type: 'prepared'; work: boolean; flag?: string; outputs?: number; bytes?: number }
   | { type: 'collect_failed'; reason: string }
-  | { type: 'report'; size: number; fp: string }
+  // `changed`: a fact of the client about a free request: the work tree is not what it was at the request.
+  | { type: 'report'; size: number; fp: string; changed?: boolean }
   // `detail`: counts and a reason code of the check for the journal, never text.
   // `work`: the fingerprint of the work that the check saw.
   | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string }
@@ -194,7 +195,12 @@ export function step(task: Task, event: TaskEvent): Step {
       // The report of the agent is a claim. Without a manifest nothing checks it: the check step is
       // skipped and the result is marked "not verified" (harness-core page 2, rule 4). This is the one
       // place where a report ends a task, and the label says that nothing was verified.
-      if (done === undefined) return close(task, 'not_verified', [submitted]);
+      if (done === undefined) {
+        const closed = close(task, 'not_verified', [submitted]);
+        // The journal keeps the fact: this result was a change of the work that nothing verified.
+        if (event.changed === true && task.kind === 'free') for (const row of closed.rows) if (row.kind === 'task.closed') row.data = { ...row.data, changed: 1 };
+        return closed;
+      }
       if (done.kind === 'human') return { task: { ...task, state: 'waiting_human', waiting: 'approval' }, rows: [submitted, { kind: 'task.waiting_human', data: { reason: 'approval' } }] };
       return { task: { ...task, state: 'checking' }, rows: [submitted, { kind: 'check.started', data: { check_kind: done.kind } }] };
     }

@@ -57,10 +57,13 @@ const row = (daysAgo: number, kind: string, more: Partial<JournalRow> = {}): Jou
 test('week: the eight numbers of the specification are counted from the rows of the week', () => {
   const rows = [
     // this week
-    row(1, 'task.closed', { task: 't1', data: { label: 'verified_form' } }),
-    row(1, 'task.closed', { task: 't2', data: { label: 'not_verified' } }),
-    row(1, 'task.closed', { task: 't3', data: { label: 'approved_by_human' } }),
-    row(1, 'task.closed', { task: 't4', data: { label: 'not_verified' } }),
+    // A result is the end of a scenario task, or of a free request that changed the work. A free
+    // request that changed nothing is a question: it has no result, verified or not.
+    row(1, 'task.closed', { task: 't1', scenario: 's', data: { label: 'verified_form' } }),
+    row(1, 'task.closed', { task: 't2', data: { label: 'not_verified', changed: 1 } }),
+    row(1, 'task.closed', { task: 't3', scenario: 's', data: { label: 'approved_by_human' } }),
+    row(1, 'task.closed', { task: 't4', scenario: 's', data: { label: 'not_verified' } }),
+    row(1, 'task.closed', { task: 't7', data: { label: 'not_verified' } }), row(1, 'task.closed', { task: 't8', data: { label: 'not_verified' } }),
     row(2, 'task.started', { task: 't1', scenario: 's' }), row(2, 'task.started', { task: 't3', scenario: 's' }),
     row(2, 'task.returned', { task: 't1', scenario: 's', data: { n: 1, reason: 'check_fail' } }),
     row(2, 'task.skipped', { task: 't5', scenario: 's' }), row(2, 'task.skipped', { task: 't6', scenario: 's' }),
@@ -74,11 +77,13 @@ test('week: the eight numbers of the specification are counted from the rows of 
     row(3, 'task.human_decision', { task: 't1', data: { decision: 'stop' } }),
     row(4, 'executor.cost', { task: 't1', scenario: 's', data: { tokens: 3000, ms: 10, calls: 2 } }),
     row(4, 'executor.cost', { task: 't3', scenario: 's', data: { tokens: 1000, ms: 10, calls: 1 } }),
+    // What a free request spent is not the cost of a scenario.
+    row(4, 'executor.cost', { task: 't2', data: { tokens: 500000, ms: 10, calls: 1 } }),
     row(4, 'memory.read', { data: { n: 4 } }), row(4, 'memory.record_used', { data: { record: 'm0123456789' } }),
     row(5, 'craft.effect_measured', { data: { proposal: 'c1', effect: 'better' } }), row(5, 'craft.effect_measured', { data: { proposal: 'c2', effect: 'same' } }),
     row(5, 'harness.failure', { data: { where: 'collect' } }), row(5, 'harness.step_timeout'), row(5, 'harness.client_shape_changed', { data: { client: 'x', event: 'pre' } }),
     // the week before
-    row(8, 'task.closed', { task: 'u1', data: { label: 'verified_form' } }),
+    row(8, 'task.closed', { task: 'u1', scenario: 's', data: { label: 'verified_form' } }),
     row(9, 'harness.failure', { data: { where: 'journal' } }),
     // too old
     row(20, 'harness.failure', { data: { where: 'journal' } }),
