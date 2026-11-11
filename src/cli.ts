@@ -24,7 +24,7 @@ import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, approveContract, collectedDir, loadTask, verifyWork, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
+import { applyEvent, approveContract, collectedDir, loadTask, verifyWork, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
@@ -377,6 +377,31 @@ function main(args: string[]): Out {
     }
     throw new Stop('usage');
   }
+  // The result of a task: its state, its label and its report. The agent reads it here, not from
+  // the files of the state: a client without a window leaves the report of its task there.
+  if (command === 'result' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    const task = loadTask(rt, first);
+    if (task === null) throw new Stop('unknown_task');
+    const out: Out = { ok: true, task: task.id, ...(task.scenario !== undefined ? { scenario: task.scenario } : {}), state: task.state, only_reads: true };
+    if (task.label !== undefined) out.label = task.label;
+    if (task.waiting !== undefined) out.waiting = task.waiting;
+    const text = readReport(rt, task.id);
+    if (text !== null) {
+      // A report that is data is given as data, whole: a part of it has no structure. A text stays
+      // a text, cut at a size that a model can read.
+      let report: unknown;
+      try {
+        const parsed: unknown = JSON.parse(text);
+        if (parsed !== null && typeof parsed === 'object') report = parsed;
+      } catch {
+        // a text report
+      }
+      if (report === undefined) report = text.length > RESULT_MAX ? `${text.slice(0, RESULT_MAX)} … (+${text.length - RESULT_MAX} characters cut)` : text;
+      out.report = report;
+    }
+    return out;
+  }
   if (command === 'tasks' && first === undefined) {
     return {
       ok: true,
@@ -424,15 +449,20 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
+const RESULT_MAX = 200_000; // characters of a text report that `result` gives
 let out: Out;
 let stopped = false;
+let onlyReads = false;
 try {
   out = main(process.argv.slice(2));
   // `stopped` is for the exit code only: a stop that worked is a success of the command.
   stopped = out.stopped === true;
+  // A command that only reads a task succeeds whatever the state of the task is.
+  onlyReads = out.only_reads === true;
+  delete out.only_reads;
   delete out.stopped;
 } catch (e) {
   if (!(e instanceof Stop)) throw e;
@@ -451,5 +481,5 @@ const ranClient = out.ran === true;
 // A client that did not start, or a run of the schedule where a task did not end as verified,
 // is not a success either.
 const notRun = out.ran === false || out.failed === true;
-const done = !notRun && (stopped || taskState === undefined || verified || (!reported && !ranClient && (taskState === 'executing' || taskState === 'skipped')) || (ranClient && taskState === 'skipped'));
+const done = !notRun && (stopped || onlyReads || taskState === undefined || verified || (!reported && !ranClient && (taskState === 'executing' || taskState === 'skipped')) || (ranClient && taskState === 'skipped'));
 process.exitCode = out.ok !== true ? 1 : done ? 0 : 2;

@@ -121,6 +121,39 @@ test('cli: a report with a false quote is not ready, a true one closes the task'
   assert.deepEqual([reins(b, ['finish', id]).code, reins(b, ['finish', id]).json.error], [1, 'bad_event']);
 });
 
+test('cli: the result of a task is read through the command line, not from the state', () => {
+  const b = box();
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  // Before a report there is nothing to show but the state.
+  const before = reins(b, ['result', id]);
+  assert.deepEqual([before.code, before.json], [0, { ok: true, task: id, scenario: 'change-review', state: 'executing' }]);
+  const text = report([{ ...ITEM, severity: 'high' }]);
+  reins(b, ['report', id, '-'], text);
+  // A task that waits is no failure of this command: it only reads.
+  const during = reins(b, ['result', id]);
+  assert.deepEqual([during.code, during.json], [0, { ok: true, task: id, scenario: 'change-review', state: 'publishing', label: 'verified_form', report: JSON.parse(text) }]);
+  reins(b, ['finish', id]);
+  assert.deepEqual(reins(b, ['result', id]).json, { ok: true, task: id, scenario: 'change-review', state: 'closed', label: 'verified_form', report: JSON.parse(text) });
+  assert.deepEqual([reins(b, ['result', 't0000000000aa']).code, reins(b, ['result', 't0000000000aa']).json.error], [1, 'unknown_task']);
+  // The command writes nothing: no row of the journal.
+  const rows = journal(b).length;
+  reins(b, ['result', id]);
+  assert.equal(journal(b).length, rows);
+});
+
+test('cli: a text report is given as a text, and a long one is cut with a mark', () => {
+  const b = box();
+  const id = reins(b, ['open', 'draft-message']).json.task;
+  reins(b, ['report', id, '-'], 'a short message\nin two lines');
+  assert.equal(reins(b, ['result', id]).json.report, 'a short message\nin two lines');
+  const long = reins(b, ['open', 'draft-message']).json.task;
+  reins(b, ['report', long, '-'], 'x'.repeat(250_000));
+  const cut = reins(b, ['result', long]).json.report;
+  assert.equal(typeof cut, 'string');
+  assert.equal(cut.length < 250_000, true);
+  assert.match(cut, /^x{200000} … \(\+50000 characters cut\)$/);
+});
+
 test('cli: past the limit of returns the task waits for the human', () => {
   const b = box();
   const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
