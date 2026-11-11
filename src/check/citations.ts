@@ -23,7 +23,8 @@ export const MIN_QUOTE = 8; // characters of a quote that are not spaces
 export const SIZE_CAP = 1 << 20; // bytes: a larger file is not read
 
 export type ItemFault = 'bad_item' | 'unknown_field' | 'bad_field' | 'no_location' | 'no_quote' | 'short_quote' | 'no_file' | 'not_in_change' | 'not_found';
-export type AnswerReason = 'no_source' | 'deadline' | 'bad_report' | 'too_many' | 'faults';
+// `no_check`, `check_failed`: a check script of a pack that is missing or did not answer.
+export type AnswerReason = 'no_source' | 'deadline' | 'bad_report' | 'too_many' | 'faults' | 'no_check' | 'check_failed';
 export type Answer = {
   result: 'PASS' | 'FAIL' | 'none';
   reason?: AnswerReason;

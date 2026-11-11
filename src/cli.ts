@@ -16,6 +16,8 @@ import { ConfigError, loadRuntime } from './client/config.ts';
 import { taskInput } from './client/input.ts';
 import { applyEvent, loadTask, openScenario, openTasks, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
+import { sweep } from './core/sweep.ts';
+import { listProposals, propose, resolveProposal } from './craft/craft.ts';
 import { summarize } from './journal/metrics.ts';
 import { readJournal } from './journal/writer.ts';
 import { addRecord, listRecords, vetoRecord } from './memory/store.ts';
@@ -68,6 +70,8 @@ function view(rt: Runtime, task: Task): Out {
   const input = taskInput(task, readCollected(rt, task.id));
   if (input !== null) {
     input.collected = byReference(rt, task.id, input.collected);
+    // The notes of the packs: rules of work that hold for every task (language, tone).
+    if (rt.merged.notes.length > 0) input.pack_notes = rt.merged.notes;
     out.input = input;
   }
   // The publication: the writes that the task names can be made now, then `finish` closes the task.
@@ -89,7 +93,7 @@ function scenarios(rt: Runtime): Out {
 }
 
 // The done checks that this client can bring to an end: the core runs the citation check, the human approves.
-const RUNNABLE: readonly string[] = ['citations', 'human'];
+const RUNNABLE: readonly string[] = ['citations', 'human', 'command', 'artifact', 'external'];
 
 function open(rt: Runtime, name: string, pairs: string[]): Out {
   const types = new Map((rt.merged.scenarios.find((s) => s.name === name)?.manifest.trigger.inputs ?? []).map((i) => [i.name, i.type]));
@@ -140,6 +144,19 @@ function main(args: string[]): Out {
     const task = loadTask(rt, first);
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
+  }
+  if (command === 'sweep' && first === undefined) return { ok: true, closed: sweep(runtime()) };
+  if (command === 'craft') {
+    const rt = runtime();
+    if (first === undefined) {
+      propose(rt);
+      return { ok: true, proposals: listProposals(rt) };
+    }
+    if ((first === 'accept' || first === 'reject') && rest.length === 1 && rest[0] !== undefined) {
+      if (!resolveProposal(rt, rest[0], first === 'accept' ? 'accepted' : 'rejected')) throw new Stop('unknown_proposal');
+      return { ok: true, proposal: rest[0], state: first === 'accept' ? 'accepted' : 'rejected' };
+    }
+    throw new Stop('usage');
   }
   if (command === 'status') {
     const rt = runtime();
@@ -202,7 +219,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text>', 'memory veto <id>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text>', 'memory veto <id>'] });
 }
 
 let out: Out;

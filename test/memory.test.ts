@@ -70,6 +70,11 @@ test('memory: after the veto window the record is active and is found by the pat
   assert.equal(listRecords(b.rt, later)[0]?.state, 'active');
   assert.deepEqual(findRecords(b.rt, { paths: ['a/b/src/Limit.java'] }, later).map((x) => x.text), [TEXT], 'a longer path that ends with the path of the record');
   assert.deepEqual(findRecords(b.rt, { paths: ['src/Other.java'] }, later), []);
+  const dir = addRecord(b.rt, { type: 'pitfall', text: 'A note about a directory.', paths: ['src/limits'], by: 'human' }, T0);
+  assert.ok(dir.ok);
+  assert.deepEqual(findRecords(b.rt, { paths: ['src/limits/Limit.java'] }, later).map((x) => x.id), [dir.record.id], 'a record about a directory covers the files under it');
+  assert.deepEqual(findRecords(b.rt, { paths: ['other/src/limits2/x.java'] }, later), []);
+  assert.deepEqual(findRecords(b.rt, { paths: ['a/b/src/limits/Limit.java'] }, later).map((x) => x.id), [dir.record.id], 'also when the place has a longer path');
   assert.deepEqual(findRecords(b.rt, { paths: ['src/Limit.java'], project: 'pffffffff' }, later), [], 'a record belongs to its project');
 });
 

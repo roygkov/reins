@@ -48,6 +48,10 @@
     reins finish <задача>
     reins stop <задача>
     reins tasks
+    reins status
+    reins memory
+    reins craft
+    reins sweep
 
 Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, затем `/reins:run <сценарий> имя=значение`.
 

@@ -97,6 +97,8 @@ function protectedBy(rt: Runtime, file: string): { outcome: 'deny' | 'ask'; rule
   if (inside(target, real(rt.stateDir))) return { outcome: 'deny', rule: 'protect.state' };
   if (rt.configFile !== undefined && target === real(rt.configFile)) return { outcome: 'deny', rule: 'protect.config' };
   if (rt.merged.packs.some((p) => inside(target, real(p.dir)))) return { outcome: 'ask', rule: 'protect.packs' };
+  // `.reins` of any repository is a pack directory, also before it exists and in another repository.
+  if ((rt.projectPackDir !== undefined && inside(target, real(rt.projectPackDir))) || /(^|\/)\.reins(\/|$)/.test(target)) return { outcome: 'ask', rule: 'protect.packs' };
   if ((rt.harnessDirs ?? []).some((d) => inside(target, real(d)))) return { outcome: 'ask', rule: 'protect.harness' };
   return null;
 }
@@ -122,7 +124,7 @@ function namedInCommand(rt: Runtime, command: string): string | null {
   const names = (p: string): boolean => spellings(p).some((s) => command.includes(s));
   if (names(rt.stateDir)) return 'protect.state';
   if (rt.configFile !== undefined && names(rt.configFile)) return 'protect.config';
-  if (rt.merged.packs.some((p) => names(p.dir))) return 'protect.packs';
+  if (rt.merged.packs.some((p) => names(p.dir)) || (rt.projectPackDir !== undefined && names(rt.projectPackDir)) || /(^|[\s\/="'])\.reins(\/|[\s"']|$)/.test(command)) return 'protect.packs';
   if ((rt.harnessDirs ?? []).some(names)) return 'protect.harness';
   return null;
 }
@@ -147,7 +149,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|memory\s+(veto|decide))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|memory\s+(veto|decide)|craft\s+(accept|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
     if (named !== null) return { guard: { outcome: 'ask', rule: named } };
     return { action: shell.action, layers: shell.layers, command };
@@ -271,6 +273,6 @@ export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTool
   const read = readCall(rt, call, clientTools);
   if ('guard' in read || read.action.kind !== 'write' || grantKey(read.action.name, read.action.target, read.action.env.name) !== key) return { confirmed: false };
   if (!confirm(rt, task, key)) return { confirmed: false };
-  decideAction(rt, task, read.action, read.layers);
+  decideAction(rt, task, read.action, [...read.layers, ...packLayers(rt, call, read.action, read.command)]);
   return { confirmed: true };
 }

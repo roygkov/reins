@@ -272,12 +272,29 @@ test('cli: a scenario that the human approves waits for the approval, and nothin
   assert.deepEqual(r.json, { ok: true, task: opened.json.task, state: 'waiting_human', waiting: 'approval', returns_left: 0 });
 });
 
-test('cli: a scenario with a check that the core cannot run is not opened', () => {
+test('cli: a scenario with a check script runs the script of the pack for the answer', () => {
   const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
-  const r = reins(b, ['open', 'change-review', 'change_id=7']);
-  assert.equal(r.code, 1);
-  assert.deepEqual(r.json, { ok: false, error: 'check_not_supported', check: 'command' });
-  assert.equal(fs.existsSync(path.join(b.state, 'tasks')), false);
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  // The script gets the task and the path of the report, and answers PASS when the report says "green".
+  fs.writeFileSync(check, `#!/bin/sh\nin=$(cat)\nreport=$(printf '%s' "$in" | sed 's/.*"report":"\\([^"]*\\)".*/\\1/')\nif grep -q green "$report"; then r=PASS; else r=FAIL; fi\nprintf '{"outputs":{"result":"%s"},"flags":{}}' "$r"\n`, { mode: 0o755 });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  const bad = reins(b, ['report', id, '-'], 'the tests are red');
+  assert.deepEqual([bad.code, bad.json.state, bad.json.answer.result, bad.json.returns_left], [2, 'executing', 'FAIL', 0]);
+  const good = reins(b, ['report', id, '-'], 'the tests are green');
+  assert.deepEqual([good.code, good.json.state, good.json.label, good.json.answer.result], [0, 'publishing', 'verified_result', 'PASS']);
+});
+
+test('cli: a check script that is missing or fails gives no answer, never a pass', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  const missing = reins(b, ['report', id, '-'], 'green');
+  assert.deepEqual([missing.json.state, missing.json.answer.result, missing.json.answer.reason], ['executing', 'none', 'no_check']);
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  fs.writeFileSync(check, '#!/bin/sh\ncat >/dev/null\necho PASS\n', { mode: 0o755 });
+  const broken = reins(b, ['report', id, '-'], 'green');
+  assert.deepEqual([broken.json.state, broken.json.answer.result, broken.json.answer.reason], ['waiting_human', 'none', 'check_failed']);
 });
 
 test('cli: a task that waits for its check answer gets it at the next report', () => {
@@ -339,4 +356,61 @@ test('cli: a stop of a closed task says what the task is', () => {
   reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'high' }]));
   reins(b, ['finish', id]);
   assert.deepEqual(reins(b, ['stop', id]).json, { ok: false, error: 'bad_event', state: 'closed', label: 'verified_form' });
+});
+
+test('cli: a pack of the project is found in the repository of the client', () => {
+  const b = box();
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  const project = config.packs.project;
+  delete config.packs.project;
+  fs.writeFileSync(b.config, JSON.stringify(config));
+  const trust = (): void => fs.writeFileSync(b.config, JSON.stringify({ ...config, repo_packs: true }));
+  assert.deepEqual(reins(b, ['scenarios']).json.scenarios.map((s: any) => s.name), ['draft-message'], 'no project pack is named');
+  // A repository with the pack in `.reins`.
+  const repo = path.join(b.root, 'repo');
+  fs.mkdirSync(path.join(repo, 'sub'), { recursive: true });
+  spawnSync('git', ['init', '-q', repo]);
+  fs.cpSync(project, path.join(repo, '.reins'), { recursive: true });
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const untrusted = spawnSync(process.execPath, [CLI, 'scenarios'], { env, cwd: path.join(repo, 'sub'), encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(untrusted.stdout).scenarios.map((s: any) => s.name), ['draft-message'], 'a pack of a repository is not trusted without the word of the config');
+  trust();
+  const inside = spawnSync(process.execPath, [CLI, 'scenarios'], { env, cwd: path.join(repo, 'sub'), encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(inside.stdout).scenarios.map((s: any) => [s.name, s.level]), [['change-review', 'project'], ['draft-message', 'person']]);
+});
+
+test('cli: the notes of the packs go to the input of every task, upper pack first', () => {
+  const b = box();
+  fs.writeFileSync(path.join(b.root, 'organization/pack.md'), 'Write to the tracker in English.\n');
+  fs.writeFileSync(path.join(b.root, 'person/pack.md'), 'Ask a question when the context is not complete.\n');
+  const r = reins(b, ['open', 'change-review', 'change_id=7']);
+  assert.deepEqual(r.json.input.pack_notes, [
+    { level: 'organization', text: 'Write to the tracker in English.\n' },
+    { level: 'person', text: 'Ask a question when the context is not complete.\n' },
+  ]);
+  fs.writeFileSync(path.join(b.root, 'person/pack.md'), 'x'.repeat(20_000));
+  assert.deepEqual(reins(b, ['status']).json.packs.map((p: any) => [p.level, p.connected, p.errors]), [['organization', true, []], ['project', true, []], ['person', false, [{ code: 'too_large', path: 'pack.md' }]]]);
+});
+
+test('cli: a task that the human stops while its check script runs stays stopped', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  // The check script stops its own task while it runs, then answers PASS.
+  fs.writeFileSync(check, `#!/bin/sh\nin=$(cat)\nid=$(printf '%s' "$in" | sed 's/.*"task":"\\([^"]*\\)".*/\\1/')\nREINS_CONFIG="${b.config}" "${process.execPath}" "${CLI}" stop "$id" >/dev/null\nprintf '{"outputs":{"result":"PASS"},"flags":{}}'\n`, { mode: 0o755 });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  reins(b, ['report', id, '-'], 'green');
+  assert.deepEqual(reins(b, ['input', id]).json, { ok: true, task: id, state: 'closed', label: 'not_verified' });
+  assert.deepEqual(journal(b).slice(-3), ['task.human_decision', 'policy.envelope_closed', 'task.closed'], 'the answer of the check is not applied after the stop');
+});
+
+test('cli: an answer of a check for an older report is not applied to a newer report', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  // While the check runs, the report on the disk changes: the state of a report that came later.
+  fs.writeFileSync(check, `#!/bin/sh\nin=$(cat)\nreport=$(printf '%s' "$in" | sed 's/.*"report":"\\([^"]*\\)".*/\\1/')\nprintf 'a newer report' > "$report"\nprintf '{"outputs":{"result":"PASS"},"flags":{}}'\n`, { mode: 0o755 });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  const r = reins(b, ['report', id, '-'], 'the first report');
+  assert.deepEqual([r.json.state, r.json.answer], ['checking', undefined], r.stdout);
 });

@@ -7,6 +7,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, loadTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
+import { sweep } from '../core/sweep.ts';
+import { listProposals, propose } from '../craft/craft.ts';
 import { listRecords } from '../memory/store.ts';
 
 export type SessionEvent = { session?: string; cwd: string; client?: string };
@@ -54,6 +56,9 @@ export function sessionTask(rt: Runtime, session: string | undefined): string {
 
 // The start of a session: what the agent must know before it acts.
 export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] } {
+  // Housekeeping that needs no human: tasks past their term end, new patterns become proposals.
+  sweep(rt);
+  propose(rt);
   rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level: 'full' } });
   const context = ['reins: the harness of this workspace. It decides before every action and checks the result of a scenario.'];
   const scenarios = rt.merged.scenarios.filter((s) => s.manifest.state !== 'disabled');
@@ -61,6 +66,7 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push('Scenarios (start one with `reins open <name> name=value`):');
     for (const s of scenarios) context.push(`- ${s.name}: ${s.manifest.title}`);
   }
+  for (const note of rt.merged.notes) context.push(`Rules of work (${note.level} pack):`, note.text.trim());
   const open = openTasks(rt).filter((t) => t.kind === 'scenario');
   if (open.length > 0) {
     context.push('Open scenario tasks (read one with `reins input <task>`):');
@@ -71,6 +77,11 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   if (pending.length > 0) {
     context.push('Memory records that wait for a veto of the human (say them to the human; `reins memory veto <id>` removes one):');
     for (const r of pending.slice(0, 10)) context.push(`- ${r.id} (${r.type}, until ${r.veto_until ?? ''}): ${r.text.replace(/\s+/g, ' ').slice(0, 160)}`);
+  }
+  const proposals = listProposals(rt).filter((p) => p.state === 'open');
+  if (proposals.length > 0) {
+    context.push('Proposals of the harness for the human (say them to the human; `reins craft accept|reject <id>` resolves one):');
+    for (const p of proposals.slice(0, 10)) context.push(`- ${p.id}: ${p.pattern} of "${p.key}", seen ${p.n} times`);
   }
   return { context };
 }

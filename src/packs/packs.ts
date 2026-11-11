@@ -56,6 +56,7 @@ export type LoadedPack = {
   scripts: string[]; // references: the path inside the pack without the extension
   scriptFiles: Record<string, string>; // reference -> absolute path of the file
   manifestFiles: string[]; // absolute paths
+  note?: string; // the text of `pack.md`: rules of work for every task of this pack level
   errors: PackError[];
 };
 
@@ -68,11 +69,13 @@ export type Merged = {
   scriptFiles: Record<string, string>; // the scripts of the connected packs: reference -> file
   tools: Record<string, ToolRule>; // the tools of the connectors, from the organization pack
   rules: (PackRule & { level: PackLevel })[]; // the rules of all connected packs
+  notes: { level: PackLevel; text: string }[]; // the notes of the connected packs, upper pack first
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_DEPTH = 4;
 const MAX_INSTRUCTION_BYTES = 64 * 1024;
+const MAX_NOTE_BYTES = 16 * 1024;
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
@@ -366,6 +369,14 @@ export function loadPack(dir: string, level: PackLevel): LoadedPack {
   if (pack.settings !== null) {
     pack.scripts = scriptRefs(dir, pack.errors, pack.scriptFiles);
     pack.manifestFiles = manifestFiles(dir);
+    try {
+      const stat = fs.lstatSync(path.join(dir, 'pack.md'));
+      if (!stat.isFile()) pack.errors.push({ code: 'not_allowed', path: 'pack.md' });
+      else if (stat.size > MAX_NOTE_BYTES) pack.errors.push({ code: 'too_large', path: 'pack.md' });
+      else pack.note = fs.readFileSync(path.join(dir, 'pack.md'), 'utf8');
+    } catch {
+      // no note: the pack says nothing more
+    }
     if (pack.errors.length > 0) pack.settings = null;
   }
   return pack;
@@ -412,6 +423,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   };
   if (s.tools !== undefined) m.tools = s.tools;
   for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
+  if (pack.note !== undefined) m.notes.push({ level: pack.level, text: pack.note });
   narrow('readConnectors', s.connectors?.read);
   narrow('writeActions', s.connectors?.write);
   narrow('memoryTypes', s.memory?.types);
@@ -447,7 +459,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
 
 // Merges packs that are already read, upper level first. Pure except for reading the manifest files.
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [] };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [] };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();

@@ -20,7 +20,7 @@ const PASSED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR'] as const;
 const SUPERVISOR = fileURLToPath(new URL('./collect-child.ts', import.meta.url));
 const BACKSTOP_MS = 5000; // the supervisor enforces the limits; this is for a supervisor that hangs
 
-export function runCollect(file: string, input: { inputs: Record<string, string | number> }, opts: CollectOptions): CollectResult {
+export function runCollect(file: string, input: { inputs: Record<string, string | number> } & Record<string, unknown>, opts: CollectOptions): CollectResult {
   const env: Record<string, string> = {};
   for (const key of PASSED_ENV) {
     const value = process.env[key];

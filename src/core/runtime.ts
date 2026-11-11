@@ -25,8 +25,10 @@ export type Runtime = {
   lockWaitMs?: number; // how long a call waits for the lock of a task
   checkTimeoutMs?: number; // the deadline of a done check that the core runs
   configFile?: string; // the file that names the packs: an agent must not change it
+  checkScriptTimeoutMs?: number; // the time limit of a check script of a pack
   publishIdleMs?: number; // how long the envelope of a publication answers without any use
   gateConfig?: Record<string, unknown>; // the rule data of the gate; absent: the gate loads its own layers
+  projectPackDir?: string; // `.reins` of the repository of the client, also when it does not exist yet
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };
 
@@ -202,7 +204,7 @@ export function openFreeTask(rt: Runtime): Task {
 }
 
 // The done checks that the core runs itself.
-const coreChecks = (task: Task): boolean => task.manifest?.done.kind === 'citations';
+const coreChecks = (task: Task): boolean => task.manifest !== undefined && task.manifest.done.kind !== 'human';
 
 export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Origin): Step | { error: 'unknown_task' | 'not_allowed' | 'busy' } {
   if (!TASK_ID.test(id)) return { error: 'unknown_task' };
@@ -307,7 +309,7 @@ function citations(rt: Runtime, task: Task, text: string): Answer {
     if (list === null) return none;
     changed = list;
   }
-  // The check runs under the lock of the task: it ends well before the lock can be taken as stale.
+  // The deadline of the check is short: a citation check reads a few files.
   const deadline = Date.now() + Math.min(rt.checkTimeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS, LOCK_STALE_MS / 2);
   return checkCitations(text, {
     root,
@@ -318,26 +320,55 @@ function citations(rt: Runtime, task: Task, text: string): Answer {
   });
 }
 
+const DEFAULT_CHECK_SCRIPT_MS = 5 * 60_000;
+
+// A check of the kinds "command", "artifact" and "external state": a script of a pack decides.
+// The script gets the task, its inputs and the paths of the report and of the collected results,
+// and prints one result: PASS or FAIL. A script that is missing or fails gives no answer.
+function scriptCheck(rt: Runtime, task: Task): Answer {
+  const none = (reason: 'no_check' | 'check_failed'): Answer => ({ result: 'none', reason, n: 0, faults: [] });
+  const name = task.manifest?.done.check;
+  const file = name === undefined ? undefined : rt.merged.scriptFiles[`check/${name}`];
+  if (file === undefined) return none('no_check');
+  const collected = taskFile(rt, task.id, '.collect');
+  const r = runCollect(file, { inputs: task.inputs, task: task.id, report: reportFile(rt, task.id), collected: fs.existsSync(collected) ? collected : null }, {
+    outputs: ['result'], flags: [], timeoutMs: rt.checkScriptTimeoutMs ?? DEFAULT_CHECK_SCRIPT_MS, maxBytes: 64 * 1024,
+  });
+  if (!r.ok) return none('check_failed');
+  const result = r.outputs.result;
+  return result === 'PASS' || result === 'FAIL' ? { result, n: 0, faults: [] } : none('check_failed');
+}
+
 export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task' | 'busy' | 'too_large' };
 export type Checked = { step: Step; answer: Answer } | { error: 'unknown_task' | 'busy' | 'not_checking' };
 
 // Runs the check of a task that waits for it, from the report that is kept on the disk, and applies
-// the answer. The answer is computed and applied under one lock. A call that met a busy lock, or a
+// the answer. The answer is computed without the lock and applied under it. A call that met a busy lock, or a
 // process that died after the report, leaves the task in "checking": this call can be made again.
 export function runCheck(rt: Runtime, id: string): Checked {
   if (!TASK_ID.test(id)) return { error: 'unknown_task' };
-  const r = withLock(rt, id, (): Checked => {
-    const task = loadTask(rt, id);
-    if (task === null) return { error: 'unknown_task' };
-    if (task.state !== 'checking' || !coreChecks(task)) return { error: 'not_checking' };
-    const text = readReport(rt, id);
-    // A report that cannot be read is a fault of the harness: no answer.
-    const answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : citations(rt, task, text);
-    const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
-    if (answer.reason !== undefined) detail.reason = answer.reason;
-    return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail })), answer };
-  });
-  return r === 'busy' ? { error: 'busy' } : r;
+  // The check runs without the lock: a script of a pack can run for minutes, and a lock that old
+  // counts as abandoned. The answer is applied under the lock, to the task as it is then, and
+  // only when that task still waits for this check. A task that was stopped meanwhile stays stopped.
+  const before = loadTask(rt, id);
+  if (before === null) return { error: 'unknown_task' };
+  if (before.state !== 'checking' || !coreChecks(before)) return { error: 'not_checking' };
+  const text = readReport(rt, id);
+  // A report that cannot be read is a fault of the harness: no answer.
+  const answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : before.manifest?.done.kind === 'citations' ? citations(rt, before, text) : scriptCheck(rt, before);
+  const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
+  if (answer.reason !== undefined) detail.reason = answer.reason;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const r = withLock(rt, id, (): Checked => {
+      const task = loadTask(rt, id);
+      if (task === null) return { error: 'unknown_task' };
+      // The same wait: the same count of returns and the same report that the check read.
+      if (task.state !== 'checking' || task.returns !== before.returns || readReport(rt, id) !== text) return { error: 'not_checking' };
+      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail })), answer };
+    });
+    if (r !== 'busy') return r;
+  }
+  return { error: 'busy' };
 }
 
 // The agent submits the text of its report. The core keeps the text and, for a check that the core

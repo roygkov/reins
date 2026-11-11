@@ -320,3 +320,23 @@ test('before: the stop command inside a command substitution or an ANSI quote as
     assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
   }
 });
+
+test('before: the pack directory of a repository is protected before it exists', () => {
+  const b = box();
+  b.rt.projectPackDir = path.join(b.cwd, '.reins');
+  const edit = beforeAction(b.rt, call(b, 'write_file', { path: '$CWD/.reins/check/tests.sh' }), CLIENT);
+  assert.deepEqual([edit.outcome, edit.rule], ['ask', 'protect.packs']);
+  const shell = beforeAction(b.rt, call(b, 'shell', { command: `mkdir -p ${b.cwd}/.reins && echo x > ${b.cwd}/.reins/pack.json` }), CLIENT);
+  assert.deepEqual([shell.outcome, shell.rule], ['ask', 'protect.packs']);
+});
+
+test('before: a pack directory of any repository is protected', () => {
+  const b = box();
+  const edit = beforeAction(b.rt, call(b, 'write_file', { path: '/tmp/other-repo/.reins/check/tests.sh' }), CLIENT);
+  assert.deepEqual([edit.outcome, edit.rule], ['ask', 'protect.packs']);
+  for (const command of ['echo x > /tmp/other-repo/.reins/pack.json', 'mkdir .reins', 'cd repo && cp -r x .reins/check']) {
+    const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.packs'], command);
+  }
+  assert.equal(beforeAction(b.rt, call(b, 'write_file', { path: '$CWD/src/reins.ts' }), CLIENT).outcome, 'allow');
+});

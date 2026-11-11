@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { openScenario, submitReport, type Runtime } from '../src/core/runtime.ts';
-import { beforeAction, type ClientTools } from '../src/client/before.ts';
+import { afterAction, beforeAction, type ClientTools } from '../src/client/before.ts';
 import { summarize } from '../src/journal/metrics.ts';
 import { loadCases } from './cases.ts';
 
@@ -71,14 +71,20 @@ for (const [name, tool, input, outcome, layer, rule] of [
   });
 }
 
-test('rules: a rule of the person keeps the question even when the envelope of a task names the write', () => {
+test('rules: a question of a rule is a question like any other: the envelope of a task answers it', () => {
   const b = box();
   const opened = openScenario(b.rt, 'change-review', { change_id: '7' });
   assert.ok(opened.ok);
   const r = decide(b, 'tracker__add_comment', { change: '7' });
-  assert.deepEqual([r.outcome, r.task], ['ask', opened.task.id]);
-  const basis = readJournal(b.rt.journal.file).findLast((x) => x.kind === 'policy.basis')?.data;
-  assert.ok(basis !== undefined, 'the basis of the decision is in the journal');
+  assert.deepEqual([r.outcome, r.scope, r.task, r.layer, r.rule], ['ask', 'task', opened.task.id, 'person', 'careful-comments']);
+  assert.deepEqual(readJournal(b.rt.journal.file).findLast((x) => x.kind === 'policy.basis')?.data, { layer: 'person', rule: 'careful-comments' });
+  assert.deepEqual(afterAction(b.rt, { cwd: b.cwd, tool: 'tracker__add_comment', input: { change: '7' } }, CLIENT), { confirmed: true });
+  const next = decide(b, 'tracker__add_comment', { change: '7' });
+  assert.deepEqual([next.outcome, next.envelope], ['allow', 'applied'], 'the one approval of the task covers the rule too');
+  // A rule that refuses is not lifted by any envelope.
+  const strict = box({ person: [{ id: 'never', outcome: 'deny', tool: 'tracker__add_comment' }] });
+  assert.ok(openScenario(strict.rt, 'change-review', { change_id: '7' }).ok);
+  assert.deepEqual([decide(strict, 'tracker__add_comment', { change: '7' }).outcome], ['deny']);
 });
 
 test('rules: the strictest rule of all levels wins', () => {

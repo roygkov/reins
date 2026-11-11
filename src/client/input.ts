@@ -28,6 +28,7 @@ export type TaskInput = {
   report: ReportSpec;
   writes: Grant[]; // the writes that the scenario can ask for; the policy decides each one
   protocol: string[];
+  pack_notes?: { level: string; text: string }[]; // the notes of the packs, upper pack first
 };
 
 const ITEM: Record<string, string> = {
