@@ -218,7 +218,8 @@
    "collect": null
   },
   "errors": [
-   "run_if_without_collect run_if"
+   "run_if_without_collect run_if",
+   "unknown_output done.source"
   ]
  },
  {
@@ -274,7 +275,8 @@
    }
   },
   "errors": [
-   "empty collect.outputs"
+   "empty collect.outputs",
+   "unknown_output done.source"
   ]
  },
  {
@@ -561,7 +563,8 @@
   "base": "review",
   "patch": {
    "done": {
-    "kind": "command"
+    "kind": "command",
+    "source": null
    }
   },
   "errors": [
@@ -574,7 +577,8 @@
   "patch": {
    "done": {
     "kind": "command",
-    "check": "tests"
+    "check": "tests",
+    "source": null
    }
   },
   "pack": "default",
@@ -886,7 +890,8 @@
   "patch": {
    "done": {
     "kind": "command",
-    "check": "lint"
+    "check": "lint",
+    "source": null
    }
   },
   "pack": "default",
@@ -960,6 +965,92 @@
   },
   "errors": [
    "not_positive version"
+  ]
+ },
+ {
+  "name": "a citation check can name the source and the list of changed files",
+  "base": "review",
+  "patch": {
+   "done": {
+    "source": "diff",
+    "changed": "task"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "the source of a citation check is a result of the collect step",
+  "base": "review",
+  "patch": {
+   "done": {
+    "source": "tree"
+   }
+  },
+  "errors": [
+   "unknown_output done.source"
+  ]
+ },
+ {
+  "name": "the list of changed files is a result of the collect step",
+  "base": "review",
+  "patch": {
+   "done": {
+    "source": "diff",
+    "changed": "files"
+   }
+  },
+  "errors": [
+   "unknown_output done.changed"
+  ]
+ },
+ {
+  "name": "a citation check needs a source",
+  "base": "review",
+  "patch": {
+   "done": {
+    "source": null
+   }
+  },
+  "errors": [
+   "missing done.source"
+  ]
+ },
+ {
+  "name": "a source without a collect step is refused",
+  "base": "review",
+  "patch": {
+   "collect": null,
+   "run_if": null,
+   "done": {
+    "source": "diff"
+   }
+  },
+  "errors": [
+   "unknown_output done.source"
+  ]
+ },
+ {
+  "name": "only a citation check has a source",
+  "base": "minimal",
+  "patch": {
+   "done": {
+    "source": "diff"
+   }
+  },
+  "errors": [
+   "not_allowed done.source"
+  ]
+ },
+ {
+  "name": "the source is a name of a result",
+  "base": "review",
+  "patch": {
+   "done": {
+    "source": "../x"
+   }
+  },
+  "errors": [
+   "bad_name done.source"
   ]
  },
  {

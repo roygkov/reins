@@ -35,7 +35,8 @@ export type TaskEvent =
   | { type: 'prepared'; work: boolean; flag?: string; outputs?: number; bytes?: number }
   | { type: 'collect_failed'; reason: string }
   | { type: 'report'; size: number; fp: string }
-  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none' }
+  // `detail`: counts and a reason code of the check for the journal, never text.
+  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number> }
   | { type: 'ask' }
   | { type: 'human'; decision: 'answered' | 'accept' | 'return' | 'stop' }
   | { type: 'expire' };
@@ -158,9 +159,10 @@ export function step(task: Task, event: TaskEvent): Step {
     }
     case 'check': {
       if (task.state !== 'checking' || done === undefined) return refuse(task);
-      if (event.result === 'PASS') return close(task, labelOf(done.kind), [{ kind: 'check.answered', data: { result: 'PASS', check_kind: done.kind } }]);
+      const detail = event.detail ?? {};
+      if (event.result === 'PASS') return close(task, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
       // No answer means "not ready". The silence of a check is never a success.
-      const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { check_kind: done.kind } };
+      const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { ...detail, check_kind: done.kind } };
       if (task.returns < done.retries) return back(task, [answer], 'check_fail', true);
       return {
         task: { ...task, state: 'waiting_human', waiting: 'check' },

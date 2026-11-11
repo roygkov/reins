@@ -7,10 +7,10 @@ import path from 'node:path';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { applyEvent, confirm, decideAction, loadTask, openFreeTask, openScenario, readCollected, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, confirm, decideAction, loadTask, openFreeTask, openScenario, readCollected, readReport, runCheck, submitReport, type Runtime } from '../src/core/runtime.ts';
 import { runCollect } from '../src/core/collect.ts';
 import type { Action } from '../src/contracts/policy.ts';
-import { loadCases } from './cases.ts';
+import { loadCases, patch } from './cases.ts';
 
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-'));
 after(() => fs.rmSync(SB, { recursive: true, force: true }));
@@ -20,20 +20,20 @@ const files = loadCases<{ name: string; files: Record<string, unknown> }>('packs
 
 const GOOD = `#!/bin/sh
 cat > "$0.stdin"
-printf '%s' '{"outputs":{"diff":"d","task":{"id":7},"discussion":[]},"flags":{"has_new_commits":true}}'
+printf '%s' '{"outputs":{"diff":"d","task":{"id":7},"discussion":[],"worktree":"/nonexistent"},"flags":{"has_new_commits":true}}'
 `;
 const script = (body: string): string => `#!/bin/sh\ncat >/dev/null\n${body}\n`;
 
 let n = 0;
 // A fresh set of packs and a fresh state directory. `collect` is the body of the collect script.
-function runtime(collect: string = GOOD): Runtime {
+function runtime(collect: string = GOOD, change: unknown = {}): Runtime {
   n += 1;
   const root = path.join(SB, String(n));
   for (const [rel, value] of Object.entries(files)) {
     const file = path.join(root, rel);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (rel.endsWith('.sh')) fs.writeFileSync(file, collect, { mode: 0o755 });
-    else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
+    else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(patch(manifests.get(value.slice(10)), value === '$manifest:review' ? change : {})));
     else fs.writeFileSync(file, JSON.stringify(value));
   }
   const merged = loadPacks({ organization: path.join(root, 'organization'), project: path.join(root, 'project'), person: path.join(root, 'person') });
@@ -45,13 +45,36 @@ function runtime(collect: string = GOOD): Runtime {
 const kinds = (rt: Runtime): string[] => readJournal(rt.journal.file).map((r) => r.kind);
 const comment = (target: string): Action => ({ via: 'tool', kind: 'write', name: 'comment', target, env: { name: 'work', known: true, production: false } });
 
+// The citation check in the runtime: the report of the agent is checked against the source that
+// the collect step named. The agent submits the text; the harness runs the check and gives the answer.
+const FINDING = '1. [note] [likely] bounds — src/a.ts:1 — wrong — evidence: quote "const limit = items.length;" — fix: x';
+const GOOD_REPORT = ['review: 1 findings (0 blocking)', FINDING].join('\n');
+const BAD_REPORT = ['review: 1 findings (0 blocking)', FINDING.replace('items.length;', 'items.size();')].join('\n');
+const WITH_SOURCE = { collect: { outputs: ['diff', 'task', 'discussion', 'worktree', 'files'] }, done: { source: 'worktree' } };
+
+function reviewed(change: unknown = WITH_SOURCE, worktree?: unknown, files: unknown = [{ path: 'src/a.ts' }]): Runtime {
+  const tree = fs.mkdtempSync(path.join(SB, 'tree-'));
+  fs.mkdirSync(path.join(tree, 'src'));
+  fs.writeFileSync(path.join(tree, 'src/a.ts'), 'const limit = items.length;\n');
+  fs.writeFileSync(path.join(tree, 'src/b.ts'), 'const other = items.length;\n');
+  const out = { outputs: { diff: 'd', task: 1, discussion: [], worktree: worktree ?? tree, files }, flags: { has_new_commits: true } };
+  return runtime(script(`printf '%s' '${JSON.stringify(out)}'`), change);
+}
+
+function open(rt: Runtime): string {
+  const opened = openScenario(rt, 'change-review', { change_id: '7' });
+  assert.ok(opened.ok);
+  assert.equal(opened.task.state, 'executing');
+  return opened.task.id;
+}
+
 test('runtime: a scenario runs from the trigger to a verified close', () => {
-  const rt = runtime();
+  const rt = reviewed();
   const opened = openScenario(rt, 'change-review', { change_id: '7' });
   assert.ok(opened.ok);
   const id = opened.task.id;
   assert.equal(opened.task.state, 'executing');
-  assert.deepEqual(readCollected(rt, id), { diff: 'd', task: { id: 7 }, discussion: [] });
+  assert.deepEqual(Object.keys(readCollected(rt, id) ?? {}), ['diff', 'task', 'discussion', 'worktree', 'files']);
 
   const asked = decideAction(rt, id, comment('change/7'), []);
   assert.deepEqual([asked?.outcome, asked?.scope, asked?.envelope], ['ask', 'task', 'confirm']);
@@ -60,9 +83,9 @@ test('runtime: a scenario runs from the trigger to a verified close', () => {
   assert.deepEqual([allowed?.outcome, allowed?.envelope], ['allow', 'applied']);
   assert.equal(loadTask(rt, id)?.use.used['comment change/7 work'], 1, 'the use is saved with the task');
 
-  applyEvent(rt, id, { type: 'report', size: 300, fp: '9f3ac2d41b07' }, 'agent');
-  const closed = applyEvent(rt, id, { type: 'check', result: 'PASS' }, 'harness');
-  assert.ok('task' in closed);
+  const submitted = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in submitted);
+  const closed = submitted.step;
   assert.deepEqual([closed.task.state, closed.task.label], ['closed', 'verified_form']);
   assert.deepEqual(loadTask(rt, id)?.state, 'closed', 'the state is on the disk');
 
@@ -87,7 +110,7 @@ test('runtime: the collect script gets the inputs on its standard input', () => 
 });
 
 test('runtime: no work closes the task without the model', () => {
-  const rt = runtime(script(`printf '%s' '{"outputs":{"diff":"","task":null,"discussion":[]},"flags":{"has_new_commits":false}}'`));
+  const rt = runtime(script(`printf '%s' '{"outputs":{"diff":"","task":null,"discussion":[],"worktree":"/nonexistent"},"flags":{"has_new_commits":false}}'`));
   const opened = openScenario(rt, 'change-review', { change_id: '7' });
   assert.ok(opened.ok);
   assert.equal(opened.task.state, 'skipped');
@@ -99,9 +122,9 @@ for (const [name, body, reason] of [
   ['exits with an error', 'exit 3', 'exit'],
   ['prints no JSON', 'echo hello', 'bad_json'],
   ['misses a named result', `printf '%s' '{"outputs":{"diff":"d"},"flags":{"has_new_commits":true}}'`, 'missing_output'],
-  ['misses the flag', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[]},"flags":{}}'`, 'missing_flag'],
-  ['gives a flag that is not a boolean', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[]},"flags":{"has_new_commits":"yes"}}'`, 'bad_shape'],
-  ['adds an unknown field', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[]},"flags":{"has_new_commits":true},"note":"x"}'`, 'bad_shape'],
+  ['misses the flag', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[],"worktree":"/nonexistent"},"flags":{}}'`, 'missing_flag'],
+  ['gives a flag that is not a boolean', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[],"worktree":"/nonexistent"},"flags":{"has_new_commits":"yes"}}'`, 'bad_shape'],
+  ['adds an unknown field', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[],"worktree":"/nonexistent"},"flags":{"has_new_commits":true},"note":"x"}'`, 'bad_shape'],
   ['runs past its time', 'exec sleep 3', 'timeout'],
   ['leaves a child process that runs past the time', 'sleep 3', 'timeout'],
   ['ends and leaves a child process that holds the output', `(sleep 3; echo late) &\nprintf '%s' 'not json'`, 'bad_json'],
@@ -132,7 +155,7 @@ test('runtime: the output of a collect script has a size limit', () => {
 test('runtime: a collect script does not get the environment of the harness', () => {
   process.env.REINS_TEST_SECRET = 'do-not-leak';
   try {
-    const rt = runtime(script(`printf '{"outputs":{"diff":"%s","task":1,"discussion":[]},"flags":{"has_new_commits":true}}' "\${REINS_TEST_SECRET:-none}"`));
+    const rt = runtime(script(`printf '{"outputs":{"diff":"%s","task":1,"discussion":[],"worktree":"/nonexistent"},"flags":{"has_new_commits":true}}' "\${REINS_TEST_SECRET:-none}"`));
     const opened = openScenario(rt, 'change-review', { change_id: '7' });
     assert.ok(opened.ok);
     assert.deepEqual(readCollected(rt, opened.task.id)?.diff, 'none');
@@ -166,16 +189,15 @@ test('runtime: a disabled scenario does not open', () => {
 });
 
 test('runtime: a task keeps the manifest it started with', () => {
-  const rt = runtime();
+  const rt = reviewed();
   const opened = openScenario(rt, 'change-review', { change_id: '7' });
   assert.ok(opened.ok);
   const s = rt.merged.scenarios.find((x) => x.name === 'change-review');
   assert.ok(s !== undefined);
   s.manifest.done.retries = 0;
-  applyEvent(rt, opened.task.id, { type: 'report', size: 1, fp: '9f3ac2d41b07' }, 'agent');
-  const r = applyEvent(rt, opened.task.id, { type: 'check', result: 'FAIL' }, 'harness');
-  assert.ok('task' in r);
-  assert.equal(r.task.state, 'executing', 'the task still has the two send-backs of its own copy');
+  const r = submitReport(rt, opened.task.id, BAD_REPORT);
+  assert.ok('step' in r);
+  assert.equal(r.step.task.state, 'executing', 'the task still has the two send-backs of its own copy');
 });
 
 test('runtime: a free task opens without a manifest and closes as not verified', () => {
@@ -230,13 +252,15 @@ test('runtime: the agent cannot give a check answer or an approval', () => {
   const opened = openScenario(rt, 'change-review', { change_id: '7' });
   assert.ok(opened.ok);
   const id = opened.task.id;
-  applyEvent(rt, id, { type: 'report', size: 1, fp: '9f3ac2d41b07' }, 'agent');
+  // A check that the core runs takes the report only as text, and its answer only from the core.
+  assert.deepEqual(applyEvent(rt, id, { type: 'report', size: 1, fp: '9f3ac2d41b07' }, 'agent'), { error: 'not_allowed' });
+  assert.deepEqual(applyEvent(rt, id, { type: 'check', result: 'PASS' }, 'harness'), { error: 'not_allowed' });
   assert.deepEqual(applyEvent(rt, id, { type: 'check', result: 'PASS' }, 'agent'), { error: 'not_allowed' });
   assert.deepEqual(applyEvent(rt, id, { type: 'human', decision: 'accept' }, 'agent'), { error: 'not_allowed' });
   assert.deepEqual(applyEvent(rt, id, { type: 'expire' }, 'agent'), { error: 'not_allowed' });
   assert.deepEqual(applyEvent(rt, id, { type: 'report', size: 1, fp: '9f3ac2d41b07' }, 'human'), { error: 'not_allowed' });
-  assert.equal(loadTask(rt, id)?.state, 'checking', 'the task did not move');
-  assert.deepEqual(kinds(rt).slice(-2), ['task.report_submitted', 'check.started'], 'a refused event writes nothing');
+  assert.equal(loadTask(rt, id)?.state, 'executing', 'the task did not move');
+  assert.deepEqual(kinds(rt).slice(-2), ['task.started', 'policy.envelope_opened'], 'a refused event writes nothing');
 });
 
 test('runtime: one writer per task: a held lock makes the call busy, a stale lock is taken over', () => {
@@ -268,4 +292,139 @@ test('runtime: a task file with a broken shape is no task', () => {
   fs.writeFileSync(file, JSON.stringify({ id: opened.task.id, state: 'done' }));
   assert.equal(loadTask(rt, opened.task.id), null);
   assert.deepEqual(applyEvent(rt, opened.task.id, { type: 'expire' }, 'harness'), { error: 'unknown_task' });
+});
+
+test('runtime: a report with true citations closes the task as "form verified"', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  const r = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in r);
+  assert.deepEqual([r.answer?.result, r.answer?.n], ['PASS', 1]);
+  assert.deepEqual([r.step.task.state, r.step.task.label], ['closed', 'verified_form']);
+  assert.equal(readReport(rt, id), GOOD_REPORT);
+  const rows = readJournal(rt.journal.file);
+  assert.deepEqual(rows.slice(-5).map((x) => x.kind), ['task.report_submitted', 'check.started', 'check.answered', 'policy.envelope_closed', 'task.closed']);
+  assert.deepEqual(rows.find((x) => x.kind === 'task.report_submitted')?.data?.size, Buffer.byteLength(GOOD_REPORT));
+  assert.deepEqual(rows.find((x) => x.kind === 'check.answered')?.data, { result: 'PASS', check_kind: 'citations', n: 1, faults: 0 });
+  for (const row of rows) assert.deepEqual(validateRow(row), [], `the row ${row.kind} is valid`);
+  assert.equal(rt.journal.failures, 0);
+});
+
+test('runtime: a report with a false citation goes back, and past the limit the human decides', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  for (const returns of [1, 2]) {
+    const r = submitReport(rt, id, BAD_REPORT);
+    assert.ok('step' in r);
+    assert.deepEqual([r.answer?.result, r.answer?.faults], ['FAIL', [{ n: 1, fault: 'not_found' }]]);
+    assert.deepEqual([r.step.task.state, r.step.task.returns], ['executing', returns]);
+  }
+  const last = submitReport(rt, id, BAD_REPORT);
+  assert.ok('step' in last);
+  assert.deepEqual([last.step.task.state, last.step.task.waiting], ['waiting_human', 'check']);
+  const rows = readJournal(rt.journal.file);
+  assert.deepEqual(rows.findLast((x) => x.kind === 'check.answered')?.data, { result: 'FAIL', check_kind: 'citations', n: 1, faults: 1, reason: 'faults' });
+  assert.equal(rt.journal.failures, 0);
+});
+
+test('runtime: a corrected report passes after a return', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  submitReport(rt, id, BAD_REPORT);
+  const r = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in r);
+  assert.deepEqual([r.step.task.state, r.step.task.label, r.step.task.returns], ['closed', 'verified_form', 1]);
+  assert.equal(readReport(rt, id), GOOD_REPORT, 'the last report is the one that is kept');
+});
+
+for (const [name, change, worktree] of [
+  ['the source is not a path', WITH_SOURCE, 42],
+  ['the source is a relative path', WITH_SOURCE, 'tree'],
+  ['the source does not exist', WITH_SOURCE, '/nonexistent/reins-test-tree'],
+] as const) {
+  test(`runtime: the citation check gives no answer when ${name}`, () => {
+    const rt = reviewed(change, worktree);
+    const id = open(rt);
+    const r = submitReport(rt, id, GOOD_REPORT);
+    assert.ok('step' in r);
+    assert.deepEqual([r.answer?.result, r.answer?.reason], ['none', 'no_source']);
+    assert.deepEqual([r.step.task.state, r.step.task.returns], ['executing', 1], 'no answer is "not ready"');
+    const rows = readJournal(rt.journal.file);
+    assert.deepEqual(rows.findLast((x) => x.kind === 'check.no_answer')?.data, { check_kind: 'citations', reason: 'no_source' });
+    assert.equal(rt.journal.failures, 0);
+  });
+}
+
+test('runtime: a finding outside the changed files fails when the manifest names the list', () => {
+  const rt = reviewed({ ...WITH_SOURCE, done: { source: 'worktree', changed: 'files' } });
+  const id = open(rt);
+  const report = ['review: 1 findings (0 blocking)', FINDING.replace('src/a.ts', 'src/b.ts').replace('limit', 'other')].join('\n');
+  const r = submitReport(rt, id, report);
+  assert.ok('step' in r);
+  assert.deepEqual([r.answer?.result, r.answer?.faults], ['FAIL', [{ n: 1, fault: 'not_in_change' }]]);
+});
+
+test('runtime: a list of changed files with a wrong shape gives no answer', () => {
+  const rt = reviewed({ ...WITH_SOURCE, done: { source: 'worktree', changed: 'files' } }, undefined, 'src/a.ts');
+  const id = open(rt);
+  const r = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in r);
+  assert.deepEqual([r.answer?.result, r.answer?.reason], ['none', 'no_source']);
+});
+
+test('runtime: a report is refused for a task that does not run, and nothing is kept', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  submitReport(rt, id, GOOD_REPORT);
+  const again = submitReport(rt, id, BAD_REPORT);
+  assert.ok('step' in again);
+  assert.equal(again.step.error, 'bad_event');
+  assert.equal(readReport(rt, id), GOOD_REPORT);
+  assert.deepEqual(submitReport(rt, 'tffffffffffff', GOOD_REPORT), { error: 'unknown_task' });
+});
+
+test('runtime: a report over the size limit is refused', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  assert.deepEqual(submitReport(rt, id, 'x'.repeat((1 << 20) + 1)), { error: 'too_large' });
+  assert.equal(loadTask(rt, id)?.state, 'executing');
+});
+
+test('runtime: a check that did not get its answer runs again from the kept report', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  // The state after a process that died, or met a busy lock, between the report and the answer.
+  const task = loadTask(rt, id);
+  assert.ok(task !== null);
+  fs.writeFileSync(path.join(rt.stateDir, 'tasks', `${id}.json`), JSON.stringify({ ...task, state: 'checking' }));
+  fs.writeFileSync(path.join(rt.stateDir, 'tasks', `${id}.report.txt`), GOOD_REPORT);
+  const r = runCheck(rt, id);
+  assert.ok('step' in r);
+  assert.deepEqual([r.answer?.result, r.step.task.state, r.step.task.label], ['PASS', 'closed', 'verified_form']);
+  assert.deepEqual(runCheck(rt, id), { error: 'not_checking' }, 'a closed task has no check to run');
+});
+
+test('runtime: a busy lock after the report leaves a check that can run again', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  const task = loadTask(rt, id);
+  assert.ok(task !== null);
+  fs.writeFileSync(path.join(rt.stateDir, 'tasks', `${id}.json`), JSON.stringify({ ...task, state: 'checking' }));
+  fs.writeFileSync(path.join(rt.stateDir, 'tasks', `${id}.report.txt`), GOOD_REPORT);
+  rt.lockWaitMs = 50;
+  const lock = path.join(rt.stateDir, 'tasks', `${id}.lock`);
+  fs.writeFileSync(lock, '');
+  assert.deepEqual(runCheck(rt, id), { error: 'busy' });
+  fs.rmSync(lock);
+  const r = runCheck(rt, id);
+  assert.ok('step' in r);
+  assert.equal(r.step.task.state, 'closed');
+});
+
+test('runtime: the list of changed files can use "./" and repeated separators', () => {
+  const rt = reviewed({ ...WITH_SOURCE, done: { source: 'worktree', changed: 'files' } }, undefined, ['./src//a.ts']);
+  const id = open(rt);
+  const r = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in r);
+  assert.equal(r.answer?.result, 'PASS');
 });

@@ -9,6 +9,7 @@ import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
 import { isObj } from '../contracts/shape.ts';
+import { checkCitations, MAX_FINDINGS, type Answer } from '../check/citations.ts';
 import { runCollect } from './collect.ts';
 import { TASK_STATES, confirmGrant, decideFor, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
 
@@ -22,6 +23,7 @@ export type Runtime = {
   session?: string;
   collectTimeoutMs?: number; // for a manifest that sets no time limit
   lockWaitMs?: number; // how long a call waits for the lock of a task
+  checkTimeoutMs?: number; // the deadline of a done check that the core runs
 };
 
 // Who sends an event. The agent can report and ask. Only the harness gives a check answer,
@@ -184,14 +186,22 @@ export function openFreeTask(rt: Runtime): Task {
   return made.task;
 }
 
+// The done checks that the core runs itself.
+const coreChecks = (task: Task): boolean => task.manifest?.done.kind === 'citations';
+
 export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Origin): Step | { error: 'unknown_task' | 'not_allowed' | 'busy' } {
   if (!TASK_ID.test(id)) return { error: 'unknown_task' };
   if (!ALLOWED[origin].includes(event.type)) return { error: 'not_allowed' };
   const r = withLock(rt, id, () => {
     const task = loadTask(rt, id);
-    return task === null ? null : commit(rt, step(task, event));
+    if (task === null) return null;
+    // A check that the core runs itself takes the report as text and gives its own answer:
+    // nobody else can move such a task into the check or out of it.
+    if (coreChecks(task) && (event.type === 'report' || event.type === 'check')) return 'not_allowed' as const;
+    return commit(rt, step(task, event));
   });
   if (r === 'busy') return { error: 'busy' };
+  if (r === 'not_allowed') return { error: 'not_allowed' };
   return r ?? { error: 'unknown_task' };
 }
 
@@ -221,4 +231,106 @@ export function confirm(rt: Runtime, id: string, key: string): boolean {
     return true;
   });
   return r === true;
+}
+
+const REPORT_CAP = 1024 * 1024;
+const DEFAULT_CHECK_TIMEOUT_MS = 10_000;
+const reportFile = (rt: Runtime, id: string): string => path.join(rt.stateDir, 'tasks', `${id}.report.txt`);
+
+// The last accepted report of a task. Kept beside the task, never in the journal.
+export function readReport(rt: Runtime, id: string): string | null {
+  if (!TASK_ID.test(id)) return null;
+  try {
+    return fs.readFileSync(reportFile(rt, id), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// The list of the changed files as the collect step gave it: paths, or objects with a `path`.
+function changedFiles(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const item of value) {
+    const file = isObj(item) ? item.path : item;
+    if (typeof file !== 'string' || file === '') return null;
+    // `./a//b` and `a/b` name one file.
+    out.push(path.posix.normalize(file).replace(/^\.\//, ''));
+  }
+  return out;
+}
+
+// The citation check of a task. The source is the directory that the collect step named; the agent
+// gives only the text. Without a source there is no answer, and no answer is "not ready".
+function citations(rt: Runtime, task: Task, text: string): Answer {
+  const none: Answer = { result: 'none', reason: 'no_source', n: 0, faults: [] };
+  const done = task.manifest?.done;
+  if (done?.source === undefined) return none;
+  const collected = readCollected(rt, task.id);
+  const root = collected?.[done.source];
+  if (typeof root !== 'string') return none;
+  let changed: string[] | undefined;
+  if (done.changed !== undefined) {
+    const list = changedFiles(collected?.[done.changed]);
+    if (list === null) return none;
+    changed = list;
+  }
+  const deadline = Date.now() + (rt.checkTimeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS);
+  return checkCitations(text, {
+    root,
+    ...(changed !== undefined ? { changed } : {}),
+    maxFindings: Math.min(task.manifest?.output.max_items ?? MAX_FINDINGS, MAX_FINDINGS),
+    expired: () => Date.now() > deadline,
+  });
+}
+
+export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task' | 'busy' | 'too_large' };
+export type Checked = { step: Step; answer: Answer } | { error: 'unknown_task' | 'busy' | 'not_checking' };
+
+// Runs the check of a task that waits for it, from the report that is kept on the disk, and applies
+// the answer. The answer is computed and applied under one lock. A call that met a busy lock, or a
+// process that died after the report, leaves the task in "checking": this call can be made again.
+export function runCheck(rt: Runtime, id: string): Checked {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const r = withLock(rt, id, (): Checked => {
+    const task = loadTask(rt, id);
+    if (task === null) return { error: 'unknown_task' };
+    if (task.state !== 'checking' || !coreChecks(task)) return { error: 'not_checking' };
+    const text = readReport(rt, id);
+    // A report that cannot be read is a fault of the harness: no answer.
+    const answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : citations(rt, task, text);
+    const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
+    if (answer.reason !== undefined) detail.reason = answer.reason;
+    return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail })), answer };
+  });
+  return r === 'busy' ? { error: 'busy' } : r;
+}
+
+// The agent submits the text of its report. The core keeps the text and, for a check that the core
+// runs itself (the citation check), runs it at once. The agent does not start the check and cannot
+// give its answer. When the check could not run now, the step says "checking" and has no answer:
+// `runCheck` finishes it.
+export function submitReport(rt: Runtime, id: string, text: string): Submitted {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const size = Buffer.byteLength(text);
+  if (size > REPORT_CAP) return { error: 'too_large' };
+  const fp = crypto.createHash('sha256').update(text).digest('hex').slice(0, 12);
+  const submitted = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    if (task === null) return null;
+    const s = step(task, { type: 'report', size, fp });
+    if (s.error !== undefined) return s;
+    // The text is on the disk before the state says "checking": a check never reads an older report.
+    const file = reportFile(rt, id);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+    return commit(rt, s);
+  });
+  if (submitted === 'busy') return { error: 'busy' };
+  if (submitted === null) return { error: 'unknown_task' };
+  if (submitted.error !== undefined || submitted.task.state !== 'checking' || !coreChecks(submitted.task)) return { step: submitted };
+  const checked = runCheck(rt, id);
+  return 'error' in checked ? { step: submitted } : checked;
 }

@@ -2283,7 +2283,8 @@
      "outputs": [
       "diff",
       "task",
-      "discussion"
+      "discussion",
+      "worktree"
      ],
      "flags": [
       "has_new_commits"
@@ -2317,7 +2318,8 @@
     },
     "done": {
      "kind": "citations",
-     "retries": 2
+     "retries": 2,
+     "source": "worktree"
     },
     "output": {
      "format": "list",

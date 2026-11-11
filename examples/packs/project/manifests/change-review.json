@@ -9,7 +9,7 @@
   },
   "collect": {
     "script": "collect/change",
-    "outputs": ["diff", "task", "discussion"],
+    "outputs": ["diff", "task", "discussion", "worktree"],
     "flags": ["has_new_commits"]
   },
   "run_if": "has_new_commits",
@@ -28,7 +28,7 @@
       "confirm": "once"
     }]
   },
-  "done": {"kind": "citations", "retries": 2},
+  "done": {"kind": "citations", "retries": 2, "source": "worktree"},
   "output": {"format": "list", "max_items": 10},
   "memory": {"write": ["pitfall"], "class": "veto"}
 }

@@ -41,7 +41,9 @@ export type Manifest = {
   run_if?: string;
   model: { level: Level; raise_to?: Level; executors?: { role: string; count: number }[]; token_limit?: number };
   permissions: { read: string[]; write?: WriteGrant[] };
-  done: { kind: DoneKind; check?: string; retries: number };
+  // `source` and `changed` belong to the citation check: the names of the collect results that hold
+  // the directory of the source and the list of the changed files.
+  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -68,7 +70,7 @@ export type ManifestErrorCode =
   | 'not_one_line' | 'not_in_list' | 'not_allowed' | 'missing' | 'missing_limit' | 'empty' | 'duplicate'
   | 'unknown_field' | 'version_unsupported' | 'bad_name' | 'bad_ref' | 'bad_target'
   | 'run_if_without_collect' | 'unknown_flag' | 'raise_below_level'
-  | 'target_unbounded' | 'unknown_input'
+  | 'target_unbounded' | 'unknown_input' | 'unknown_output'
   | 'not_in_pack' | 'above_pack' | 'envelope_production';
 
 export type ManifestError = Fault<ManifestErrorCode>;
@@ -293,14 +295,25 @@ function permissions(r: Report, value: unknown, pack: PackContext, inputs: Set<s
   });
 }
 
-function done(r: Report, value: unknown, pack: PackContext): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'retries'], ['kind', 'retries']);
+function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[]): void {
+  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
   if (kind !== null && needsCheck && d.check === undefined) r.add('missing', 'done.check');
   if (kind !== null && !needsCheck && d.check !== undefined) r.add('not_allowed', 'done.check');
   else inPack(r, pack.checks, named(r, d.check, 'done.check', NAME), 'done.check');
+  // The citation check reads the source that the collect step prepared, never a path of the agent.
+  for (const key of ['source', 'changed'] as const) {
+    if (d[key] === undefined) continue;
+    if (kind !== null && kind !== 'citations') r.add('not_allowed', `done.${key}`);
+    else {
+      const name = named(r, d[key], `done.${key}`, IDENT);
+      if (name !== null && !outputs.includes(name)) r.add('unknown_output', `done.${key}`);
+    }
+  }
+  // Without a source the check can never answer: such a manifest is refused when it is connected.
+  if (kind === 'citations' && d.source === undefined) r.add('missing', 'done.source');
   if (d.retries !== undefined) {
     if (!isInt(d.retries)) r.add('not_integer', 'done.retries');
     else if (d.retries < 0 || d.retries > MAX_RETRIES) r.add('not_in_range', 'done.retries');
@@ -356,7 +369,7 @@ export function validateManifest(value: unknown, pack: PackContext = STRUCTURE_O
   }
   if (m.model !== undefined) model(r, m.model, pack);
   if (m.permissions !== undefined) permissions(r, m.permissions, pack, inputs);
-  if (m.done !== undefined) done(r, m.done, pack);
+  if (m.done !== undefined) done(r, m.done, pack, isObj(m.collect) && Array.isArray(m.collect.outputs) ? m.collect.outputs : []);
   if (m.output !== undefined) output(r, m.output);
   memory(r, m.memory, pack);
   return r.errors;
