@@ -13,10 +13,12 @@ import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
 import { confirm, decideAction, loadTask, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
+import { deferCall } from '../core/queue.ts';
 import { currentScenario } from '../core/sessions.ts';
+import { touchedPlaces } from './places.ts';
 import { sessionTask } from './session.ts';
 import type { RowInput } from '../journal/writer.ts';
-import { shellAction } from '../gate/index.ts';
+import { findRoot, loadConfig, shellAction, type GateConfig } from '../gate/index.ts';
 import type { ToolRule } from '../packs/packs.ts';
 
 // `session`: the session of the client, when the client names it.
@@ -35,6 +37,7 @@ export type Reply = {
   scope?: 'action' | 'task';
   task?: string; // the task whose envelope names the action
   grant?: string; // the key of the grant: action, target, environment
+  queued?: string; // the name of the deferred action in the queue of the human
 };
 
 const UNKNOWN: Action = { via: 'tool', kind: 'unknown', name: 'unknown', target: '', env: { name: 'unknown', known: false, production: false } };
@@ -76,7 +79,9 @@ function real(p: string): string {
   const tail: string[] = [];
   for (;;) {
     try {
-      return path.join(fs.realpathSync(head), ...tail);
+      // The native call gives the name as the disk has it: on a file system that ignores the case
+      // of letters, `STATE` and `state` are one directory.
+      return path.join(fs.realpathSync.native(head), ...tail);
     } catch {
       const parent = path.dirname(head);
       if (parent === head) return path.resolve(p);
@@ -138,6 +143,48 @@ function namedInCommand(rt: Runtime, command: string): string | null {
   return null;
 }
 
+// What the places of a shell command touch of the harness. A place that the command can change
+// gets the answer of a file change: a refusal for the state, the memory and the config. A place
+// that the command only names gets a question when it lies in the state or in the memory.
+function placesGuard(rt: Runtime, command: string, cwd: string): { outcome: 'deny' | 'ask'; rule: string } | null {
+  let found: { outcome: 'deny' | 'ask'; rule: string } | null = null;
+  for (const place of touchedPlaces(command, cwd, os.homedir(), true)) {
+    // A removal of a directory removes what lies under it: the state, the memory, the config, a pack.
+    if (place.tree) {
+      const target = real(place.path);
+      const under = (p: string | undefined): boolean => p !== undefined && inside(real(p), target);
+      if (under(rt.stateDir)) return { outcome: 'deny', rule: 'protect.state' };
+      if (under(rt.memoryDir)) return { outcome: 'deny', rule: 'protect.memory' };
+      if (under(rt.configFile)) return { outcome: 'deny', rule: 'protect.config' };
+      if (rt.merged.packs.some((p) => under(p.dir))) found ??= { outcome: 'ask', rule: 'protect.packs' };
+    }
+    // A command that can write anywhere under a place: the human looks when the harness lies there.
+    if (place.into) {
+      const target = real(place.path);
+      const under = (p: string | undefined): boolean => p !== undefined && inside(real(p), target);
+      if (under(rt.stateDir)) found ??= { outcome: 'ask', rule: 'protect.state' };
+      else if (under(rt.memoryDir)) found ??= { outcome: 'ask', rule: 'protect.memory' };
+      else if (under(rt.configFile)) found ??= { outcome: 'ask', rule: 'protect.config' };
+    }
+    const guard = protectedBy(rt, place.path);
+    if (guard === null) continue;
+    if (place.write && guard.outcome === 'deny') return guard;
+    if (place.write || guard.rule === 'protect.state' || guard.rule === 'protect.memory') found ??= { outcome: 'ask', rule: guard.rule };
+  }
+  return found;
+}
+
+// The rule data of the gate: its own layers, and the lists that the packs add.
+function gateConfig(rt: Runtime, cwd: string): GateConfig {
+  const cfg = rt.gateConfig ?? loadConfig(findRoot(cwd));
+  const out: GateConfig = { ...cfg };
+  for (const [key, list] of Object.entries(rt.merged.gate)) {
+    const base = Array.isArray(cfg[key]) ? (cfg[key] as unknown[]) : [];
+    out[key] = [...base, ...(list as unknown[]).filter((x) => !base.includes(x))];
+  }
+  return out;
+}
+
 type Read = { action: Action; layers: LayerDecision[]; command?: string } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
 
 // What the call is, in the words of the policy.
@@ -154,13 +201,19 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     }
     const command = call.input[own.command];
     if (typeof command !== 'string') return { action: UNKNOWN, layers: [] };
-    const shell = shellAction(command, call.cwd, rt.gateConfig);
+    const shell = shellAction(command, call.cwd, gateConfig(rt, call.cwd));
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|approve|memory\s+(veto|decide|restore|import)|craft\s+(accept|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
-    const named = shell.result?.decision === 'deny' ? null : (human ?? namedInCommand(rt, command));
-    if (named !== null) return { guard: { outcome: 'ask', rule: named } };
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|approve|memory\s+(veto|decide|restore|import)|craft\s+(accept|reject)|queue\s+(approve|reject))(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    if (shell.result?.decision !== 'deny') {
+      // The parse of the command says which places it changes: a change of the state, of the memory
+      // or of the config is refused, as for a file tool. The match of the text is the second barrier.
+      const places = placesGuard(rt, command, call.cwd);
+      if (places?.outcome === 'deny') return { guard: places };
+      const named = human ?? places?.rule ?? namedInCommand(rt, command);
+      if (named !== null) return { guard: { outcome: 'ask', rule: named } };
+    }
     return { action: shell.action, layers: shell.layers, command };
   }
   const rule = packRule(rt.merged.tools, call.tool);
@@ -258,7 +311,7 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, JSON.stringify({ task: id, key }));
       }
-      return reply(decision, { task: id, grant: key });
+      return queued(rt, call, action, read.command, reply(decision, { task: id, grant: key }));
     }
   }
   const decision = decide({ action, layers });
@@ -266,7 +319,21 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
     { kind: 'policy.decision', data: { outcome: decision.outcome, action_kind: action.kind, env: action.env.name } },
     { kind: 'policy.basis', data: { layer: decision.basis.layer, rule: decision.basis.rule } },
   ]);
-  return reply(decision);
+  return queued(rt, call, action, read.command, reply(decision));
+}
+
+// An action that the policy defers waits in the queue of the human. An approval of the human for
+// this call lets it pass once.
+function queued(rt: Runtime, call: ToolCall, action: Action, command: string | undefined, r: Reply): Reply {
+  if (r.outcome !== 'defer') return r;
+  const what = command ?? `${action.name} ${action.target} @${action.env.name}`;
+  const d = deferCall(rt, call, { rule: r.rule, what, task: sessionTask(rt, call.session) });
+  if (!d.pass) return { ...r, queued: d.id };
+  record(rt, call, [
+    { kind: 'policy.decision', data: { outcome: 'allow', action_kind: action.kind, env: action.env.name } },
+    { kind: 'policy.basis', data: { layer: 'core', rule: 'queue.approved' } },
+  ]);
+  return { outcome: 'allow', rule: 'queue.approved', layer: 'core', envelope: 'none' };
 }
 
 // The tool ran. When the core asked the one question of a task about this call, the run means

@@ -48,7 +48,15 @@ export type PackSettings = {
   tools?: Record<string, ToolRule>;
   rules?: PackRule[];
   models?: Partial<Record<ModelLevel, string>>; // the name of the model of the client for a level
+  gate?: GateData;
 };
+
+// Rule data of the shell gate that a pack adds: the names that mean production in this
+// organization, the protected branches, the forms of commands that the human named. A pack only
+// adds: the lists of all levels are joined.
+export type GateForm = { id?: string; pattern: string; decision: 'ask' | 'deny'; reason?: string };
+export const GATE_LISTS = ['markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes'] as const;
+export type GateData = Partial<Record<(typeof GATE_LISTS)[number], string[]>> & { forms?: GateForm[] };
 
 export type LoadedPack = {
   level: PackLevel;
@@ -73,6 +81,7 @@ export type Merged = {
   notes: { level: PackLevel; text: string }[]; // the notes of the connected packs, upper pack first
   models: Partial<Record<ModelLevel, string>>; // level -> name of the model; a lower pack replaces a name
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
+  gate: GateData; // the rule data of the gate that the packs add, upper pack first
 };
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -83,7 +92,7 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/;
 const SCRIPT_DIRS = ['collect', 'check'] as const;
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -245,7 +254,52 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     if (!Array.isArray(value.rules)) errors.push({ code: 'not_array', path: 'rules' });
     else settings.rules = packRules(errors, value.rules);
   }
+  const gate = section(errors, value.gate, 'gate', [...GATE_LISTS, 'forms']);
+  if (gate !== null) settings.gate = gateData(errors, gate);
   return { settings: errors.length === 0 ? settings : null, errors };
+}
+
+// The rule data of the gate: lists of plain one-line strings, and forms of commands.
+function gateData(errors: PackError[], gate: Obj): GateData {
+  const out: GateData = {};
+  const plain = (v: unknown): v is string => typeof v === 'string' && v !== '' && v.length <= 200 && !/[\r\n]/.test(v);
+  for (const key of GATE_LISTS) {
+    const list = gate[key];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) {
+      errors.push({ code: 'not_array', path: `gate.${key}` });
+      continue;
+    }
+    const good: string[] = [];
+    list.forEach((item, i) => {
+      if (!plain(item)) errors.push({ code: 'bad_name', path: `gate.${key}[${i}]` });
+      else if (!good.includes(item)) good.push(item);
+    });
+    out[key] = good;
+  }
+  if (gate.forms !== undefined) {
+    if (!Array.isArray(gate.forms)) errors.push({ code: 'not_array', path: 'gate.forms' });
+    else {
+      const forms: GateForm[] = [];
+      gate.forms.forEach((form, i) => {
+        const at = `gate.forms[${i}]`;
+        if (!isObj(form)) {
+          errors.push({ code: 'not_object', path: at });
+          return;
+        }
+        const before = errors.length;
+        for (const key of Object.keys(form)) if (!['id', 'pattern', 'decision', 'reason'].includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+        if (form.id !== undefined && (typeof form.id !== 'string' || !NAME.test(form.id))) errors.push({ code: 'bad_name', path: `${at}.id` });
+        if (!plain(form.pattern)) errors.push({ code: form.pattern === undefined ? 'missing' : 'bad_name', path: `${at}.pattern` });
+        // A form only makes the gate stricter: it asks or it refuses.
+        if (form.decision !== 'ask' && form.decision !== 'deny') errors.push({ code: form.decision === undefined ? 'missing' : 'not_in_list', path: `${at}.decision` });
+        if (form.reason !== undefined && !plain(form.reason)) errors.push({ code: 'bad_name', path: `${at}.reason` });
+        if (errors.length === before) forms.push(form as GateForm);
+      });
+      out.forms = forms;
+    }
+  }
+  return out;
 }
 
 const RULE_OUTCOMES = ['ask', 'defer', 'deny'];
@@ -439,6 +493,11 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
   if (pack.note !== undefined) m.notes.push({ level: pack.level, text: pack.note });
   Object.assign(m.models, s.models ?? {});
+  for (const key of GATE_LISTS) {
+    const list = s.gate?.[key];
+    if (list !== undefined) m.gate[key] = [...(m.gate[key] ?? []), ...list.filter((x) => !(m.gate[key] ?? []).includes(x))];
+  }
+  if (s.gate?.forms !== undefined) m.gate.forms = [...(m.gate.forms ?? []), ...s.gate.forms];
   const veto = s.memory?.veto_days;
   if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
   narrow('readConnectors', s.connectors?.read);
@@ -489,7 +548,7 @@ export function closedContext(m: Merged): PackContext {
 }
 
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {} };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {}, gate: {} };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();

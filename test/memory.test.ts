@@ -378,7 +378,7 @@ test('memory: a replaced decision cannot come back through a veto and a restore'
   assert.deepEqual(listRecords(b.rt, T0).map((x) => x.state), ['replaced', 'active']);
 });
 
-test('memory: a shell command that names the memory directory, or restores or imports records, asks the human', () => {
+test('memory: a shell command that writes into the memory directory is refused, and one that restores or imports records asks the human', () => {
   const b = box();
   b.rt.memoryDir = path.join(b.root, 'notes');
   const tools = { shell: { kind: 'shell' as const, command: 'command' } };
@@ -388,7 +388,7 @@ test('memory: a shell command that names the memory directory, or restores or im
     ['reins memory import /tmp/records.jsonl', 'protect.human-command'],
   ] as const) {
     const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command } }, tools);
-    assert.deepEqual([r.outcome, r.rule], ['ask', rule], command);
+    assert.deepEqual([r.outcome, r.rule], [rule === 'protect.memory' ? 'deny' : 'ask', rule], command);
   }
   assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: 'reins memory add pitfall text task=t000000000000' } }, tools).outcome, 'allow');
 });

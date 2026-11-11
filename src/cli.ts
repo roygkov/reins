@@ -7,6 +7,7 @@
 //   reins finish <task>                  ends the publication of an accepted result, closes the task
 //   reins stop <task>                    the human stops a task in any open state
 //   reins tasks                          the tasks that are not closed
+//   reins queue [approve|reject <id>]    the actions that a rule deferred; the human answers
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
 
@@ -21,6 +22,7 @@ import { taskInput } from './client/input.ts';
 import { applyEvent, approveContract, loadTask, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
+import { listQueue, resolveQueued } from './core/queue.ts';
 import { sweep } from './core/sweep.ts';
 import { listProposals, propose, resolveProposal } from './craft/craft.ts';
 import { summarize } from './journal/metrics.ts';
@@ -290,6 +292,16 @@ function main(args: string[]): Out {
     if (r.task.label !== undefined) out.label = r.task.label;
     return out;
   }
+  // The queue of deferred actions. The answers are words of the human: a client with the hook
+  // asks the human before it runs them.
+  if (command === 'queue' && first === undefined) {
+    return { ok: true, queue: listQueue(runtime()).map((q) => ({ id: q.id, state: q.state, at: q.at, tool: q.tool, rule: q.rule, what: q.what, task: q.task, project: q.project })) };
+  }
+  if (command === 'queue' && (first === 'approve' || first === 'reject') && rest.length === 1 && rest[0] !== undefined) {
+    const state = first === 'approve' ? 'approved' : 'rejected';
+    if (!resolveQueued(runtime(), rest[0], state)) throw new Stop('unknown_queued');
+    return { ok: true, queued: rest[0], state };
+  }
   if (command === 'finish' && first !== undefined && rest.length === 0) {
     const rt = runtime();
     const r = applyEvent(rt, first, { type: 'finish' }, 'agent');
@@ -298,7 +310,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'craft', 'craft accept|reject <id>', 'tasks', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory import <file>'] });
 }
 
 let out: Out;

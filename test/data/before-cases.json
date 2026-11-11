@@ -19,6 +19,7 @@
  {"name": "a write in a production environment asks for each action", "task": true, "tool": "live__add_comment", "input": {"change": "7"}, "expect": {"outcome": "ask", "rule": "default.write"}},
  {"name": "a plain shell command passes", "tool": "shell", "input": {"command": "ls -la"}, "expect": {"outcome": "allow", "rule": "default.shell"}},
  {"name": "a dangerous shell command follows the gate", "tool": "shell", "input": {"command": "git push --force origin main"}, "expect": {"outcome": "ask", "layer": "core", "gate": true}},
- {"name": "a shell command that names the state of the harness asks", "tool": "shell", "input": {"command": "echo x >> $STATE/journal.jsonl"}, "expect": {"outcome": "ask", "rule": "protect.state"}},
+ {"name": "a shell command that writes into the state of the harness is refused", "tool": "shell", "input": {"command": "echo x >> $STATE/journal.jsonl"}, "expect": {"outcome": "deny", "rule": "protect.state"}},
+ {"name": "a shell command that names the state of the harness in a program asks", "tool": "shell", "input": {"command": "python3 -c \"open('$STATE/journal.jsonl')\""}, "expect": {"outcome": "ask", "rule": "protect.state"}},
  {"name": "a shell tool without a command counts as unknown", "tool": "shell", "input": {"command": 7}, "expect": {"outcome": "ask", "rule": "default.unknown-tool"}}
 ]

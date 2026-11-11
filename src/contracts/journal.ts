@@ -84,6 +84,8 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'task.closed': { label: RESULT_LABELS },
   'policy.decision': { outcome: OUTCOMES, action_kind: ACTION_KINDS, env: 'token' },
   'policy.basis': { layer: LAYERS, rule: 'token' },
+  'policy.action_deferred': { queued: 'token', rule: 'token' },
+  'policy.deferred_resolved': { queued: 'token', state: ['approved', 'rejected'] },
   'check.answered': { result: CHECK_RESULTS, check_kind: DONE_KINDS },
   'executor.cost': { tokens: 'number', ms: 'number', calls: 'number' },
   'harness.failure': { where: 'token' },

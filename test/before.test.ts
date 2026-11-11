@@ -170,7 +170,7 @@ for (const [name, tools, level, errors] of [
   });
 }
 
-test('before: a shell command that names the state, the config or a pack in any spelling asks', () => {
+test('before: a shell command that writes into the state or the config in any spelling is refused, into a pack asks', () => {
   const b = box();
   b.rt.configFile = path.join(b.root, 'config.json');
   const home = process.env.HOME;
@@ -186,7 +186,7 @@ test('before: a shell command that names the state, the config or a pack in any 
       [`sed -i x ${b.root}/packs/person/pack.json`, 'protect.packs'],
     ] as const) {
       const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
-      assert.deepEqual([r.outcome, r.rule], ['ask', rule], command);
+      assert.deepEqual([r.outcome, r.rule], [rule === 'protect.packs' ? 'ask' : 'deny', rule], command);
     }
     assert.equal(beforeAction(b.rt, call(b, 'shell', { command: 'echo x > ~/notes.txt' }), CLIENT).outcome, 'allow');
   } finally {

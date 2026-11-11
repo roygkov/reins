@@ -56,7 +56,7 @@ function runtime(cwd?: string): Runtime | null {
 
 function reason(r: Reply): string {
   let text = `reins: ${r.rule}`;
-  if (r.outcome === 'defer') text += ': the action cannot wait in a queue in this client, it is refused';
+  if (r.outcome === 'defer') text += `: the action is not done now, it waits for the human in the queue; the human runs \`reins queue approve ${r.queued ?? ''}\` and the same call passes once`;
   else if (r.scope === 'task' && r.task !== undefined) text += `: one approval for the task ${r.task} covers "${r.grant ?? ''}"`;
   else if (r.envelope === 'limit') text += ': the limit of writes of the task is reached';
   else if (r.envelope === 'applied') text += `: named by the task ${r.task ?? ''}`;
