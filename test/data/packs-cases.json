@@ -1,0 +1,2468 @@
+[
+ {
+  "name": "no packs: the harness works with the bans of the core only",
+  "files": {},
+  "expect": {
+   "context": {},
+   "origin": {},
+   "packs": [],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "three levels merge into one context",
+  "base": "three",
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "origin": {
+    "readConnectors": "organization",
+    "writeActions": "organization",
+    "envs": "organization",
+    "memoryTypes": "organization",
+    "maxLevel": "organization",
+    "maxTokens": "project",
+    "maxWriteLimit": "organization",
+    "maxExecutors": "organization",
+    "roles": "organization"
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "an organization pack alone gives connectors and limits",
+  "files": {
+   "organization/pack.json": {
+    "pack": 1,
+    "level": "organization",
+    "name": "acme",
+    "connectors": {
+     "read": [
+      "code-host",
+      "tracker"
+     ],
+     "write": [
+      "comment"
+     ]
+    },
+    "envs": {
+     "known": [
+      "work",
+      "live"
+     ],
+     "production": [
+      "live"
+     ]
+    },
+    "limits": {
+     "level": "strong",
+     "tokens": 200000,
+     "writes": 20,
+     "executors": 2
+    },
+    "roles": [
+     "reviewer"
+    ],
+    "memory": {
+     "types": [
+      "pitfall",
+      "case"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 200000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a limit is the smallest across the levels",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "limits": {
+     "tokens": 50000,
+     "writes": 5,
+     "executors": 1
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 50000,
+    "maxWriteLimit": 5,
+    "maxExecutors": 1
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "above_pack permissions.write[0].limit"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a lower level cannot raise a limit: the larger value is ignored",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "limits": {
+     "tokens": 999999
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "the person lowers the model level for every scenario",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "limits": {
+     "level": "medium"
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "medium",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "above_pack model.raise_to"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a project narrows the connectors of the organization",
+  "base": "three",
+  "patch": {
+   "project/pack.json": {
+    "connectors": {
+     "read": [
+      "code-host",
+      "tracker"
+     ],
+     "write": []
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "not_in_pack permissions.write[0].action"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a project cannot add a connector: the pack is not connected",
+  "base": "three",
+  "patch": {
+   "project/pack.json": {
+    "connectors": {
+     "read": [
+      "code-host",
+      "wiki"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxTokens": 200000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2,
+    "maxLevel": "strong"
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": false,
+     "errors": [
+      "widens connectors.read[1]"
+     ]
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "without an organization pack a lower level cannot name connectors",
+  "base": "three",
+  "patch": {
+   "organization/pack.json": null,
+   "project/pack.json": {
+    "connectors": {
+     "read": [
+      "code-host"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {},
+   "packs": [
+    {
+     "level": "project",
+     "connected": false,
+     "errors": [
+      "widens connectors.read[0]"
+     ]
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "only the organization lists the known environments",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "envs": {
+     "known": [
+      "work",
+      "live",
+      "home"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "not_allowed envs.known"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a lower level can mark one more environment as production",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "envs": {
+     "production": [
+      "work"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live",
+     "work"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "envelope_production permissions.write[0].env"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a production environment is a known environment; under a faulty organization pack nothing is connected",
+  "base": "three",
+  "patch": {
+   "organization/pack.json": {
+    "envs": {
+     "production": [
+      "prod"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {},
+   "packs": [
+    {
+     "level": "organization",
+     "connected": false,
+     "errors": [
+      "not_in_list envs.production[0]"
+     ]
+    },
+    {
+     "level": "project",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a person narrows the memory record types",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "memory": {
+     "types": [
+      "case"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "not_in_pack memory.write[0]"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a person cannot add a memory record type",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "memory": {
+     "types": [
+      "pitfall",
+      "decision"
+     ]
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "widens memory.types[1]"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a person cannot add an executor role",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "roles": [
+     "reviewer",
+     "tester"
+    ]
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "widens roles[1]"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a pack has fixed fields",
+  "base": "three",
+  "patch": {
+   "project/pack.json": {
+    "allow_forms": [
+     "mcp.prod-write"
+    ]
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxTokens": 200000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2,
+    "maxLevel": "strong"
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": false,
+     "errors": [
+      "unknown_field allow_forms"
+     ]
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "only contract version 1 is known",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "pack": 2
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "version_unsupported pack"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "the level in the file is the level of the place",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "level": "organization"
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "level_mismatch level"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a pack without pack.json is not connected",
+  "base": "three",
+  "patch": {
+   "person/pack.json": null
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "missing pack.json"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a pack.json that is not JSON is not connected",
+  "base": "three",
+  "patch": {
+   "person/pack.json": "{ level: person }"
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "bad_json pack.json"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a named pack directory that does not exist is reported",
+  "base": "three",
+  "levels": [
+   "organization",
+   "project",
+   "person"
+  ],
+  "patch": {
+   "person/pack.json": null,
+   "person/manifests/draft-message.json": null
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "missing pack.json"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a limit is a positive integer",
+  "base": "three",
+  "patch": {
+   "project/pack.json": {
+    "limits": {
+     "tokens": 0
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxTokens": 200000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2,
+    "maxLevel": "strong"
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": false,
+     "errors": [
+      "not_positive limits.tokens"
+     ]
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a faulty manifest is rejected, the others connect",
+  "base": "three",
+  "patch": {
+   "project/manifests/broken.json": {
+    "manifest": 1,
+    "name": "broken",
+    "title": "x",
+    "package": "project",
+    "trigger": {
+     "kind": "command"
+    },
+    "model": {
+     "level": "weak"
+    },
+    "permissions": {
+     "read": [
+      "wiki"
+     ]
+    },
+    "done": {
+     "kind": "human",
+     "retries": 0
+    },
+    "output": {
+     "format": "text",
+     "max_bytes": 100
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/broken.json",
+     "errors": [
+      "not_in_pack permissions.read[0]"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a manifest belongs to the level of its pack",
+  "base": "three",
+  "patch": {
+   "person/manifests/draft-message.json": {
+    "manifest": 1,
+    "name": "draft-message",
+    "title": "x",
+    "package": "organization",
+    "trigger": {
+     "kind": "command"
+    },
+    "model": {
+     "level": "weak"
+    },
+    "permissions": {
+     "read": []
+    },
+    "done": {
+     "kind": "human",
+     "retries": 0
+    },
+    "output": {
+     "format": "text",
+     "max_bytes": 100
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": [
+    {
+     "file": "person/manifests/draft-message.json",
+     "errors": [
+      "package_mismatch package"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "scenario names do not repeat: the upper level keeps the name",
+  "base": "three",
+  "patch": {
+   "person/manifests/change-review.json": {
+    "manifest": 1,
+    "name": "change-review",
+    "title": "x",
+    "package": "person",
+    "trigger": {
+     "kind": "command"
+    },
+    "model": {
+     "level": "weak"
+    },
+    "permissions": {
+     "read": []
+    },
+    "done": {
+     "kind": "human",
+     "retries": 0
+    },
+    "output": {
+     "format": "text",
+     "max_bytes": 100
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "person/manifests/change-review.json",
+     "errors": [
+      "duplicate name"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a manifest that is not JSON is rejected",
+  "base": "three",
+  "patch": {
+   "project/manifests/notes.json": "name: notes"
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/notes.json",
+     "errors": [
+      "bad_json $"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "only .json files in manifests are manifests",
+  "base": "three",
+  "patch": {
+   "project/manifests/README.md": "notes"
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a manifest names a script that is on the disk",
+  "base": "three",
+  "patch": {
+   "project/collect/change.sh": null
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "not_in_pack collect.script"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a script that is a symbolic link is not a script of the pack",
+  "base": "three",
+  "patch": {
+   "project/collect/change.sh": null
+  },
+  "symlinks": {
+   "project/collect/change.sh": "/bin/sh"
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "not_in_pack collect.script"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "the same script in two packs: the lower pack is not connected",
+  "base": "three",
+  "patch": {
+   "person/collect/change.py": "print(1)\n"
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "duplicate collect/change"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "the same check in two packs: the lower pack is not connected",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "checks": [
+     "tests"
+    ]
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "duplicate checks[0]"
+     ]
+    }
+   ],
+   "scenarios": [
+    "change-review@project"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a disabled scenario is connected and keeps its state",
+  "base": "three",
+  "patch": {
+   "person/manifests/draft-message.json": {
+    "manifest": 1,
+    "name": "draft-message",
+    "title": "x",
+    "package": "person",
+    "state": "disabled",
+    "trigger": {
+     "kind": "command"
+    },
+    "model": {
+     "level": "weak"
+    },
+    "permissions": {
+     "read": []
+    },
+    "done": {
+     "kind": "human",
+     "retries": 0
+    },
+    "output": {
+     "format": "text",
+     "max_bytes": 100
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "change-review@project",
+    "draft-message@person"
+   ],
+   "rejected": []
+  }
+ },
+ {
+  "name": "two scripts that differ only by the extension: the pack is not connected",
+  "base": "three",
+  "patch": {
+   "project/collect/change.py": "print(1)\n"
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxTokens": 200000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2,
+    "maxLevel": "strong"
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": false,
+     "errors": [
+      "duplicate collect/change"
+     ]
+    },
+    {
+     "level": "person",
+     "connected": false,
+     "errors": [
+      "upper_not_connected pack.json"
+     ]
+    }
+   ],
+   "scenarios": [],
+   "rejected": []
+  }
+ },
+ {
+  "name": "a collect script lies under collect, not under check",
+  "base": "three",
+  "patch": {
+   "project/check/tests.sh": "#!/bin/sh\n",
+   "project/manifests/change-review.json": {
+    "manifest": 1,
+    "name": "change-review",
+    "title": "Ревью изменения",
+    "package": "project",
+    "trigger": {
+     "kind": "command",
+     "inputs": [
+      {
+       "name": "change_id",
+       "type": "id"
+      }
+     ]
+    },
+    "collect": {
+     "script": "check/tests",
+     "outputs": [
+      "diff",
+      "task",
+      "discussion"
+     ],
+     "flags": [
+      "has_new_commits"
+     ]
+    },
+    "run_if": "has_new_commits",
+    "model": {
+     "level": "medium",
+     "raise_to": "strong",
+     "executors": [
+      {
+       "role": "reviewer",
+       "count": 1
+      }
+     ]
+    },
+    "permissions": {
+     "read": [
+      "code-host",
+      "tracker"
+     ],
+     "write": [
+      {
+       "action": "comment",
+       "target": "change/{change_id}",
+       "env": "work",
+       "limit": 20,
+       "confirm": "once"
+      }
+     ]
+    },
+    "done": {
+     "kind": "citations",
+     "retries": 2
+    },
+    "output": {
+     "format": "list",
+     "max_items": 10
+    },
+    "memory": {
+     "write": [
+      "pitfall"
+     ],
+     "class": "veto"
+    }
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [
+     "reviewer"
+    ],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "not_in_pack collect.script"
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "a person narrows the executor roles",
+  "base": "three",
+  "patch": {
+   "person/pack.json": {
+    "roles": []
+   }
+  },
+  "expect": {
+   "context": {
+    "readConnectors": [
+     "code-host",
+     "tracker"
+    ],
+    "writeActions": [
+     "comment"
+    ],
+    "scripts": [
+     "collect/change"
+    ],
+    "checks": [
+     "tests"
+    ],
+    "envs": [
+     "work",
+     "live"
+    ],
+    "productionEnvs": [
+     "live"
+    ],
+    "roles": [],
+    "memoryTypes": [
+     "pitfall",
+     "case"
+    ],
+    "maxLevel": "strong",
+    "maxTokens": 100000,
+    "maxWriteLimit": 20,
+    "maxExecutors": 2
+   },
+   "packs": [
+    {
+     "level": "organization",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "project",
+     "connected": true,
+     "errors": []
+    },
+    {
+     "level": "person",
+     "connected": true,
+     "errors": []
+    }
+   ],
+   "scenarios": [
+    "draft-message@person"
+   ],
+   "rejected": [
+    {
+     "file": "project/manifests/change-review.json",
+     "errors": [
+      "not_in_pack model.executors[0].role"
+     ]
+    }
+   ]
+  }
+ }
+]

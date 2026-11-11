@@ -1,0 +1,6 @@
+{
+  "pack": 1,
+  "level": "person",
+  "name": "example-person",
+  "limits": { "level": "strong" }
+}

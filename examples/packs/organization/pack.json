@@ -1,0 +1,10 @@
+{
+  "pack": 1,
+  "level": "organization",
+  "name": "example-org",
+  "connectors": { "read": ["code-host", "tracker"], "write": ["comment"] },
+  "envs": { "known": ["work", "live"], "production": ["live"] },
+  "limits": { "level": "strong", "tokens": 200000, "writes": 20, "executors": 2 },
+  "roles": ["reviewer"],
+  "memory": { "types": ["pitfall", "case"] }
+}

@@ -1,0 +1,34 @@
+{
+  "manifest": 1,
+  "name": "change-review",
+  "title": "Ревью изменения",
+  "package": "project",
+  "trigger": {
+    "kind": "command",
+    "inputs": [{"name": "change_id", "type": "id"}]
+  },
+  "collect": {
+    "script": "collect/change",
+    "outputs": ["diff", "task", "discussion"],
+    "flags": ["has_new_commits"]
+  },
+  "run_if": "has_new_commits",
+  "model": {
+    "level": "medium",
+    "raise_to": "strong",
+    "executors": [{"role": "reviewer", "count": 1}]
+  },
+  "permissions": {
+    "read": ["code-host", "tracker"],
+    "write": [{
+      "action": "comment",
+      "target": "change/{change_id}",
+      "env": "work",
+      "limit": 20,
+      "confirm": "once"
+    }]
+  },
+  "done": {"kind": "citations", "retries": 2},
+  "output": {"format": "list", "max_items": 10},
+  "memory": {"write": ["pitfall"], "class": "veto"}
+}

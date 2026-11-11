@@ -1,0 +1,7 @@
+{
+  "pack": 1,
+  "level": "project",
+  "name": "example-project",
+  "limits": { "tokens": 100000 },
+  "checks": ["tests"]
+}

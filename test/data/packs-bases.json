@@ -1,0 +1,20 @@
+[
+  {
+    "name": "three",
+    "files": {
+      "organization/pack.json": {
+        "pack": 1, "level": "organization", "name": "acme",
+        "connectors": { "read": ["code-host", "tracker"], "write": ["comment"] },
+        "envs": { "known": ["work", "live"], "production": ["live"] },
+        "limits": { "level": "strong", "tokens": 200000, "writes": 20, "executors": 2 },
+        "roles": ["reviewer"],
+        "memory": { "types": ["pitfall", "case"] }
+      },
+      "project/pack.json": { "pack": 1, "level": "project", "name": "shop", "limits": { "tokens": 100000 }, "checks": ["tests"] },
+      "project/collect/change.sh": "#!/bin/sh\n",
+      "project/manifests/change-review.json": "$manifest:review",
+      "person/pack.json": { "pack": 1, "level": "person", "name": "me", "limits": { "level": "strong" } },
+      "person/manifests/draft-message.json": "$manifest:minimal"
+    }
+  }
+]
