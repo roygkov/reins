@@ -85,14 +85,19 @@ test('runtime: a scenario runs from the trigger to a verified close', () => {
 
   const submitted = submitReport(rt, id, GOOD_REPORT);
   assert.ok('step' in submitted);
-  const closed = submitted.step;
+  assert.deepEqual([submitted.step.task.state, submitted.step.task.label], ['publishing', 'verified_form'], 'the check passed: the publication is open');
+  const published = decideAction(rt, id, comment('change/7'), []);
+  assert.deepEqual([published?.outcome, published?.envelope], ['allow', 'applied'], 'the envelope acts during the publication');
+  assert.deepEqual(applyEvent(rt, id, { type: 'check', result: 'PASS' }, 'harness'), { error: 'not_allowed' });
+  const closed = applyEvent(rt, id, { type: 'finish' }, 'agent');
+  assert.ok('task' in closed);
   assert.deepEqual([closed.task.state, closed.task.label], ['closed', 'verified_form']);
   assert.deepEqual(loadTask(rt, id)?.state, 'closed', 'the state is on the disk');
 
   assert.deepEqual(kinds(rt), [
     'task.opened', 'task.kind_decided', 'task.prepared', 'task.started', 'policy.envelope_opened',
     'policy.decision', 'policy.basis', 'task.human_decision', 'policy.decision', 'policy.basis',
-    'task.report_submitted', 'check.started', 'check.answered', 'policy.envelope_closed', 'task.closed',
+    'task.report_submitted', 'check.started', 'check.answered', 'policy.decision', 'policy.basis', 'policy.envelope_closed', 'task.closed',
   ]);
   const rows = readJournal(rt.journal.file);
   for (const row of rows) assert.deepEqual(validateRow(row), [], `the row ${row.kind} is valid`);
@@ -300,8 +305,10 @@ test('runtime: a report with true citations closes the task as "form verified"',
   const r = submitReport(rt, id, GOOD_REPORT);
   assert.ok('step' in r);
   assert.deepEqual([r.answer?.result, r.answer?.n], ['PASS', 1]);
-  assert.deepEqual([r.step.task.state, r.step.task.label], ['closed', 'verified_form']);
+  assert.deepEqual([r.step.task.state, r.step.task.label], ['publishing', 'verified_form']);
   assert.equal(readReport(rt, id), GOOD_REPORT);
+  applyEvent(rt, id, { type: 'finish' }, 'agent');
+  assert.equal(loadTask(rt, id)?.state, 'closed');
   const rows = readJournal(rt.journal.file);
   assert.deepEqual(rows.slice(-5).map((x) => x.kind), ['task.report_submitted', 'check.started', 'check.answered', 'policy.envelope_closed', 'task.closed']);
   assert.deepEqual(rows.find((x) => x.kind === 'task.report_submitted')?.data?.size, Buffer.byteLength(GOOD_REPORT));
@@ -333,7 +340,7 @@ test('runtime: a corrected report passes after a return', () => {
   submitReport(rt, id, BAD_REPORT);
   const r = submitReport(rt, id, GOOD_REPORT);
   assert.ok('step' in r);
-  assert.deepEqual([r.step.task.state, r.step.task.label, r.step.task.returns], ['closed', 'verified_form', 1]);
+  assert.deepEqual([r.step.task.state, r.step.task.label, r.step.task.returns], ['publishing', 'verified_form', 1]);
   assert.equal(readReport(rt, id), GOOD_REPORT, 'the last report is the one that is kept');
 });
 
@@ -400,8 +407,8 @@ test('runtime: a check that did not get its answer runs again from the kept repo
   fs.writeFileSync(path.join(rt.stateDir, 'tasks', `${id}.report.txt`), GOOD_REPORT);
   const r = runCheck(rt, id);
   assert.ok('step' in r);
-  assert.deepEqual([r.answer?.result, r.step.task.state, r.step.task.label], ['PASS', 'closed', 'verified_form']);
-  assert.deepEqual(runCheck(rt, id), { error: 'not_checking' }, 'a closed task has no check to run');
+  assert.deepEqual([r.answer?.result, r.step.task.state, r.step.task.label], ['PASS', 'publishing', 'verified_form']);
+  assert.deepEqual(runCheck(rt, id), { error: 'not_checking' }, 'a task past its check has no check to run');
 });
 
 test('runtime: a busy lock after the report leaves a check that can run again', () => {
@@ -418,7 +425,7 @@ test('runtime: a busy lock after the report leaves a check that can run again', 
   fs.rmSync(lock);
   const r = runCheck(rt, id);
   assert.ok('step' in r);
-  assert.equal(r.step.task.state, 'closed');
+  assert.equal(r.step.task.state, 'publishing');
 });
 
 test('runtime: the list of changed files can use "./" and repeated separators', () => {
@@ -437,5 +444,27 @@ test('runtime: the fields of an item come from the manifest of the task', () => 
   assert.deepEqual([bare.answer?.result, bare.answer?.faults], ['FAIL', [{ n: 1, fault: 'bad_field' }]]);
   const full = submitReport(rt, id, JSON.stringify({ items: [{ ...ITEM, severity: 'note' }] }));
   assert.ok('step' in full);
-  assert.deepEqual([full.answer?.result, full.step.task.state], ['PASS', 'closed']);
+  assert.deepEqual([full.answer?.result, full.step.task.state], ['PASS', 'publishing']);
+});
+
+test('runtime: a scenario without writes closes at PASS: there is nothing to publish', () => {
+  const rt = reviewed({ ...WITH_SOURCE, permissions: { read: ['code-host', 'tracker'], write: [] } });
+  const id = open(rt);
+  const r = submitReport(rt, id, GOOD_REPORT);
+  assert.ok('step' in r);
+  assert.deepEqual([r.step.task.state, r.step.task.label], ['closed', 'verified_form']);
+  const late = applyEvent(rt, id, { type: 'finish' }, 'agent');
+  assert.ok('task' in late && late.error === 'bad_event', 'a closed task has no publication to end');
+  assert.equal(loadTask(rt, id)?.state, 'closed');
+});
+
+test('runtime: only the agent or the human ends a publication', () => {
+  const rt = reviewed();
+  const id = open(rt);
+  submitReport(rt, id, GOOD_REPORT);
+  assert.deepEqual(applyEvent(rt, id, { type: 'finish' }, 'harness'), { error: 'not_allowed' });
+  const closed = applyEvent(rt, id, { type: 'finish' }, 'agent');
+  assert.ok('task' in closed && closed.task.state === 'closed');
+  const again = applyEvent(rt, id, { type: 'finish' }, 'agent');
+  assert.ok('task' in again && again.error === 'bad_event');
 });

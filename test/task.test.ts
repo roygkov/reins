@@ -57,6 +57,8 @@ for (const c of loadCases<Case>('task-cases')) {
     const got: Case['expect'] = { state: task.state, returns: task.returns, errors, rows: rows.map(show) };
     if (task.waiting !== undefined) got.waiting = task.waiting;
     if (task.label !== undefined) got.label = task.label;
+    // `rows: null` in a case: the rows are not a part of what the case checks.
+    if (c.expect.rows === null) got.rows = null as unknown as string[];
     assert.deepEqual(got, c.expect);
   });
 }
@@ -135,6 +137,9 @@ test('task: a closed task has no envelope', () => {
   const waiting = decideFor(task, comment('change/7'), []);
   assert.deepEqual([waiting.decision.outcome, waiting.decision.envelope], ['ask', 'none'], 'no envelope while the check runs');
   task = step(task, { type: 'check', result: 'PASS' }).task;
+  const publishing = decideFor(task, comment('change/7'), []);
+  assert.deepEqual([task.state, publishing.decision.outcome, publishing.decision.envelope], ['publishing', 'allow', 'applied'], 'the envelope acts while the result is published');
+  task = step(publishing.task, { type: 'finish' }).task;
   const d = decideFor(task, comment('change/7'), []);
-  assert.deepEqual([d.decision.outcome, d.decision.envelope], ['ask', 'none']);
+  assert.deepEqual([task.state, d.decision.outcome, d.decision.envelope], ['closed', 'ask', 'none']);
 });

@@ -4,6 +4,7 @@
 //   reins open <scenario> [name=value]   opens a task and prints the input for the model
 //   reins input <task>                   prints the input of an open task again
 //   reins report <task> <file|->         submits the report of the model, prints the answer
+//   reins finish <task>                  ends the publication of an accepted result, closes the task
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
 
@@ -11,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ConfigError, loadRuntime } from './client/config.ts';
 import { taskInput } from './client/input.ts';
-import { loadTask, openScenario, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
+import { applyEvent, loadTask, openScenario, readCollected, runCheck, submitReport, type Runtime } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 
 type Out = Record<string, unknown>;
@@ -64,6 +65,8 @@ function view(rt: Runtime, task: Task): Out {
     input.collected = byReference(rt, task.id, input.collected);
     out.input = input;
   }
+  // The publication: the writes that the task names can be made now, then `finish` closes the task.
+  if (task.state === 'publishing') out.writes = task.envelope;
   return out;
 }
 
@@ -119,6 +122,7 @@ function report(rt: Runtime, id: string, source: string): Out {
   if (task.waiting !== undefined) out.waiting = task.waiting;
   out.returns_left = Math.max(0, (task.manifest?.done.retries ?? 0) - task.returns);
   if (r.answer !== undefined) out.answer = r.answer;
+  if (task.state === 'publishing') out.writes = task.envelope;
   return out;
 }
 
@@ -132,8 +136,15 @@ function main(args: string[]): Out {
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
   }
+  if (command === 'finish' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    const r = applyEvent(rt, first, { type: 'finish' }, 'agent');
+    if (!('task' in r)) throw new Stop(r.error);
+    if (r.error !== undefined) throw new Stop(r.error);
+    return view(rt, r.task);
+  }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->'] });
+  throw new Stop('usage', { commands: ['scenarios', 'open <scenario> [name=value]', 'input <task>', 'report <task> <file|->', 'finish <task>'] });
 }
 
 let out: Out;
@@ -146,7 +157,7 @@ try {
 process.stdout.write(`${JSON.stringify(out)}\n`);
 // Exit code 0: for `open` and `input` the task executes or had no work; for `report` the task is
 // closed with a verified result. Exit code 2: the task did not close as verified.
-const verified = out.state === 'closed' && out.label !== 'not_verified';
+const verified = (out.state === 'closed' || out.state === 'publishing') && out.label !== 'not_verified';
 const reported = 'returns_left' in out;
 const done = out.state === undefined || verified || (!reported && (out.state === 'executing' || out.state === 'skipped'));
 process.exitCode = out.ok !== true ? 1 : done ? 0 : 2;

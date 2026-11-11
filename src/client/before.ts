@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { decide, grantKey, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
+import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
 import { confirm, decideAction, loadTask, openFreeTask, type Runtime } from '../core/runtime.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { shellAction } from '../gate/index.ts';
@@ -36,6 +36,7 @@ export type Reply = {
 
 const UNKNOWN: Action = { via: 'tool', kind: 'unknown', name: 'unknown', target: '', env: { name: 'unknown', known: false, production: false } };
 const LOCAL_ENV = { name: 'local', known: true, production: false };
+const PUBLISH_IDLE_MS = 60 * 60 * 1000;
 const TASK_FILE = /^(t[0-9a-f]{12})\.json$/;
 
 // The rule of the pack for a tool name: the exact name, else the longest pattern that ends with `*`.
@@ -55,7 +56,8 @@ function fillTarget(template: string, input: Record<string, unknown>): string | 
   let ok = true;
   const out = template.replace(/\{([a-z_][a-z0-9_]*)\}/g, (_, name: string) => {
     const value = Object.hasOwn(input, name) ? input[name] : undefined;
-    const text = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
+    let text = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
+    if (typeof text === 'string') text = plainValue(text);
     if (typeof text !== 'string' || text === '' || text.length > 200 || /[\s{}]/.test(text)) {
       ok = false;
       return '';
@@ -172,7 +174,11 @@ function taskFor(rt: Runtime, key: string): string | undefined {
     const id = TASK_FILE.exec(name)?.[1];
     if (id === undefined) continue;
     const task = loadTask(rt, id);
-    if (task !== null && task.state === 'executing' && task.envelope.some((g) => grantKey(g.action, g.target, g.env) === key)) return id;
+    if (task === null || !task.envelope.some((g) => grantKey(g.action, g.target, g.env) === key)) continue;
+    if (task.state === 'executing') return id;
+    // A publication that nobody ended must not leave an approved write for ever: without a use
+    // or another change of the task for this long, its envelope no longer answers.
+    if (task.state === 'publishing' && Date.now() - fs.statSync(path.join(rt.stateDir, 'tasks', name)).mtimeMs <= (rt.publishIdleMs ?? PUBLISH_IDLE_MS)) return id;
   }
   return undefined;
 }

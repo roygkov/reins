@@ -25,6 +25,7 @@ export type Runtime = {
   lockWaitMs?: number; // how long a call waits for the lock of a task
   checkTimeoutMs?: number; // the deadline of a done check that the core runs
   configFile?: string; // the file that names the packs: an agent must not change it
+  publishIdleMs?: number; // how long the envelope of a publication answers without any use
   gateConfig?: Record<string, unknown>; // the rule data of the gate; absent: the gate loads its own layers
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };
@@ -33,8 +34,8 @@ export type Runtime = {
 // and only the human approves: so the agent cannot close a task of a scenario.
 export type Origin = 'agent' | 'human' | 'harness';
 const ALLOWED: Record<Origin, readonly TaskEvent['type'][]> = {
-  agent: ['report', 'ask'],
-  human: ['human'],
+  agent: ['report', 'ask', 'finish'],
+  human: ['human', 'finish'],
   harness: ['prepared', 'collect_failed', 'check', 'expire'],
 };
 

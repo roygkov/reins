@@ -46,6 +46,18 @@ export function strictest(a: Outcome, b: Outcome): Outcome {
   return rank(a) >= rank(b) ? a : b;
 }
 
+// A value that goes into a target, in one spelling: `a%2Fb` and `a/b` name one thing. The grant
+// of a task and the tool call of a client are both filled through this function.
+export function plainValue(text: string): string {
+  try {
+    const plain = decodeURIComponent(text);
+    // A percent form of a space or a brace is not opened: such a value could not name a target.
+    return /[\s{}]/.test(plain) ? text : plain;
+  } catch {
+    return text; // not a percent form: the value stays as it is
+  }
+}
+
 export function grantKey(action: string, target: string, env: string): string {
   return `${action} ${target} ${env}`;
 }

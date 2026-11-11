@@ -110,8 +110,15 @@ test('cli: a report with a false quote is not ready, a true one closes the task'
 
   const good = reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'high' }]));
   assert.equal(good.code, 0);
-  assert.deepEqual(good.json, { ok: true, task: id, state: 'closed', label: 'verified_form', returns_left: 1, answer: { result: 'PASS', n: 1, faults: [] } });
+  const writes = [{ action: 'comment', target: 'change/7', env: 'work', limit: 20, confirm: 'once' }];
+  assert.deepEqual(good.json, { ok: true, task: id, state: 'publishing', label: 'verified_form', returns_left: 1, answer: { result: 'PASS', n: 1, faults: [] }, writes });
+  const during = reins(b, ['input', id]).json;
+  assert.deepEqual([during.state, during.label, during.writes, during.input.instructions], ['publishing', 'verified_form', writes, INSTRUCTIONS], 'the instructions are still there for the publication');
+  const finished = reins(b, ['finish', id]);
+  assert.equal(finished.code, 0);
+  assert.deepEqual(finished.json, { ok: true, task: id, state: 'closed', label: 'verified_form' });
   assert.deepEqual(journal(b).slice(-3), ['check.answered', 'policy.envelope_closed', 'task.closed']);
+  assert.deepEqual([reins(b, ['finish', id]).code, reins(b, ['finish', id]).json.error], [1, 'bad_event']);
 });
 
 test('cli: past the limit of returns the task waits for the human', () => {
@@ -132,6 +139,7 @@ test('cli: the input of an open task can be read again, a closed task has none',
   assert.equal(again.code, 0);
   assert.deepEqual(again.json, { ok: true, task: opened.task, state: 'executing', input: opened.input });
   reins(b, ['report', opened.task, '-'], report([{ ...ITEM, severity: 'low' }]));
+  reins(b, ['finish', opened.task]);
   const closed = reins(b, ['input', opened.task]);
   assert.deepEqual(closed.json, { ok: true, task: opened.task, state: 'closed', label: 'verified_form' });
 });
@@ -188,6 +196,7 @@ test('cli: an instruction file that is too large or is a link rejects the scenar
 for (const [name, args, error] of [
   ['an unknown scenario', ['open', 'no-such', 'change_id=7'], 'unknown_scenario'],
   ['an unknown task', ['report', 'tffffffffffff', '-'], 'unknown_task'],
+  ['a finish of an unknown task', ['finish', 'tffffffffffff'], 'unknown_task'],
   ['an unknown command', ['publish'], 'usage'],
   ['no command', [], 'usage'],
   ['an input without a name', ['open', 'change-review', '7'], 'usage'],
@@ -280,5 +289,5 @@ test('cli: a task that waits for its check answer gets it at the next report', (
   fs.writeFileSync(path.join(b.state, 'tasks', `${id}.report.txt`), report([{ ...ITEM, severity: 'high' }]));
   const r = reins(b, ['report', id, '-'], 'another text');
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.state, r.json.label, r.json.answer.result], ['closed', 'verified_form', 'PASS']);
+  assert.deepEqual([r.json.state, r.json.label, r.json.answer.result], ['publishing', 'verified_form', 'PASS']);
 });

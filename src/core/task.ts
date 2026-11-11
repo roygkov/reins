@@ -5,11 +5,12 @@
 
 import { labelOf, type Level, type Manifest, type ResultLabel } from '../contracts/manifest.ts';
 import type { EventKind, TASK_KINDS } from '../contracts/journal.ts';
-import { decide, grantKey, type Action, type Decision, type Grant, type LayerDecision, type TaskUse } from '../contracts/policy.ts';
+import { decide, grantKey, plainValue, type Action, type Decision, type Grant, type LayerDecision, type TaskUse } from '../contracts/policy.ts';
 import type { Fault } from '../contracts/shape.ts';
 
 export type TaskKind = (typeof TASK_KINDS)[number];
-export const TASK_STATES = ['preparing', 'executing', 'checking', 'waiting_human', 'closed', 'skipped'] as const;
+// publishing: the result is accepted, and the writes that the envelope names can still be made.
+export const TASK_STATES = ['preparing', 'executing', 'checking', 'waiting_human', 'publishing', 'closed', 'skipped'] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 // Why a task waits: the gate asked, the check failed past the limit, or the result needs an approval.
 export type WaitReason = 'gate' | 'check' | 'approval';
@@ -40,6 +41,7 @@ export type TaskEvent =
   | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number> }
   | { type: 'ask' }
   | { type: 'human'; decision: 'answered' | 'accept' | 'return' | 'stop' }
+  | { type: 'finish' } // the publication is over: nothing more will be written
   | { type: 'expire' };
 
 export type RowDraft = { kind: EventKind; data?: Record<string, string | number | boolean> };
@@ -81,7 +83,7 @@ export function checkInputs(manifest: Manifest, inputs: Inputs): InputError[] {
 export function grantsOf(manifest: Manifest, inputs: Inputs): Grant[] {
   return (manifest.permissions.write ?? []).map((w) => ({
     action: w.action,
-    target: w.target.replace(/\{([^{}]*)\}/g, (_, name: string) => String(inputs[name] ?? '')),
+    target: w.target.replace(/\{([^{}]*)\}/g, (_, name: string) => plainValue(String(inputs[name] ?? ''))),
     env: w.env,
     limit: w.limit,
     confirm: w.confirm,
@@ -124,6 +126,15 @@ function close(task: Task, label: ResultLabel, before: RowDraft[], reason?: stri
   return { task: { ...rest, state: 'closed', label }, rows };
 }
 
+// The result of a task is accepted: by the check or by the human. A task whose envelope names
+// writes stays open for the publication of the result; the label is already known. A task
+// without writes closes at once.
+function accept(task: Task, label: ResultLabel, before: RowDraft[]): Step {
+  if (task.envelope.length === 0) return close(task, label, before);
+  const { waiting: _, ...rest } = task;
+  return { task: { ...rest, state: 'publishing', label }, rows: before };
+}
+
 function back(task: Task, before: RowDraft[], reason: 'check_fail' | 'human', count: boolean): Step {
   const returns = task.returns + (count ? 1 : 0);
   const { waiting: _, ...rest } = task;
@@ -161,7 +172,7 @@ export function step(task: Task, event: TaskEvent): Step {
     case 'check': {
       if (task.state !== 'checking' || done === undefined) return refuse(task);
       const detail = event.detail ?? {};
-      if (event.result === 'PASS') return close(task, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
+      if (event.result === 'PASS') return accept(task, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
       // No answer means "not ready". The silence of a check is never a success.
       const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { ...detail, check_kind: done.kind } };
       if (task.returns < done.retries) return back(task, [answer], 'check_fail', true);
@@ -174,15 +185,21 @@ export function step(task: Task, event: TaskEvent): Step {
       if (task.state !== 'executing') return refuse(task);
       return { task: { ...task, state: 'waiting_human', waiting: 'gate' }, rows: [{ kind: 'task.waiting_human', data: { reason: 'gate' } }] };
     }
+    case 'finish': {
+      if (task.state !== 'publishing') return refuse(task);
+      return close(task, task.label ?? 'not_verified', []);
+    }
     case 'human': {
-      if (task.state !== 'waiting_human') return refuse(task);
       const decided: RowDraft = { kind: 'task.human_decision', data: { decision: event.decision } };
+      // The human can stop a publication. The result keeps the label that it already has.
+      if (task.state === 'publishing') return event.decision === 'stop' ? close(task, task.label ?? 'not_verified', [decided], 'stopped') : refuse(task);
+      if (task.state !== 'waiting_human') return refuse(task);
       if (task.waiting === 'gate') {
         if (event.decision !== 'answered') return refuse(task);
         const { waiting: _, ...rest } = task;
         return { task: { ...rest, state: 'executing' }, rows: [decided] };
       }
-      if (event.decision === 'accept') return close(task, 'approved_by_human', [decided]);
+      if (event.decision === 'accept') return accept(task, 'approved_by_human', [decided]);
       if (event.decision === 'stop') return close(task, 'not_verified', [decided], 'stopped');
       // One more try: after a human check it counts as a send-back, after the limit it does not.
       if (event.decision === 'return') return back(task, [decided], 'human', task.waiting === 'approval');
@@ -190,15 +207,17 @@ export function step(task: Task, event: TaskEvent): Step {
     }
     case 'expire': {
       if (task.state === 'closed' || task.state === 'skipped') return refuse(task);
-      return close(task, 'not_verified', [], 'expired');
+      // A publication past its term: the result was accepted before, its label stays.
+      return close(task, task.state === 'publishing' ? (task.label ?? 'not_verified') : 'not_verified', [], 'expired');
     }
   }
 }
 
-// The policy decision for one action of a task. The envelope acts only while the task executes.
+// The policy decision for one action of a task. The envelope acts while the task executes and
+// while its result is published.
 // A use of a grant is counted in the task.
 export function decideFor(task: Task, action: Action, layers: LayerDecision[]): { task: Task; decision: Decision; rows: RowDraft[] } {
-  const open = task.state === 'executing' && task.envelope.length > 0;
+  const open = (task.state === 'executing' || task.state === 'publishing') && task.envelope.length > 0;
   const decision = decide(open ? { action, layers, envelope: task.envelope, task: task.use } : { action, layers });
   const rows: RowDraft[] = [
     { kind: 'policy.decision', data: { outcome: decision.outcome, action_kind: action.kind, env: action.env.name } },
@@ -213,7 +232,7 @@ export function decideFor(task: Task, action: Action, layers: LayerDecision[]): 
 // The one confirmation of a grant by the human. A grant that the manifest does not name cannot be confirmed.
 export function confirmGrant(task: Task, key: string): Task {
   // Only an open task takes a confirmation: nothing is written for a task that is closed or not started.
-  if (task.state !== 'executing' && task.state !== 'waiting_human') return task;
+  if (task.state !== 'executing' && task.state !== 'waiting_human' && task.state !== 'publishing') return task;
   const named = task.envelope.some((g) => grantKey(g.action, g.target, g.env) === key && g.confirm === 'once');
   if (!named || task.use.confirmed.includes(key)) return task;
   return { ...task, use: { ...task.use, confirmed: [...task.use.confirmed, key] } };

@@ -38,10 +38,10 @@ const ITEM: Record<string, string> = {
   text: 'free text (optional)',
 };
 
-// The input of a scenario task that executes; null for any other task.
+// The input of a scenario task that executes or publishes its result; null for any other task.
 export function taskInput(task: Task, collected: Record<string, unknown> | null, command = 'reins'): TaskInput | null {
   const m = task.manifest;
-  if (m === undefined || task.state !== 'executing') return null;
+  if (m === undefined || (task.state !== 'executing' && task.state !== 'publishing')) return null;
   const report: ReportSpec = { check: m.done.kind, returns_left: Math.max(0, m.done.retries - task.returns) };
   const protocol = ['Do the work that the instructions describe. Use the collected data and the source that it names.'];
   if (m.done.kind === 'citations') {
@@ -61,8 +61,9 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
   }
   protocol.push(
     `Submit the report with: ${command} report ${task.id} <file> (or - for the standard input).`,
-    'Exit code 0: the task is closed. Exit code 2: not ready; read `answer`, correct the report and submit it again.',
-    'Write to no system before the task is closed and the human approves the result.',
+    'Exit code 0: the check passed; the task is closed or, with `state: "publishing"`, waits for the publication. Exit code 2: not ready; read `answer`, correct the report and submit it again.',
+    'Write to no system before the report passes. When the answer says `state: "publishing"`, the writes of `writes` can be made on the word of the human; no other write.',
+    `After the publication, or when the human wants none, run: ${command} finish ${task.id}.`,
   );
   const input: TaskInput = { task: task.id, scenario: m.name, title: m.title, collected: collected ?? {}, report, writes: task.envelope, protocol };
   if (m.description !== undefined) input.description = m.description;

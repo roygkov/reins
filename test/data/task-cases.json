@@ -78,6 +78,9 @@
    {
     "type": "check",
     "result": "PASS"
+   },
+   {
+    "type": "finish"
    }
   ],
   "expect": {
@@ -124,6 +127,9 @@
    {
     "type": "check",
     "result": "PASS"
+   },
+   {
+    "type": "finish"
    }
   ],
   "expect": {
@@ -250,6 +256,9 @@
    {
     "type": "human",
     "decision": "accept"
+   },
+   {
+    "type": "finish"
    }
   ],
   "expect": {
@@ -645,6 +654,9 @@
     "result": "PASS"
    },
    {
+    "type": "finish"
+   },
+   {
     "type": "report",
     "size": 512,
     "fp": "9f3ac2d41b07"
@@ -829,6 +841,273 @@
    "returns": 0,
    "errors": 1,
    "rows": []
+  }
+ },
+ {
+  "name": "PASS with writes in the envelope opens the publication, the task stays open",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   }
+  ],
+  "expect": {
+   "state": "publishing",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS"
+   ]
+  }
+ },
+ {
+  "name": "the agent ends the publication, the task closes with the label of the check",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   },
+   {
+    "type": "finish"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS",
+    "policy.envelope_closed",
+    "task.closed label=verified_form"
+   ]
+  }
+ },
+ {
+  "name": "during the publication no report, check answer or approval is taken",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   },
+   {
+    "type": "report",
+    "size": 1,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "FAIL"
+   },
+   {
+    "type": "human",
+    "decision": "return"
+   },
+   {
+    "type": "ask"
+   }
+  ],
+  "expect": {
+   "state": "publishing",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 4,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS"
+   ]
+  }
+ },
+ {
+  "name": "a publication past its term closes with the label that the check gave",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   },
+   {
+    "type": "expire"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS",
+    "policy.envelope_closed",
+    "task.closed label=verified_form reason=expired"
+   ]
+  }
+ },
+ {
+  "name": "the human stops a publication",
+  "task": "review",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "report",
+    "size": 512,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "check",
+    "result": "PASS"
+   },
+   {
+    "type": "human",
+    "decision": "stop"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "verified_form",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1",
+    "task.report_submitted fp=9f3ac2d41b07 size=512",
+    "check.started check_kind=citations",
+    "check.answered check_kind=citations result=PASS",
+    "task.human_decision decision=stop",
+    "policy.envelope_closed",
+    "task.closed label=verified_form reason=stopped"
+   ]
+  }
+ },
+ {
+  "name": "finish is refused for a task that is not in the publication",
+  "task": "review",
+  "events": [
+   {
+    "type": "finish"
+   },
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 3,
+    "bytes": 120
+   },
+   {
+    "type": "finish"
+   }
+  ],
+  "expect": {
+   "state": "executing",
+   "returns": 0,
+   "errors": 2,
+   "rows": [
+    "task.prepared bytes=120 outputs=3",
+    "task.started level=medium",
+    "policy.envelope_opened grants=1"
+   ]
+  }
+ },
+ {
+  "name": "a scenario without writes closes at the approval, with no publication",
+  "task": "minimal",
+  "events": [
+   {
+    "type": "prepared",
+    "work": true,
+    "outputs": 0,
+    "bytes": 0
+   },
+   {
+    "type": "report",
+    "size": 10,
+    "fp": "9f3ac2d41b07"
+   },
+   {
+    "type": "human",
+    "decision": "accept"
+   },
+   {
+    "type": "finish"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "approved_by_human",
+   "returns": 0,
+   "errors": 1,
+   "rows": null
   }
  }
 ]

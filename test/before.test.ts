@@ -7,9 +7,11 @@ import path from 'node:path';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { openScenario, submitReport, loadTask, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, openScenario, submitReport, loadTask, type Runtime } from '../src/core/runtime.ts';
 import { afterAction, beforeAction, type ClientTools, type ToolCall } from '../src/client/before.ts';
 import { findRoot, loadConfig } from '../src/gate/index.ts';
+import { grantsOf } from '../src/core/task.ts';
+import type { Manifest } from '../src/contracts/manifest.ts';
 import { loadCases } from './cases.ts';
 
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'before-'));
@@ -133,7 +135,9 @@ test('before: a closed task has no envelope for a tool call', () => {
   const b = box();
   const id = open(b);
   const done = submitReport(b.rt, id, JSON.stringify({ items: [] }));
-  assert.ok('step' in done && done.step.task.state === 'closed');
+  assert.ok('step' in done && done.step.task.state === 'publishing');
+  const finished = applyEvent(b.rt, id, { type: 'finish' }, 'agent');
+  assert.ok('task' in finished && finished.task.state === 'closed');
   const r = beforeAction(b.rt, call(b, 'tracker__add_comment', { change: '7' }), CLIENT);
   assert.deepEqual([r.outcome, r.envelope, r.task], ['ask', 'none', undefined]);
 });
@@ -231,4 +235,69 @@ test('before: the answer to a question belongs to the session that asked', () =>
   assert.deepEqual(afterAction(b.rt, two, CLIENT), { confirmed: false });
   assert.deepEqual(loadTask(b.rt, id)?.use, { confirmed: [], used: {} });
   assert.deepEqual(afterAction(b.rt, one, CLIENT), { confirmed: true });
+});
+
+test('before: after the check the named writes of the task are published under one approval', () => {
+  const b = box();
+  const id = open(b);
+  const comment = call(b, 'tracker__add_comment', { change: '7' });
+  const done = submitReport(b.rt, id, JSON.stringify({ items: [] }));
+  assert.ok('step' in done && done.step.task.state === 'publishing');
+  const first = beforeAction(b.rt, comment, CLIENT);
+  assert.deepEqual([first.outcome, first.envelope, first.scope, first.task], ['ask', 'confirm', 'task', id]);
+  assert.deepEqual(afterAction(b.rt, comment, CLIENT), { confirmed: true });
+  const second = beforeAction(b.rt, comment, CLIENT);
+  assert.deepEqual([second.outcome, second.envelope], ['allow', 'applied']);
+  assert.equal(loadTask(b.rt, id)?.use.used['comment change/7 work'], 2);
+});
+
+test('before: a project path written with percent signs names the same target', () => {
+  const b = box();
+  const id = open(b);
+  const r = beforeAction(b.rt, call(b, 'tracker__add_comment', { change: '%37' }), CLIENT);
+  assert.deepEqual([r.envelope, r.task, r.grant], ['confirm', id, 'comment change/7 work']);
+  const odd = beforeAction(b.rt, call(b, 'tracker__add_comment', { change: '7%0Ax' }), CLIENT);
+  assert.deepEqual([odd.outcome, odd.task, odd.grant], ['ask', undefined, undefined], 'a percent form of a line break is not opened and names no target of the task');
+});
+
+test('before: a percent form in the input of the task and in the tool call is one target', () => {
+  const manifest = structuredClone(manifests.get('review')) as Manifest;
+  // The grant of the task and the key of a tool call are filled the same way.
+  assert.equal(grantsOf(manifest, { change_id: 'a%2Fb' })[0]?.target, 'change/a/b');
+  assert.equal(grantsOf(manifest, { change_id: 'a/b' })[0]?.target, 'change/a/b');
+  assert.equal(grantsOf(manifest, { change_id: '100%' })[0]?.target, 'change/100%', 'a value that is no percent form stays as it is');
+  const b = box();
+  const id = open(b);
+  for (const change of ['7', '%37']) {
+    const r = beforeAction(b.rt, call(b, 'tracker__add_comment', { change }), CLIENT);
+    assert.deepEqual([r.envelope, r.task], ['confirm', id], change);
+  }
+});
+
+test('before: the envelope of a publication that nobody ended stops to answer', () => {
+  const b = box();
+  const id = open(b);
+  const comment = call(b, 'tracker__add_comment', { change: '7' });
+  submitReport(b.rt, id, JSON.stringify({ items: [] }));
+  beforeAction(b.rt, comment, CLIENT);
+  afterAction(b.rt, comment, CLIENT);
+  assert.equal(beforeAction(b.rt, comment, CLIENT).envelope, 'applied');
+  const file = path.join(b.rt.stateDir, 'tasks', `${id}.json`);
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  fs.utimesSync(file, old, old);
+  const late = beforeAction(b.rt, comment, CLIENT);
+  assert.deepEqual([late.outcome, late.envelope, late.task], ['ask', 'none', undefined]);
+  // A task that executes has no such term: the term of a task is the business of the task loop.
+  const other = open(b);
+  fs.utimesSync(path.join(b.rt.stateDir, 'tasks', `${other}.json`), old, old);
+  assert.equal(beforeAction(b.rt, comment, CLIENT).task, other);
+});
+
+test('before: a percent form of a space stays as it is on both sides', () => {
+  const manifest = structuredClone(manifests.get('review')) as Manifest;
+  assert.equal(grantsOf(manifest, { change_id: 'a%20b' })[0]?.target, 'change/a%20b');
+  assert.equal(grantsOf(manifest, { change_id: 'a%7Bb' })[0]?.target, 'change/a%7Bb');
+  const b = box();
+  const r = beforeAction(b.rt, call(b, 'tracker__add_comment', { change: 'a%20b' }), CLIENT);
+  assert.deepEqual([r.outcome, r.rule], ['ask', 'default.write'], 'the value is a plain target, not an unknown one');
 });
