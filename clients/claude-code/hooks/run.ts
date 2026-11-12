@@ -120,9 +120,14 @@ function pre(): void {
     if ((call.tool === 'Agent' || call.tool === 'Task') && r.outcome === 'allow') {
       // Without a type the client starts its general-purpose agent, and names it so when it ends.
       const role = typeof call.input.subagent_type === 'string' ? call.input.subagent_type : 'general-purpose';
-      const started = executorStarted(rt, { cwd: call.cwd, ...(call.session !== undefined ? { session: call.session } : {}), ...(role !== undefined ? { role } : {}) });
+      // A fork runs on the model of the session whatever the call names: the name says nothing.
+      const model = typeof call.input.model === 'string' && role !== 'fork' ? call.input.model : undefined;
+      const started = executorStarted(rt, { cwd: call.cwd, ...(call.session !== undefined ? { session: call.session } : {}), ...(role !== undefined ? { role } : {}), ...(model !== undefined ? { model } : {}) });
       if (started.outcome === 'deny') {
-        say('deny', `reins: ${started.rule}: the task ${started.task} has no place for this subordinate executor`);
+        // The level is not a place: the agent can start the same executor with a lower model.
+        say('deny', started.rule === 'executor.level'
+          ? `reins: executor.level: the model of this subordinate executor is above the level of the task ${started.task} or the packs do not name it; read the level with \`reins input ${started.task}\``
+          : `reins: ${started.rule}: the task ${started.task} has no place for this subordinate executor`);
         return;
       }
     }

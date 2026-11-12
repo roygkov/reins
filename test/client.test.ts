@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { openScenario, type Runtime } from '../src/core/runtime.ts';
+import { openScenario, raiseLevel, type Runtime } from '../src/core/runtime.ts';
 import { resolveQueued } from '../src/core/queue.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { executorStarted } from '../src/client/executors.ts';
@@ -183,6 +183,78 @@ test('client: a subordinate that started under a scenario keeps that task as its
   const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision');
   assert.deepEqual(rows.map((r) => [r.executor, r.parent, r.role]), [['sub', opened.task.id, 'reviewer']]);
   for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+});
+
+// ---- The model of a subordinate executor.
+
+const NAMES = { weak: 'small', medium: 'mid', strong: 'big' };
+const leveled = (): { b: Box; task: string } => {
+  const b = box();
+  b.rt.merged.models = { ...NAMES };
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  return { b, task: opened.task.id };
+};
+const start = (b: Box, model?: string) => executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer', ...(model !== undefined ? { model } : {}) });
+
+test('client: a subordinate of a scenario does not start with a model above the level of the task', () => {
+  const { b, task } = leveled();
+  // The task has the middle level: the strong model is above it and takes no place.
+  assert.deepEqual(start(b, 'big'), { outcome: 'deny', rule: 'executor.level', task });
+  assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.started').length, 0);
+  // The model of the level and a model below it start.
+  assert.equal(start(b, 'mid').outcome, 'allow');
+  const low = leveled();
+  assert.equal(start(low.b, 'small').outcome, 'allow');
+});
+
+test('client: after the level of the task is raised the subordinate can have the model of the new level', () => {
+  const { b, task } = leveled();
+  assert.ok('task' in raiseLevel(b.rt, task));
+  assert.equal(start(b, 'big').outcome, 'allow');
+});
+
+test('client: a model that the packs do not name is not shown to be within the level: the subordinate does not start', () => {
+  const { b, task } = leveled();
+  assert.deepEqual(start(b, 'other'), { outcome: 'deny', rule: 'executor.level', task });
+  // The packs name no model at all: the same.
+  const bare = leveled();
+  bare.b.rt.merged.models = {};
+  assert.equal(start(bare.b, 'mid').rule, 'executor.level');
+});
+
+test('client: a subordinate without a named model and a subordinate of the free task are not judged by the level', () => {
+  const { b } = leveled();
+  assert.equal(start(b).outcome, 'allow');
+  const free = box();
+  free.rt.merged.models = { ...NAMES };
+  humanRequest(free.rt, { session: 's2', cwd: free.cwd });
+  assert.equal(executorStarted(free.rt, { session: 's2', cwd: free.cwd, role: 'reviewer', model: 'big' }).outcome, 'allow');
+});
+
+test('client: the stdio event of a subordinate carries the model', () => {
+  // The client process reads the packs from the files: the names of the models are written there.
+  const { b, task } = leveled();
+  const file = path.join(b.root, 'packs/organization/pack.json');
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), models: NAMES }));
+  const r = stdio(b, { event: 'executor_start', cwd: b.cwd, session: 's1', role: 'reviewer', model: 'big' });
+  assert.deepEqual(r, { outcome: 'deny', rule: 'executor.level', task });
+  assert.equal(stdio(b, { event: 'executor_start', cwd: b.cwd, session: 's1', role: 'reviewer', model: 'mid' }).outcome, 'allow');
+});
+
+test('client: the Claude Code adapter gives the model of an Agent call to the core, but not for a fork', () => {
+  const b = box();
+  const file = path.join(b.root, 'packs/organization/pack.json');
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), models: NAMES }));
+  assert.ok(openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 'live' }).ok);
+  const agent = (input: Record<string, unknown>): string => {
+    const out = spawnSync(process.execPath, [CLAUDE, 'pre'], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: input }), env: b.env, encoding: 'utf8' }).stdout;
+    return out === '' ? '' : JSON.parse(out).hookSpecificOutput.permissionDecisionReason ?? '';
+  };
+  assert.match(agent({ subagent_type: 'reviewer', model: 'big', prompt: 'x' }), /executor\.level/);
+  // A fork runs on the model of the session: the name of the call is not judged, the role is.
+  assert.match(agent({ subagent_type: 'fork', model: 'big', prompt: 'x' }), /executor\.role/);
+  assert.doesNotMatch(agent({ subagent_type: 'reviewer', model: 'mid', prompt: 'x' }), /executor\./);
 });
 
 test('client: an approval from the queue in a run without a window is a row of the journal', () => {

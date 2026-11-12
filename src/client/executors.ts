@@ -8,13 +8,15 @@
 // must keep its place and its parent.
 
 import { checkCitations } from '../check/citations.ts';
+import { LEVELS } from '../contracts/manifest.ts';
 import { loadTask, readCollected, type Runtime } from '../core/runtime.ts';
 import { currentScenario, withSession } from '../core/sessions.ts';
 import type { Task } from '../core/task.ts';
 import { sessionTask } from './session.ts';
 
 // `report`: the text of the report of a subordinate, when the client gives it.
-export type ExecutorEvent = { session?: string; cwd: string; role?: string; size?: number; report?: string };
+// `model`: the name of the model that the call asks for the subordinate, when the client gives it.
+export type ExecutorEvent = { session?: string; cwd: string; role?: string; size?: number; report?: string; model?: string };
 export type ExecutorReply = { outcome: 'allow' | 'deny'; rule: string; task: string };
 
 const STALE_MS = 60 * 60 * 1000; // an executor that did not report for this long has no place any more
@@ -28,6 +30,17 @@ function parentOf(rt: Runtime, session: string | undefined): Task | null {
   const id = currentScenario(rt, session);
   const task = id === undefined ? null : loadTask(rt, id);
   return task !== null && task.session === session && task.state !== 'closed' && task.state !== 'skipped' ? task : loadTask(rt, sessionTask(rt, session));
+}
+
+// The model that a call names for a subordinate of a scenario is not above the level of the task.
+// The packs name the model of each level; a name that they do not give is not shown to be within
+// the level. A call that names no model is not judged: the client decides the model, and the
+// harness does not see it.
+function aboveLevel(rt: Runtime, parent: Task, model: string): boolean {
+  const named = LEVELS.filter((l) => rt.merged.models[l] === model).map((l) => LEVELS.indexOf(l));
+  if (named.length === 0) return true;
+  // One name can stand for several levels: the lowest one counts.
+  return Math.min(...named) > LEVELS.indexOf(parent.level ?? parent.manifest?.model.level ?? 'medium');
 }
 
 function row(rt: Runtime, kind: 'executor.started' | 'executor.report_received', task: Task | null, id: string, role: string, session: string | undefined, data?: Record<string, number>): void {
@@ -46,6 +59,7 @@ export function executorStarted(rt: Runtime, e: ExecutorEvent, now: number = Dat
   // A scenario task that does not execute (it is checked, it waits for the human, it publishes)
   // starts no executor: the session is still in the scenario, so the free task does not answer.
   if (parent.state !== 'executing') return { outcome: 'deny', rule: 'executor.state', task: parent.id };
+  if (parent.manifest !== undefined && e.model !== undefined && aboveLevel(rt, parent, e.model)) return { outcome: 'deny', rule: 'executor.level', task: parent.id };
   const rule = withSession(rt, e.session, (file) => {
     const running = (file.executors ?? []).filter((x) => now - x.at <= STALE_MS);
     if (parent.manifest !== undefined) {

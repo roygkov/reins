@@ -46,7 +46,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
     case 'before_compaction': return beforeCompaction(rt, e);
     case 'session_end': return sessionEnd(rt, e);
     case 'executor_start': {
-      const r = executorStarted(rt, { cwd: head.cwd, ...session, ...(typeof value.role === 'string' ? { role: value.role } : {}) });
+      const r = executorStarted(rt, { cwd: head.cwd, ...session, ...(typeof value.role === 'string' ? { role: value.role } : {}), ...(typeof value.model === 'string' ? { model: value.model } : {}) });
       return { outcome: r.outcome, rule: r.rule, task: r.task };
     }
     case 'executor_report':
