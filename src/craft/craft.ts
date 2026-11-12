@@ -17,7 +17,7 @@ import { listRecords, retireRecord } from '../memory/store.ts';
 // `repeated_approval`: a rule asked many times and the human said "yes" every time.
 // `tool_fails_often`: one tool ended with an error many times.
 // `repeated_chain`: the same three tools of connectors, in the same order, in several free tasks.
-export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
+export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'level_too_high' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
@@ -38,6 +38,9 @@ const CHAIN = 3; // the length of a chain, in tools
 const MIN_CHECKS = 4; // a scenario with this many checks ...
 const FAIL_SHARE = 0.5; // ... and this share of FAIL: its instructions do not lead to a ready report
 const MIN_RAISES = 3; // a scenario with this many raises of the level of the model ...
+const MIN_SMOOTH = 10; // a scenario with this many tasks above the weak level, none came back and none raised the level: the level is too high
+const MIN_LOWERED = 5; // the tasks at the lowered level that a measure of that change needs
+const LEVEL_RANK: Readonly<Record<string, number>> = { weak: 0, medium: 1, strong: 2 };
 const RAISE_SHARE = 0.5; // ... in this share of its tasks: the level of its manifest is too low
 const MIN_CONTRACTS = 3; // contracts with one name: the work repeats, it can be a scenario
 const UNUSED_DAYS = 30; // a memory record that no report cited for this long
@@ -46,11 +49,11 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number>; restored: Set<string> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number>; restored: Set<string>; levels: Map<string, Map<string, number>> };
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map(), restored: new Set() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map(), restored: new Set(), levels: new Map() };
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
   // The tools of the connectors that each free task called, in order. A task of a scenario repeats by design: it is not counted.
@@ -98,6 +101,11 @@ function count(rows: JournalRow[]): Counts {
     } else if (row.kind === 'task.contract_approved') add(c.contracts, row.scenario);
     else if (row.kind === 'task.started') {
       add(c.started, row.scenario);
+      // The level of the model that the task started at; a start without a level is counted under "unknown".
+      const level = typeof row.data?.level === 'string' ? row.data.level : 'unknown';
+      const at = c.levels.get(row.scenario) ?? new Map<string, number>();
+      at.set(level, (at.get(level) ?? 0) + 1);
+      c.levels.set(row.scenario, at);
       if (row.task !== undefined) startedTasks.add(row.task);
     }
     else if (row.kind === 'task.returned') add(c.returned, row.scenario);
@@ -143,6 +151,15 @@ export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
     if ((set.keep ?? []).includes(key)) continue;
     const started = c.started.get(key) ?? 0;
     if (n >= (set.min_raises ?? MIN_RAISES) && started > 0 && n / started >= RAISE_SHARE) out.push({ pattern: 'level_too_low', key, n });
+  }
+  // The other side: every task of a scenario ran above the weak level, none came back and none
+  // asked for more. The work may need less. The level that the journal does not name is not known to be high.
+  for (const [key, n] of c.started) {
+    if ((set.keep ?? []).includes(key) || n < (set.min_smooth ?? MIN_SMOOTH)) continue;
+    if ((c.returned.get(key) ?? 0) > 0 || (c.raised.get(key) ?? 0) > 0) continue;
+    const levels = c.levels.get(key);
+    if (levels === undefined || [...levels.keys()].some((level) => !((LEVEL_RANK[level] ?? 0) > 0))) continue;
+    out.push({ pattern: 'level_too_high', key, n });
   }
   return out;
 }
@@ -372,6 +389,18 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
     const b = before.started.get(p.key) ?? 0;
     if (a < MIN_RAISES || b === 0) return 'not_measured';
     return compare((after.raised.get(p.key) ?? 0) / a, (before.raised.get(p.key) ?? 0) / b);
+  }
+  if (p.pattern === 'level_too_high') {
+    // The human lowers the level in the manifest, some time after the acceptance. Only the tasks
+    // that started below the level of before say something: the others ran before the change.
+    const top = Math.max(-1, ...[...(before.levels.get(p.key)?.keys() ?? [])].map((level) => LEVEL_RANK[level] ?? -1));
+    let lowered = 0;
+    for (const [level, n] of after.levels.get(p.key) ?? []) if ((LEVEL_RANK[level] ?? top) < top) lowered += n;
+    // Too few of them, or none (the change was not made): nothing is measured.
+    if (lowered < MIN_LOWERED) return 'not_measured';
+    // Before the change the scenario had no return and no raise: any one after it is more than
+    // before. A lower level that brings one costs more than it saves.
+    return (after.returned.get(p.key) ?? 0) + (after.raised.get(p.key) ?? 0) > 0 ? 'worse' : 'better';
   }
   if (p.pattern === 'record_unused') {
     // The record went out of the work. The human brought it back: the change was wrong. Nobody

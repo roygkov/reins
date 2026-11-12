@@ -11,7 +11,7 @@ import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
-import { applyDue, detect, listProposals, measure, propose, resolveProposal } from '../src/craft/craft.ts';
+import { applyDue, detect, listProposals, measure, propose, resolveProposal, proposalLine } from '../src/craft/craft.ts';
 import { addRecord, listRecords, restoreRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
@@ -523,4 +523,51 @@ test('craft: a record that went stale and nobody brought back is a better memory
   const kept = stale(other);
   rows(other, NOW + DAY, [...question('default.write'), { kind: 'memory.record_changed', data: { record: kept.record, type: 'case', state: 'active', step: 1 } }, { kind: 'memory.record_changed', data: { record: 'm0000000000', type: 'pitfall', state: 'active' } }, { kind: 'memory.record_changed', data: { record: kept.record, type: 'pitfall', state: 'active', wrong: 1 } }]);
   assert.deepEqual(measure(other.rt, NOW + 8 * DAY).map((p) => p.effect), ['better']);
+});
+
+// ---- The level of the model is higher than the work needs.
+
+// A row of a scenario with its data, as the core writes it.
+const fact = (kind: string, scenario: string, data?: Record<string, unknown>) => ({ kind, scenario, scenario_v: 1, ...(data !== undefined ? { data } : {}) });
+
+test('craft: a scenario whose tasks never came back and never raised the level has a level that is too high', () => {
+  const b = box();
+  const started = (scenario: string, level?: string) => fact('task.started', scenario, level === undefined ? undefined : { level });
+  // Ten tasks at the strong level, no return and no raise. Another scenario came back once. A third runs at the weak level.
+  rows(b, NOW - DAY, [...times(10, [started('change-review', 'strong')]), ...times(10, [started('draft-message', 'strong')]), fact('task.returned', 'draft-message', { n: 1, reason: 'check_fail' }), ...times(10, [started('wrapup', 'weak')])]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file)), [{ pattern: 'level_too_high', key: 'change-review', n: 10 }]);
+  // The packs: the threshold, and the scenario that the craft leaves alone. Fewer tasks than the threshold say nothing.
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_smooth: 11 }), []);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { keep: ['change-review'] }), []);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_smooth: 5 }).map((p) => p.key), ['change-review']);
+  // A task whose level the journal does not name is not known to be above the weak level.
+  const unnamed = box();
+  rows(unnamed, NOW - DAY, times(10, [started('change-review')]));
+  assert.deepEqual(detect(readJournal(unnamed.rt.journal.file)), []);
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.n, p.change]), [['level_too_high', 'change-review', 10, undefined]]);
+  assert.match(proposalLine(made[0] as never), /level_too_high of "change-review"/);
+  assert.equal(resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW), true);
+  // The human did not lower the level: nothing changed, nothing is measured.
+  rows(b, NOW + 2 * DAY, times(4, [started('change-review', 'strong')]));
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY), []);
+  for (const row of readJournal(b.rt.journal.file).filter((r) => r.kind.startsWith('craft.'))) assert.deepEqual(validateRow(row), []);
+});
+
+test('craft: a lowered level that brings returns or raises is worse, and one that brings none is better', () => {
+  const started = (scenario: string, level: string) => fact('task.started', scenario, { level });
+  const lowered = (after: Record<string, unknown>[]): string[] => {
+    const b = box();
+    rows(b, NOW - DAY, times(10, [started('change-review', 'strong')]));
+    const made = propose(b.rt, NOW);
+    resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
+    rows(b, NOW + 2 * DAY, after);
+    return measure(b.rt, NOW + 8 * DAY).map((p) => `${p.pattern} ${p.effect}`);
+  };
+  assert.deepEqual(lowered(times(5, [started('change-review', 'medium')])), ['level_too_high better']);
+  assert.deepEqual(lowered([...times(5, [started('change-review', 'medium')]), fact('executor.level_raised', 'change-review', { level: 'strong' })]), ['level_too_high worse']);
+  assert.deepEqual(lowered([...times(5, [started('change-review', 'medium')]), fact('task.returned', 'change-review', { n: 1, reason: 'check_fail' })]), ['level_too_high worse']);
+  assert.deepEqual(lowered(times(4, [started('change-review', 'medium')])), [], 'too few tasks after the change');
+  // The human lowered the level some days after the acceptance: the tasks at the old level between do not hide the change.
+  assert.deepEqual(lowered([...times(6, [started('change-review', 'strong')]), ...times(5, [started('change-review', 'medium')])]), ['level_too_high better']);
 });
