@@ -262,6 +262,20 @@ test('budget: what a session spent before the harness saw it is not counted', ()
   assert.equal(counted(), 1500, 'a line after the first look is counted');
 });
 
+test('budget: the first look at a session sets its time, also when the look finds nothing to count', () => {
+  const b = box();
+  const transcript = path.join(b.root, 'new-session.jsonl');
+  fs.writeFileSync(transcript, '');
+  const post = () => spawnSync(process.execPath, [CLAUDE, 'post'], { input: JSON.stringify({ session_id: 'fresh', cwd: b.cwd, hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: {}, transcript_path: transcript }), env: b.env, encoding: 'utf8' });
+  const counted = (): number => readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost').reduce((n, r) => n + Number((r.data as { tokens: number }).tokens), 0);
+  // The transcript is empty at the first look: nothing to count, but the session is known from now on.
+  post();
+  const line = `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'm1', usage: { input_tokens: 700, output_tokens: 300 } } })}\n`;
+  fs.appendFileSync(transcript, line);
+  post();
+  assert.equal(counted(), 1000, 'a line after the first look is counted, though the first look counted nothing');
+});
+
 test('budget: another transcript file is counted from its start', () => {
   const b = box(LIMITED);
   const line = `${JSON.stringify({ type: 'assistant', message: { id: 'm1', usage: { input_tokens: 100, output_tokens: 50 } } })}\n`;

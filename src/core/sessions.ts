@@ -69,11 +69,16 @@ export function withSession<T>(rt: Runtime, session: string | undefined, change:
   try {
     // A session that the harness sees first gets the time of this look: what the session did
     // before it is not the business of the harness.
-    const { next, result } = change(readSession(rt, session) ?? { since: new Date().toISOString() });
+    const known = readSession(rt, session);
+    const first: SessionFile = { since: new Date().toISOString() };
+    const { next, result } = change(known ?? first);
     if (next === 'remove') fs.rmSync(file, { force: true });
-    else if (next !== null) {
+    // The time of the first look is kept also when the caller changes nothing: a later look must
+    // not take its own time for the first one.
+    const keep = next !== null ? next : known === null ? first : null;
+    if (keep !== null && next !== 'remove') {
       const tmp = `${file}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(next));
+      fs.writeFileSync(tmp, JSON.stringify(keep));
       fs.renameSync(tmp, file);
     }
     return result;

@@ -170,7 +170,7 @@ test('claude-code: an adapter that cannot start asks the human before an action'
   const p = spawnSync(process.execPath, [path.join(copy, 'hooks/hook.ts'), 'pre'], { input: event(null, 'PreToolUse', 'Bash', { command: 'ls' }), encoding: 'utf8', env: { PATH: process.env.PATH ?? '', REINS_CONFIG: path.join(SB, 'no-config.json') } });
   assert.equal(p.status, 0);
   assert.equal(JSON.parse(p.stdout).hookSpecificOutput.permissionDecision, 'ask');
-  const q = spawnSync(process.execPath, [path.join(copy, 'hooks/hook.ts'), 'post'], { input: '', encoding: 'utf8', env: { PATH: process.env.PATH ?? '' } });
+  const q = spawnSync(process.execPath, [path.join(copy, 'hooks/hook.ts'), 'post'], { input: '', encoding: 'utf8', env: { PATH: process.env.PATH ?? '', REINS_CONFIG: path.join(SB, 'no-config.json') } });
   assert.deepEqual([q.status, q.stdout], [0, '']);
 });
 
