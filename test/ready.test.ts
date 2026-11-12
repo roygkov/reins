@@ -13,6 +13,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import { validateManifest } from '../src/contracts/manifest.ts';
 import { applyEvent, loadTask, openScenario, runCheck, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
 import { dueChecks, sweep } from '../src/core/sweep.ts';
+import { taskInput } from '../src/client/input.ts';
 import { runCollect, sandboxProfile } from '../src/core/collect.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { loadCases } from './cases.ts';
@@ -26,7 +27,7 @@ const TOOLS = { 'tracker__add_comment': { kind: 'write', action: 'comment', targ
 const REPORT = JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'the first line of the file', text: 'x' }] });
 
 type Box = { rt: Runtime; root: string; cwd: string };
-type Opts = { collect?: string; check?: string; done?: Record<string, unknown>; organization?: Record<string, unknown> };
+type Opts = { collect?: string; check?: string; done?: Record<string, unknown>; output?: Record<string, unknown>; organization?: Record<string, unknown> };
 let n = 0;
 function box(o: Opts = {}): Box {
   n += 1;
@@ -44,7 +45,7 @@ function box(o: Opts = {}): Box {
     const file = path.join(root, 'packs', rel);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (rel.endsWith('.sh')) fs.writeFileSync(file, collect.replaceAll('$OUT', out).replaceAll('$WORK', cwd), { mode: 0o755 });
-    else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), ...(o.done !== undefined ? { done: o.done } : {}) }));
+    else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), ...(o.done !== undefined ? { done: o.done } : {}), ...(o.output !== undefined ? { output: o.output } : {}) }));
     else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
     else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), tools: TOOLS, ...(o.organization ?? {}) }));
     else fs.writeFileSync(file, JSON.stringify(value));
@@ -507,4 +508,48 @@ test('ready: the term of an answer and the soak are numbers of minutes in the ma
   assert.deepEqual(errors({ kind: 'human', retries: 1, valid_minutes: 10 }), ['not_allowed done.valid_minutes']);
   assert.deepEqual(errors({ kind: 'external', check: 'tests', retries: 1, valid_minutes: 0, soak_minutes: 1441 }), ['not_in_range done.valid_minutes', 'not_in_range done.soak_minutes']);
   assert.deepEqual(errors({ kind: 'external', check: 'tests', retries: 1, valid_minutes: '5', soak_minutes: 1.5 }), ['not_integer done.valid_minutes', 'not_integer done.soak_minutes']);
+});
+
+// ---- A collected text is a source of the citation check.
+
+const FIELDS = { format: 'list', max_items: 10, fields: { severity: ['blocking', 'should-fix', 'note'], confidence: ['confirmed', 'likely'] } };
+
+test('ready: a quote of a collected text passes the citation check of a task', () => {
+  const out = JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [{ author: 'ann', body: 'The proxy of version 1.27 rejects unknown fields' }], worktree: '$WORK' }, flags: { has_new_commits: true } });
+  const done = { kind: 'citations', retries: 0, source: 'worktree', texts: ['discussion', 'diff'], reject: { severity: ['blocking'] }, unquoted: { severity: ['note'] } };
+  const run = (items: unknown[]) => {
+    const b = box({ done, output: FIELDS, collect: `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${out}'\n` });
+    const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+    assert.ok(opened.ok, JSON.stringify(opened));
+    const r = submitReport(b.rt, opened.task.id, JSON.stringify({ items }));
+    assert.ok('step' in r && r.answer !== undefined);
+    return [r.answer.result, ...r.answer.faults.map((f) => f.fault)];
+  };
+  // The executor learns the texts and the deciding values from the input of its task.
+  const shown = box({ done, output: FIELDS });
+  const task = openScenario(shown.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(task.ok);
+  const input = taskInput(task.task, {});
+  assert.deepEqual([input?.report.texts, input?.report.reject, input?.report.unquoted], [done.texts, done.reject, done.unquoted]);
+  assert.match(input?.report.item?.source ?? '', /report\.texts/);
+  assert.equal(input?.protocol.filter((line) => /report\.(texts|reject|unquoted)/.test(line)).length, 3);
+  const base = { severity: 'should-fix', confidence: 'confirmed' };
+  assert.deepEqual(run([{ ...base, source: 'discussion', quote: 'rejects unknown fields', text: 'x' }]), ['PASS']);
+  assert.deepEqual(run([{ ...base, source: 'discussion', quote: 'ignores unknown fields', text: 'x' }]), ['FAIL', 'not_found']);
+  // An output that the manifest does not name as a text is no source.
+  assert.deepEqual(run([{ ...base, source: 'task', quote: 'rejects unknown fields', text: 'x' }]), ['FAIL', 'no_text']);
+  assert.deepEqual(run([{ ...base, severity: 'blocking', source: 'discussion', quote: 'rejects unknown fields', text: 'x' }]), ['FAIL', 'rejected']);
+  assert.deepEqual(run([{ ...base, severity: 'note', text: 'not verified' }]), ['PASS']);
+});
+
+test('ready: the texts and the deciding values of a citation check are named in the manifest', () => {
+  const errors = (done: Record<string, unknown>) => validateManifest({ ...manifests.get('review'), output: FIELDS, done }).map((e) => `${e.code} ${e.path}`);
+  const ok = { kind: 'citations', retries: 1, source: 'worktree' };
+  assert.deepEqual(errors({ ...ok, texts: ['discussion'], reject: { severity: ['blocking'] }, unquoted: { severity: ['note'] } }), []);
+  assert.deepEqual(errors({ ...ok, texts: ['other', 7] }), ['unknown_output done.texts[0]', 'not_string done.texts[1]']);
+  assert.deepEqual(errors({ ...ok, texts: 'discussion' }), ['not_array done.texts']);
+  assert.deepEqual(errors({ ...ok, reject: { other: ['x'], severity: ['fatal'] }, unquoted: { severity: 'note' } }), ['unknown_field done.reject.other', 'not_in_list done.reject.severity[0]', 'not_array done.unquoted.severity']);
+  // One value cannot both fail an item and free it.
+  assert.deepEqual(errors({ ...ok, reject: { severity: ['note'] }, unquoted: { severity: ['note'] } }), ['duplicate done.unquoted.severity[0]']);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, texts: ['discussion'], reject: {}, unquoted: {} }), ['not_allowed done.texts', 'not_allowed done.reject', 'not_allowed done.unquoted']);
 });

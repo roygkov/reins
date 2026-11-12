@@ -3,8 +3,12 @@
 // It does not prove that the claim is true: the label of the result is "form verified".
 // Specification: docs/spec/harness-manifest, page 4, rules 4, 6 and 7.
 //
-// The report is data, not prose: one JSON object `{"items": [...]}`. The core knows four fields of
-// an item: `file`, `line` (and `end` for a range), `quote`, and a free `text`. Every other field
+// The report is data, not prose: one JSON object `{"items": [...]}`. The core knows these fields of
+// an item: `file`, `line` (and `end` for a range), `quote`, a free `text`, and `source`: the name
+// of a collected text (a ticket, a log, the output of a command) that the item quotes in place of
+// a file. A text is the value of the collect output itself, not a file that the output points to.
+// The manifest can name values of a field that fail an item (`done.reject`) and values that free
+// an item from its quote (`done.unquoted`): "nothing was verified" said openly. Every other field
 // and its values come from the manifest of the scenario (`output.fields`): what a finding is, and
 // which words grade it, is the business of a pack.
 //
@@ -22,7 +26,7 @@ export const WINDOW = 3; // lines around the cited line or range where the quote
 export const MIN_QUOTE = 8; // characters of a quote that are not spaces
 export const SIZE_CAP = 1 << 20; // bytes: a larger file is not read
 
-export type ItemFault = 'bad_item' | 'unknown_field' | 'bad_field' | 'no_location' | 'no_quote' | 'short_quote' | 'no_file' | 'not_in_change' | 'not_found';
+export type ItemFault = 'bad_item' | 'unknown_field' | 'bad_field' | 'no_location' | 'no_quote' | 'short_quote' | 'no_file' | 'not_in_change' | 'not_found' | 'no_text' | 'rejected';
 // `no_check`, `check_failed`: a check script of a pack that is missing or did not answer.
 export type AnswerReason = 'no_source' | 'deadline' | 'bad_report' | 'too_many' | 'faults' | 'no_check' | 'check_failed' | 'work_changed';
 export type Answer = {
@@ -37,6 +41,9 @@ export type CitationOptions = {
   changed?: readonly string[]; // the files of the change, relative to the root; an item must be in one of them
   maxItems?: number;
   fields?: Readonly<Record<string, readonly string[]>>; // the fields of an item that the manifest names, with their values
+  texts?: Readonly<Record<string, string>>; // the named texts of the source: a ticket, a log, the output of a command
+  reject?: Readonly<Record<string, readonly string[]>>; // the values of a field that fail an item
+  unquoted?: Readonly<Record<string, readonly string[]>>; // the values of a field that free an item from its quote
   expired?: () => boolean; // the deadline of the caller, asked before each file
 };
 
@@ -112,6 +119,25 @@ function faultOf(realRoot: string, item: unknown, options: CitationOptions): Ite
     if (typeof value !== 'string' || !values.includes(value)) return 'bad_field';
   }
   if (item.text !== undefined && typeof item.text !== 'string') return 'bad_field';
+  const has = (lists: CitationOptions['reject']): boolean => Object.entries(lists ?? {}).some(([key, values]) => typeof item[key] === 'string' && values.includes(item[key]));
+  // A value that the manifest rejects: the item says about itself that it does not hold.
+  if (has(options.reject)) return 'rejected';
+  // A value that needs no quote: the item says that nothing was verified. It still says about what.
+  // A quote beside such a value would look verified: the item carries none.
+  if (has(options.unquoted)) {
+    if (['file', 'line', 'end', 'quote', 'source'].some((key) => item[key] !== undefined)) return 'no_location';
+    return typeof item.text === 'string' && item.text.trim() !== '' ? null : 'no_text';
+  }
+  // A quote of a named text: the text as the collect step gave it. The item has one place.
+  if (item.source !== undefined) {
+    if (item.file !== undefined || item.line !== undefined || item.end !== undefined) return 'no_location';
+    const body = typeof item.source === 'string' && options.texts !== undefined && Object.hasOwn(options.texts, item.source) ? options.texts[item.source] : undefined;
+    if (body === undefined) return 'no_text';
+    if (typeof item.quote !== 'string') return 'no_quote';
+    const cited = norm(item.quote);
+    if (weight(cited) < MIN_QUOTE) return 'short_quote';
+    return matches(cited, norm(body)) ? null : 'not_found';
+  }
   const { file, line, end } = item;
   if (typeof file !== 'string' || file === '' || !isLine(line) || (end !== undefined && !isLine(end))) return 'no_location';
   const from = Math.min(line, end ?? line);

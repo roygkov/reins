@@ -44,7 +44,7 @@ export type Manifest = {
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number };
+  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -80,7 +80,7 @@ const NAME = /^[a-z][a-z0-9-]{0,62}$/; // scenario, connector, action, role, che
 const IDENT = /^[a-z][a-z0-9_]{0,62}$/; // input, output, flag
 const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/; // an object of the pack, relative, no ".."
 // The fields of an item of a result that the core reads. A manifest cannot give them another meaning.
-export const ITEM_CORE_FIELDS: readonly string[] = ['file', 'line', 'end', 'quote', 'text'];
+export const ITEM_CORE_FIELDS: readonly string[] = ['file', 'line', 'end', 'quote', 'text', 'source'];
 const PLACEHOLDER = /\{([^{}]*)\}/g;
 
 // What a subordinate executor may do. read: it changes nothing. write: it changes the work, inside its area when it has one.
@@ -341,8 +341,8 @@ export function guardPattern(guard: string): RegExp {
   return new RegExp(`^${source}$`, 's');
 }
 
-function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[]): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes'], ['kind', 'retries']);
+function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>): void {
+  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
@@ -368,6 +368,32 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
       const guards = list(r, d.guards, 'done.guards') ?? [];
       if (guards.length > MAX_GUARDS) r.add('not_in_range', 'done.guards');
       else guards.forEach((g, i) => { if (!isGuard(g)) r.add('bad_name', `done.guards[${i}]`); });
+    }
+  }
+  // The citation check can read the texts that the collect step gave (a ticket, a log, the output
+  // of a command), and a value of a field of an item can decide: fail the item, or free it from its quote.
+  if (d.texts !== undefined) {
+    if (kind !== null && kind !== 'citations') r.add('not_allowed', 'done.texts');
+    else (list(r, d.texts, 'done.texts') ?? []).forEach((t, i) => {
+      const name = named(r, t, `done.texts[${i}]`, IDENT);
+      if (name !== null && !outputs.includes(name)) r.add('unknown_output', `done.texts[${i}]`);
+    });
+  }
+  const decided = new Set<string>();
+  for (const key of ['reject', 'unquoted'] as const) {
+    const lists = d[key];
+    if (lists === undefined) continue;
+    if (kind !== null && kind !== 'citations') { r.add('not_allowed', `done.${key}`); continue; }
+    if (!isObj(lists)) { r.add('not_object', `done.${key}`); continue; }
+    for (const [field, values] of Object.entries(lists)) {
+      const at = `done.${key}.${field}`;
+      const allowed = itemFields[field];
+      if (!Array.isArray(allowed)) { r.add('unknown_field', at); continue; }
+      (list(r, values, at) ?? []).forEach((v, i) => {
+        if (typeof v !== 'string' || !allowed.includes(v)) r.add('not_in_list', `${at}[${i}]`);
+        else if (decided.has(`${field} ${v}`)) r.add('duplicate', `${at}[${i}]`);
+        else decided.add(`${field} ${v}`);
+      });
     }
   }
   // The term of an answer: after it a green answer holds no more. The soak: an outer state changes
@@ -456,7 +482,7 @@ export function validateManifest(value: unknown, pack: PackContext = STRUCTURE_O
   }
   if (m.model !== undefined) model(r, m.model, pack);
   if (m.permissions !== undefined) permissions(r, m.permissions, pack, inputs);
-  if (m.done !== undefined) done(r, m.done, pack, isObj(m.collect) && Array.isArray(m.collect.outputs) ? m.collect.outputs : []);
+  if (m.done !== undefined) done(r, m.done, pack, isObj(m.collect) && Array.isArray(m.collect.outputs) ? m.collect.outputs : [], isObj(m.output) && isObj(m.output.fields) ? m.output.fields : {});
   if (m.output !== undefined) output(r, m.output);
   memory(r, m.memory, pack);
   return r.errors;

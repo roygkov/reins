@@ -570,8 +570,19 @@ function citations(rt: Runtime, task: Task, text: string): Answer {
   }
   // The deadline of the check is short: a citation check reads a few files.
   const deadline = Date.now() + Math.min(rt.checkTimeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS, LOCK_STALE_MS / 2);
+  // The named texts: an output of the collect step as its text. An output that is not one text
+  // (a list of comments) is the lines of all its texts.
+  let texts: Record<string, string> | undefined;
+  if (done.texts !== undefined) {
+    texts = {};
+    const lines = (value: unknown): string[] => (typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(lines) : isObj(value) ? Object.values(value).flatMap(lines) : []);
+    for (const name of done.texts) if (collected?.[name] !== undefined) texts[name] = lines(collected[name]).join('\n');
+  }
   return checkCitations(text, {
     root,
+    ...(texts !== undefined ? { texts } : {}),
+    ...(done.reject !== undefined ? { reject: done.reject } : {}),
+    ...(done.unquoted !== undefined ? { unquoted: done.unquoted } : {}),
     ...(changed !== undefined ? { changed } : {}),
     ...(task.manifest?.output.max_items !== undefined ? { maxItems: task.manifest.output.max_items } : {}),
     ...(task.manifest?.output.fields !== undefined ? { fields: task.manifest.output.fields } : {}),

@@ -87,3 +87,46 @@ test('citations: the core has no words of a report format', () => {
     assert.ok(!code.includes(word), `the word "${word}" belongs to a pack`);
   }
 });
+
+// ---- A named text as a source, and the values of a field that decide.
+
+const TEXTS = { ticket: 'Status: In Progress\nThe proxy of version 1.27 rejects unknown fields.', log: 'HTTP 400 Bad Request: unknown field initNote' };
+const check = (items: unknown[], more: Record<string, unknown> = {}) => {
+  const a = checkCitations(JSON.stringify({ items }), { root: source(TREE), texts: TEXTS, ...more });
+  return [a.result, ...a.faults.map((f) => `${f.n} ${f.fault}`)];
+};
+
+test('citations: a quote of a named text is found in that text', () => {
+  assert.deepEqual(check([{ source: 'ticket', quote: 'rejects unknown fields' }, { source: 'log', quote: 'HTTP 400   Bad Request', text: 'x' }]), ['PASS']);
+  // A quote that spans lines of the text, and parts around `...`.
+  assert.deepEqual(check([{ source: 'ticket', quote: 'In Progress The proxy' }, { source: 'ticket', quote: 'Status: ... unknown fields.' }]), ['PASS']);
+  assert.deepEqual(check([{ source: 'ticket', quote: 'ignores unknown fields' }]), ['FAIL', '1 not_found']);
+  assert.deepEqual(check([{ source: 'log', quote: 'rejects unknown fields' }]), ['FAIL', '1 not_found'], 'the text that the item names, not any text');
+  assert.deepEqual(check([{ source: 'other', quote: 'rejects unknown fields' }, { source: 7, quote: 'rejects unknown fields' }]), ['FAIL', '1 no_text', '2 no_text']);
+  assert.deepEqual(check([{ source: 'ticket', quote: 'short' }, { source: 'ticket' }]), ['FAIL', '1 short_quote', '2 no_quote']);
+  // One item has one place: a file or a named text.
+  assert.deepEqual(check([{ source: 'ticket', file: 'src/a.ts', line: 1, quote: 'rejects unknown fields' }]), ['FAIL', '1 no_location']);
+  // A file item works as before beside a text item, and a text item is not bound to the changed files.
+  assert.deepEqual(check([{ file: 'src/a.ts', line: 1, quote: 'const limit = items.length;' }, { source: 'ticket', quote: 'rejects unknown fields' }], { changed: ['src/a.ts'] }), ['PASS']);
+  // Without named texts the field names nothing.
+  const none = checkCitations(JSON.stringify({ items: [{ source: 'ticket', quote: 'rejects unknown fields' }] }), { root: source(TREE) });
+  assert.deepEqual(none.faults, [{ n: 1, fault: 'no_text' }]);
+});
+
+test('citations: a value of a field can fail an item, and a value can free an item from its quote', () => {
+  const fields = { state: ['proven', 'unknown', 'asserted'] };
+  const more = { fields, reject: { state: ['asserted'] }, unquoted: { state: ['unknown'] } };
+  assert.deepEqual(check([
+    { state: 'proven', source: 'ticket', quote: 'rejects unknown fields', text: 'the proxy rejects unknown fields' },
+    { state: 'unknown', text: 'the behaviour of the old proxy is not verified' },
+  ], more), ['PASS']);
+  // The value that the manifest rejects fails the item, with a quote or without one.
+  assert.deepEqual(check([{ state: 'asserted', text: 'the old proxy ignores the field' }, { state: 'asserted', source: 'ticket', quote: 'rejects unknown fields', text: 'x' }], more), ['FAIL', '1 rejected', '2 rejected']);
+  // An item without a quote says what it is about.
+  assert.deepEqual(check([{ state: 'unknown' }, { state: 'unknown', text: '  ' }], more), ['FAIL', '1 no_text', '2 no_text']);
+  // An item that says "not verified" carries no quote: a quote beside it would look verified.
+  assert.deepEqual(check([{ state: 'unknown', text: 'x', file: 'src/a.ts', line: 1, quote: 'not in the file at all' }, { state: 'unknown', text: 'x', source: 'ticket', quote: 'rejects unknown fields' }], more), ['FAIL', '1 no_location', '2 no_location']);
+  // A proven item needs its quote; without the lists every item needs one.
+  assert.deepEqual(check([{ state: 'proven', text: 'the proxy rejects unknown fields' }], more), ['FAIL', '1 no_location']);
+  assert.deepEqual(check([{ state: 'unknown', text: 'not verified' }], { fields }), ['FAIL', '1 no_location']);
+});

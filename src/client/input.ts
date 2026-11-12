@@ -16,6 +16,9 @@ export type ReportSpec = {
   changed?: string; // the collected result that holds the list of changed files
   item?: Record<string, string>; // the fields of an item that the harness reads
   fields?: Record<string, string[]>; // the fields of an item that the scenario names, with their values
+  texts?: string[]; // the collected results that an item can quote by name
+  reject?: Record<string, string[]>; // the values of a field that make the report not ready
+  unquoted?: Record<string, string[]>; // the values of a field of an item that carries no quote
 };
 
 export type TaskInput = {
@@ -60,6 +63,19 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
       'Every item has the fields of `report.item` and every field of `report.fields` with one of its values.',
       'The harness checks every quote against the source. A quote that is not there makes the report not ready.',
     );
+    if (m.done.texts !== undefined && m.done.texts.length > 0) {
+      report.texts = m.done.texts;
+      report.item.source = 'name of a collected text of `report.texts`, in place of file and line';
+      protocol.push('An item quotes a file of the source (`file`, `line`, `quote`) or one collected text of `report.texts` (`source`, `quote`), never both.');
+    }
+    if (m.done.unquoted !== undefined) {
+      report.unquoted = m.done.unquoted;
+      protocol.push('An item with a value of `report.unquoted` says that nothing was verified: it carries `text` and no quote and no place.');
+    }
+    if (m.done.reject !== undefined) {
+      report.reject = m.done.reject;
+      protocol.push('An item with a value of `report.reject` makes the report not ready: correct the work until no item has such a value.');
+    }
   } else {
     if (m.output.max_items !== undefined) report.max_items = m.output.max_items;
     if (m.output.max_bytes !== undefined) report.max_bytes = m.output.max_bytes;
