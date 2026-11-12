@@ -16,6 +16,8 @@ export type ReportSpec = {
   changed?: string; // the collected result that holds the list of changed files
   item?: Record<string, string>; // the fields of an item that the harness reads
   fields?: Record<string, string[]>; // the fields of an item that the scenario names, with their values
+  sections?: string[]; // the sections that a text report must have, each as a line of its own
+  to?: string; // who gets the result: the human, or a system through a write of `writes`
   texts?: string[]; // the collected results that an item can quote by name
   reject?: Record<string, string[]>; // the values of a field that make the report not ready
   unquoted?: Record<string, string[]>; // the values of a field of an item that carries no quote
@@ -78,7 +80,14 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
     }
   } else {
     if (m.output.max_items !== undefined) report.max_items = m.output.max_items;
-    if (m.output.max_bytes !== undefined) report.max_bytes = m.output.max_bytes;
+    if (m.output.max_bytes !== undefined) {
+      report.max_bytes = m.output.max_bytes;
+      protocol.push('A report larger than `report.max_bytes` is not taken.');
+    }
+    if (m.output.sections !== undefined && m.output.sections.length > 0) {
+      report.sections = m.output.sections;
+      protocol.push('The report has every section of `report.sections`: the name of the section as a line of its own (a heading). A report without one is not taken.');
+    }
   }
   protocol.push(
     `Submit the report with: ${command} report ${task.id} <file> (or - for the standard input).`,
@@ -95,6 +104,7 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
     model.raise_to = m.model.raise_to;
     protocol.push(`When the work needs the higher level of the model, run once: ${command} raise ${task.id}.`);
   }
+  if (m.output.to !== undefined) report.to = m.output.to;
   const input: TaskInput = { task: task.id, scenario: m.name, title: m.title, collected: collected ?? {}, report, writes: task.envelope, model, protocol };
   if (m.description !== undefined) input.description = m.description;
   if (task.instructions !== undefined) input.instructions = task.instructions;

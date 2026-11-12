@@ -500,6 +500,8 @@ export function validateManifest(value: unknown, pack: PackContext = STRUCTURE_O
   if (m.permissions !== undefined) permissions(r, m.permissions, pack, inputs);
   if (m.done !== undefined) done(r, m.done, pack, isObj(m.collect) && Array.isArray(m.collect.outputs) ? m.collect.outputs : [], isObj(m.output) && isObj(m.output.fields) ? m.output.fields : {});
   if (m.output !== undefined) output(r, m.output);
+  // A result that goes into a system gets there by a write: the manifest names one.
+  if (isObj(m.output) && m.output.to === 'system' && !(isObj(m.permissions) && Array.isArray(m.permissions.write) && m.permissions.write.length > 0)) r.add('missing', 'permissions.write');
   memory(r, m.memory, pack);
   return r.errors;
 }

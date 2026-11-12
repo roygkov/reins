@@ -210,7 +210,7 @@ function report(rt: Runtime, id: string, source: string): Out {
   // again from the report that is kept. The new text is not read.
   const waits = loadTask(rt, id)?.state === 'checking';
   const r = waits ? runCheck(rt, id) : submitReport(rt, id, text);
-  if ('error' in r) throw new Stop(r.error === 'not_checking' ? 'check_not_supported' : r.error);
+  if ('error' in r) throw new Stop(r.error === 'not_checking' ? 'check_not_supported' : r.error, 'missing' in r ? { missing: r.missing } : 'max_bytes' in r && r.max_bytes !== undefined ? { max_bytes: r.max_bytes } : {});
   if (r.step.error !== undefined) throw new Stop(r.step.error);
   // A record of the memory that an accepted report cites by its id was used. A report that came
   // back, and a text that the harness did not read, count nothing.

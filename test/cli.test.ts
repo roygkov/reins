@@ -141,16 +141,20 @@ test('cli: the result of a task is read through the command line, not from the s
   assert.equal(journal(b).length, rows);
 });
 
-test('cli: a text report is given as a text, and a long one is cut with a mark', () => {
+test('cli: a text report is given as a text, and one over the size of the manifest is not taken', () => {
   const b = box();
   const id = reins(b, ['open', 'draft-message']).json.task;
   reins(b, ['report', id, '-'], 'a short message\nin two lines');
   assert.equal(reins(b, ['result', id]).json.report, 'a short message\nin two lines');
+  // The manifest of this scenario bounds the report: a larger one is refused, and the task goes on.
   const long = reins(b, ['open', 'draft-message']).json.task;
-  reins(b, ['report', long, '-'], 'x'.repeat(250_000));
-  const cut = reins(b, ['result', long]).json.report;
+  const refused = reins(b, ['report', long, '-'], 'x'.repeat(250_000)).json;
+  assert.deepEqual([refused.ok, refused.error, refused.max_bytes], [false, 'too_large', 4000]);
+  assert.equal(reins(b, ['input', long]).json.task, long);
+  // A report that is kept and is longer than the command shows (a task whose manifest names no size) is cut with a mark.
+  fs.writeFileSync(path.join(b.state, 'tasks', `${id}.report.txt`), 'x'.repeat(250_000));
+  const cut = reins(b, ['result', id]).json.report;
   assert.equal(typeof cut, 'string');
-  assert.equal(cut.length < 250_000, true);
   assert.match(cut, /^x{200000} … \(\+50000 characters cut\)$/);
 });
 

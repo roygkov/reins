@@ -694,3 +694,40 @@ test('ready: the human who accepts a result that the check did not accept ties i
   fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
   assert.equal(verifyWork(b.rt, opened.task.id), false);
 });
+
+// ---- The form of the result: the size, the sections, the receiver.
+
+test('ready: a text report over the size of the manifest, or without a section that it names, is not taken', () => {
+  const b = box({ done: { kind: 'human', retries: 0 }, output: { format: 'text', max_bytes: 200, sections: ['What changed', 'Not verified'] } });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  const submit = (text: string) => submitReport(b.rt, id, text);
+  assert.deepEqual(submit(`## What changed\n${'x'.repeat(300)}\n## Not verified\nnothing\n`), { error: 'too_large', max_bytes: 200 });
+  assert.deepEqual(submit('The work is done.\n'), { error: 'bad_form', missing: ['What changed', 'Not verified'] });
+  // The name of a section in a sentence is not the section: it stands as a line of its own.
+  assert.deepEqual(submit('## What changed\none file. Not verified: the tests.\n'), { error: 'bad_form', missing: ['Not verified'] });
+  // A report that was not taken is no report: the task still executes, nothing came back.
+  assert.deepEqual([loadTask(b.rt, id)?.state, loadTask(b.rt, id)?.returns], ['executing', 0]);
+  assert.equal(readJournal(b.rt.journal.file).some((x) => x.kind === 'task.report_submitted'), false);
+  // A heading, a line with a colon and a bold line are sections; the case of the letters does not matter.
+  assert.deepEqual(submit('**What changed:**\none file\n'), { error: 'bad_form', missing: ['Not verified'] });
+  const ok = submit('# what changed\none file\n\nNot verified:\nthe tests\n');
+  assert.ok('step' in ok);
+  assert.equal(ok.step.task.state, 'waiting_human');
+  // The executor learns the form from the input of its task.
+  const shown = box({ done: { kind: 'human', retries: 0 }, output: { format: 'text', max_bytes: 200, sections: ['What changed'], to: 'human' } });
+  const task = openScenario(shown.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(task.ok);
+  const input = taskInput(task.task, {});
+  assert.deepEqual([input?.report.sections, input?.report.max_bytes, input?.report.to], [['What changed'], 200, 'human']);
+  assert.equal(input?.protocol.some((line) => /report\.sections/.test(line)), true);
+});
+
+test('ready: a result that goes into a system needs a write of the manifest', () => {
+  const base = manifests.get('review') as { permissions: Record<string, unknown> };
+  const errors = (output: Record<string, unknown>, write: boolean) => validateManifest({ ...base, permissions: { read: base.permissions.read, ...(write ? { write: base.permissions.write } : {}) }, output }).filter((e) => e.path.startsWith('output') || e.code === 'missing').map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ format: 'list', max_items: 10, to: 'system' }, true), []);
+  assert.deepEqual(errors({ format: 'list', max_items: 10, to: 'system' }, false), ['missing permissions.write']);
+  assert.deepEqual(errors({ format: 'list', max_items: 10, to: 'human' }, false), []);
+});

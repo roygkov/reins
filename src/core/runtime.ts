@@ -705,7 +705,15 @@ function partCheck(rt: Runtime, task: Task, name: string): { result: 'PASS' | 'F
   return result === 'PASS' || result === 'FAIL' ? { result } : { result: 'none', reason: 'check_failed' };
 }
 
-export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task' | 'busy' | 'too_large' };
+// `bad_form`: a text report without a section that the manifest names; `missing` lists them.
+export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task' | 'busy' | 'too_large'; max_bytes?: number } | { error: 'bad_form'; missing: string[] };
+// A section of a text report: a line that holds only the name of the section, as a heading (`#`)
+// or with a colon after it. The case of the letters does not matter.
+function hasSection(text: string, name: string): boolean {
+  const want = name.trim().toLowerCase();
+  return text.split(/\r?\n/).some((line) => line.trim().replace(/^#{1,6}\s*/, '').replace(/[:：]\s*$/, '').replace(/^\*\*(.*)\*\*$/, '$1').replace(/[:：]\s*$/, '').trim().toLowerCase() === want);
+}
+
 export type Checked = { step: Step; answer: Answer } | { error: 'unknown_task' | 'busy' | 'not_checking' | 'soaking' };
 
 // Runs the check of a task that waits for it, from the report that is kept on the disk, and applies
@@ -768,6 +776,17 @@ export function submitReport(rt: Runtime, id: string, text: string): Submitted {
   const submitted = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return null;
+    // The form of the result (harness-manifest, part 7): a text report is not larger than the
+    // manifest says, and it has every section that the manifest names. A report of another form
+    // is not taken: nothing is written, the task goes on, no send-back is spent. A list of items
+    // is data: the citation check reads its form.
+    const output = task.manifest?.output;
+    if (output !== undefined && task.manifest?.done.kind !== 'citations' && task.state === 'executing') {
+      if (output.max_bytes !== undefined && size > output.max_bytes) return { refused: { error: 'too_large' as const, max_bytes: output.max_bytes } };
+      // The sections are lines of a text: a report of another format has none.
+      const missing = output.format !== 'text' ? [] : (output.sections ?? []).filter((name) => !hasSection(text, name));
+      if (missing.length > 0) return { refused: { error: 'bad_form' as const, missing } };
+    }
     // The work that the report is about: the source that the manifest names, else the directory
     // where the report is given. The answer of the check and an approval of the human hold for it.
     const root = sourceRoot(rt, task) ?? (rt.workDir !== undefined && path.isAbsolute(rt.workDir) ? rt.workDir : null);
@@ -783,6 +802,7 @@ export function submitReport(rt: Runtime, id: string, text: string): Submitted {
   });
   if (submitted === 'busy') return { error: 'busy' };
   if (submitted === null) return { error: 'unknown_task' };
+  if ('refused' in submitted) return submitted.refused;
   if (submitted.error !== undefined || submitted.task.state !== 'checking' || !coreChecks(submitted.task)) return { step: submitted };
   const checked = runCheck(rt, id);
   return 'error' in checked ? { step: submitted } : checked;
