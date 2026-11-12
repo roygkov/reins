@@ -99,7 +99,7 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'check.retries_exceeded': { n: 'number' },
   'memory.read': { n: 'number' },
   'memory.record_used': { record: 'token' },
-  'memory.record_changed': { record: 'token', state: ['pending', 'active', 'stale', 'replaced', 'vetoed'] },
+  'memory.record_changed': { record: 'token', state: ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'] },
   'craft.pattern_found': { pattern: 'token', n: 'number' },
   'craft.proposal_created': { proposal: 'token', pattern: 'token' },
   'craft.proposal_resolved': { proposal: 'token', state: ['accepted', 'rejected'] },

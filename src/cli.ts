@@ -33,7 +33,7 @@ import { fire, tick } from './core/triggers.ts';
 import { listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { eight, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
-import { addRecord, brokenRecords, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, vetoRecord, wrongRecord } from './memory/store.ts';
+import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
 class Stop extends Error {
@@ -359,12 +359,31 @@ function main(args: string[]): Out {
         throw new Stop('no_file');
       }
     }
+    // A case: `next <id> <step> task=<id> [status=<s>]` gives it a step, `close <id> task=<id>` ends it.
+    // These are commands of the agent: the task says that its manifest lets the agent write cases.
+    // Without `task=` they change nothing. The human ends a case of his own with a scenario, or removes it with `memory veto`.
+    if ((first === 'next' && rest.length >= 2) || (first === 'close' && rest.length >= 1)) {
+      const id = rest[0] ?? '';
+      const more = rest.slice(first === 'next' ? 2 : 1);
+      const value = (name: string): string | undefined => more.find((m) => m.startsWith(`${name}=`))?.slice(name.length + 1);
+      const task = value('task');
+      const who = { by: 'agent' as const, ...(task !== undefined ? { task } : {}) };
+      if (first === 'close') {
+        const r = closeCase(rt, id, who);
+        if (!r.ok) throw new Stop(r.error);
+        return { ok: true, record: id, state: 'closed' };
+      }
+      const status = value('status');
+      const r = stepCase(rt, id, { ...who, next: rest[1] ?? '', ...(status !== undefined ? { status } : {}) });
+      if (!r.ok) throw new Stop(r.error);
+      return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}) };
+    }
     // `add <type> <text> [task=<id>] [path=<p>]...` is the agent; `decide <text> because=<reason> ...` is the human.
     if ((first === 'add' && rest.length >= 2) || (first === 'decide' && rest.length >= 1)) {
       const [type, text, ...more] = first === 'add' ? rest : ['decision', ...rest];
       const value = (name: string): string | undefined => more.find((m) => m.startsWith(`${name}=`))?.slice(name.length + 1);
       const input: Parameters<typeof addRecord>[1] = { type: type ?? '', text: text ?? '', paths: more.filter((m) => m.startsWith('path=')).map((m) => m.slice(5)), by: first === 'add' ? 'agent' : 'human' };
-      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes'] as const) {
+      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes', 'next', 'status'] as const) {
         const v = value(key);
         if (v !== undefined) input[key] = v;
       }
@@ -449,7 +468,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const RESULT_MAX = 200_000; // characters of a text report that `result` gives

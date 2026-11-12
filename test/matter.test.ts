@@ -1,0 +1,201 @@
+// The record "case": what is not finished. It has a next step, an outer status and a count of
+// the days it was carried without a step. Specification: docs/spec/harness-memory, page 2.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadPacks } from '../src/packs/packs.ts';
+import { openJournal, readJournal } from '../src/journal/writer.ts';
+import { validateRow } from '../src/contracts/journal.ts';
+import { openScenario, type Runtime } from '../src/core/runtime.ts';
+import { sessionStart } from '../src/client/session.ts';
+import { addRecord, casesForStart, closeCase, importRecords, listRecords, recordsForStart, restoreRecord, searchRecords, stepCase, vetoRecord } from '../src/memory/store.ts';
+import { loadCases } from './cases.ts';
+
+const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'matter-'));
+after(() => fs.rmSync(SB, { recursive: true, force: true }));
+const manifests = new Map(loadCases<{ name: string; manifest: Record<string, unknown> }>('manifest-bases').map((b) => [b.name, b.manifest]));
+const files = loadCases<{ name: string; files: Record<string, unknown> }>('packs-bases').find((b) => b.name === 'three')?.files ?? {};
+const DAY = 24 * 60 * 60 * 1000;
+const T0 = Date.parse('2026-11-12T10:00:00Z');
+
+type Box = { rt: Runtime; root: string; cwd: string; config: string };
+let n = 0;
+// `memory`: what the manifest of the scenario "change-review" lets the agent write.
+function box(memory: unknown = { write: ['case'], class: 'auto' }): Box {
+  n += 1;
+  const root = path.join(SB, String(n));
+  const cwd = path.join(root, 'work');
+  fs.mkdirSync(cwd, { recursive: true });
+  const out = { outputs: { diff: 'd', task: 1, discussion: [], worktree: cwd }, flags: { has_new_commits: true } };
+  for (const [rel, value] of Object.entries(files)) {
+    const file = path.join(root, 'packs', rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (rel.endsWith('.sh')) fs.writeFileSync(file, `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${JSON.stringify(out)}'\n`, { mode: 0o755 });
+    else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), memory }));
+    else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
+    else fs.writeFileSync(file, JSON.stringify(value));
+  }
+  const packs = { organization: path.join(root, 'packs/organization'), project: path.join(root, 'packs/project'), person: path.join(root, 'packs/person') };
+  const stateDir = path.join(root, 'state');
+  const config = path.join(root, 'config.json');
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  return { rt: { merged: loadPacks(packs), stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000 }, root, cwd, config };
+}
+function scenario(b: Box, name = 'change-review'): string {
+  const opened = openScenario(b.rt, name, name === 'change-review' ? { change_id: '7' } : {});
+  assert.ok(opened.ok, JSON.stringify(opened));
+  return opened.task.id;
+}
+const open = (b: Box, text: string, next: string, at = T0, more: Record<string, string> = {}): string => {
+  const r = addRecord(b.rt, { type: 'case', text, paths: [], by: 'human', next, ...more }, at);
+  assert.ok(r.ok, JSON.stringify(r));
+  return r.record.id;
+};
+const of = (b: Box, id: string, now = T0) => listRecords(b.rt, now).find((r) => r.id === id);
+
+test('case: a case keeps its next step and its outer status, and a human can read its file', () => {
+  const b = box();
+  const task = scenario(b);
+  const r = addRecord(b.rt, { type: 'case', text: 'The release of the indexer waits for the board.', paths: [], by: 'agent', task, next: 'ask the release manager on Monday', status: 'card: Planned' }, T0);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.deepEqual([r.record.state, r.record.next, r.record.status, r.record.carried], ['active', 'ask the release manager on Monday', 'card: Planned', undefined]);
+  const file = fs.readFileSync(path.join(b.rt.stateDir, 'memory', 'case', `${r.record.id}.md`), 'utf8');
+  assert.match(file, /^next: "ask the release manager on Monday"$/m);
+  assert.match(file, /^status: "card: Planned"$/m);
+  // A next step is a thing of a case only.
+  assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: 'x is slow', paths: [], by: 'human', next: 'y' }, T0), { ok: false, error: 'bad_type' });
+  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'n'.repeat(501) }, T0), { ok: false, error: 'bad_text' });
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
+test('case: the agent changes a case only in a task whose manifest lets it write cases', () => {
+  const b = box();
+  const id = open(b, 'The alert rule looks at the old cluster.', 'ask the team to change the rule');
+  const task = scenario(b);
+  const stepped = stepCase(b.rt, id, { next: 'the team answered: check the rule on Friday', status: 'thread: answered', by: 'agent', task }, T0 + DAY);
+  assert.ok(stepped.ok, JSON.stringify(stepped));
+  assert.deepEqual([of(b, id)?.next, of(b, id)?.status, of(b, id)?.text], ['the team answered: check the rule on Friday', 'thread: answered', 'The alert rule looks at the old cluster.']);
+  // Without a task, with a task that is closed, with a task that cannot write cases: no change.
+  assert.deepEqual(stepCase(b.rt, id, { next: 'x', by: 'agent' }, T0), { ok: false, error: 'not_allowed' });
+  assert.deepEqual(stepCase(b.rt, id, { next: 'x', by: 'agent', task: scenario(b, 'draft-message') }, T0), { ok: false, error: 'not_allowed' });
+  const other = box({ write: ['pitfall'], class: 'veto' });
+  const there = open(other, 'a case', 'a step');
+  assert.deepEqual(stepCase(other.rt, there, { next: 'x', by: 'agent', task: scenario(other) }, T0), { ok: false, error: 'not_allowed' });
+  assert.deepEqual(closeCase(other.rt, there, { by: 'agent', task: scenario(other) }, T0), { ok: false, error: 'not_allowed' });
+  // The human needs no task.
+  assert.ok(stepCase(b.rt, id, { next: 'done on Friday', by: 'human' }, T0).ok);
+  // Only a case has a step, and only a case in use.
+  const note = addRecord(b.rt, { type: 'pitfall', text: 'x is slow', paths: [], by: 'human' }, T0);
+  assert.ok(note.ok);
+  assert.deepEqual(stepCase(b.rt, note.record.id, { next: 'x', by: 'human' }, T0), { ok: false, error: 'bad_type' });
+  assert.deepEqual(stepCase(b.rt, 'm0000000000', { next: 'x', by: 'human' }, T0), { ok: false, error: 'unknown_record' });
+  assert.deepEqual(stepCase(b.rt, id, { next: '  ', by: 'human' }, T0), { ok: false, error: 'bad_text' });
+});
+
+test('case: a closed case is out of use, and its file stays', () => {
+  const b = box();
+  const id = open(b, 'The MR waits for a review.', 'ping the reviewer');
+  const closed = closeCase(b.rt, id, { by: 'agent', task: scenario(b) }, T0 + DAY);
+  assert.deepEqual(closed, { ok: true });
+  assert.equal(of(b, id)?.state, 'closed');
+  assert.deepEqual(casesForStart(b.rt, 2000, T0 + DAY).lines, []);
+  assert.deepEqual(searchRecords(b.rt, ['review'], 20, T0 + DAY).records, []);
+  // A case that is closed takes no step and is not closed twice.
+  assert.deepEqual(stepCase(b.rt, id, { next: 'x', by: 'human' }, T0 + DAY), { ok: false, error: 'unknown_record' });
+  assert.deepEqual(closeCase(b.rt, id, { by: 'human' }, T0 + DAY), { ok: false, error: 'unknown_record' });
+  assert.equal(fs.existsSync(path.join(b.rt.stateDir, 'memory', 'case', `${id}.md`)), true);
+  // A closed case does not come back through a veto and a restore.
+  assert.equal(vetoRecord(b.rt, id, T0 + DAY), false);
+  assert.equal(restoreRecord(b.rt, id, T0 + DAY), false);
+  assert.equal(of(b, id, T0 + DAY)?.state, 'closed');
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.record_changed');
+  assert.deepEqual(rows.at(-1)?.data, { record: id, type: 'case', state: 'closed' });
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
+test('case: the start of a session names the open cases with their next steps, and counts the days they were carried', () => {
+  const b = box();
+  const old = open(b, 'The alert rule looks at the old cluster.', 'ask the team', T0 - 3 * DAY);
+  const fresh = open(b, 'The release waits for the board.', 'ask on Monday', T0);
+  const first = casesForStart(b.rt, 2000, T0);
+  assert.equal(first.lines.length, 2);
+  assert.match(first.lines.join('\n'), new RegExp(`${old}.*alert rule.*next: ask the team`));
+  // A case that was shown is carried: once for a day, however many sessions start.
+  casesForStart(b.rt, 2000, T0 + 1000);
+  assert.deepEqual([of(b, old)?.carried, of(b, fresh)?.carried], [1, 1]);
+  casesForStart(b.rt, 2000, T0 + DAY);
+  casesForStart(b.rt, 2000, T0 + 2 * DAY);
+  assert.equal(of(b, old)?.carried, 3);
+  // The case that was carried most is the first, and the line says so.
+  assert.ok(stepCase(b.rt, fresh, { next: 'the board answered', by: 'human' }, T0 + 2 * DAY).ok);
+  assert.equal(of(b, fresh)?.carried, 0, 'a step starts the count again');
+  const later = casesForStart(b.rt, 2000, T0 + 3 * DAY);
+  assert.match(later.lines[0] ?? '', new RegExp(`^- ${old} .*carried 4`));
+  assert.match(later.lines[1] ?? '', new RegExp(`^- ${fresh} `));
+  // The size has a limit, and the rest is counted.
+  const small = casesForStart(b.rt, 150, T0 + 3 * DAY);
+  assert.deepEqual([small.lines.length, small.more], [1, 1]);
+  // A case that did not fit was not shown: this start does not carry it.
+  const tight = casesForStart(b.rt, 150, T0 + 4 * DAY);
+  assert.deepEqual([tight.lines.length, of(b, old)?.carried, of(b, fresh)?.carried], [1, 5, 1]);
+  // The cases have their own place in the start of a session: they are not among the other records.
+  assert.deepEqual(recordsForStart(b.rt, 2000, T0 + 3 * DAY).lines, []);
+  const text = sessionStart(b.rt, { session: 's1', cwd: b.cwd }).context.join('\n');
+  assert.match(text, /Open cases of this project/);
+  assert.match(text, new RegExp(old));
+});
+
+test('case: the command line opens a case, gives it a step and closes it', () => {
+  const b = box();
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (args: string[]) => {
+    const p = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd });
+    return { code: p.status, json: JSON.parse(p.stdout) };
+  };
+  const task = scenario(b);
+  const added = reins(['memory', 'add', 'case', 'The MR waits for a review.', `task=${task}`, 'next=ping the reviewer', 'status=MR open']);
+  assert.deepEqual([added.code, added.json.record.state, added.json.record.next, added.json.record.status], [0, 'active', 'ping the reviewer', 'MR open']);
+  const id = added.json.record.id;
+  const stepped = reins(['memory', 'next', id, 'the reviewer answered: fix the test', `task=${task}`, 'status=MR has comments']);
+  assert.deepEqual([stepped.code, stepped.json], [0, { ok: true, record: id, next: 'the reviewer answered: fix the test', status: 'MR has comments' }]);
+  // The agent names its task: without one the command changes nothing.
+  assert.deepEqual(reins(['memory', 'next', id, 'x']).json, { ok: false, error: 'not_allowed' });
+  assert.deepEqual(reins(['memory', 'close', id]).json, { ok: false, error: 'not_allowed' });
+  assert.deepEqual(reins(['memory', 'close', id, `task=${task}`]).json, { ok: true, record: id, state: 'closed' });
+  assert.deepEqual(reins(['memory', 'close', id, `task=${task}`]).json, { ok: false, error: 'unknown_record' });
+});
+
+test('case: an import brings the next step and the status of a case', () => {
+  const b = box();
+  const file = path.join(b.root, 'cases.jsonl');
+  fs.writeFileSync(file, `${JSON.stringify({ type: 'case', text: 'The release waits.', next: 'ask on Monday', status: 'card: Planned', source: 'T-2026-11-04-release', created: '2026-11-04' })}\n`);
+  assert.deepEqual(importRecords(b.rt, file, T0), { added: 1, skipped: [] });
+  const [r] = listRecords(b.rt, T0);
+  assert.deepEqual([r?.type, r?.state, r?.next, r?.status, r?.source], ['case', 'active', 'ask on Monday', 'card: Planned', 'T-2026-11-04-release']);
+});
+
+test('case: a case of another project is not a case of this one', () => {
+  const b = box();
+  const id = open(b, 'The MR waits for a review.', 'ping the reviewer');
+  const there: Runtime = { ...b.rt, project: 'p9z8y7x6' };
+  assert.deepEqual(stepCase(there, id, { next: 'x', by: 'human' }, T0), { ok: false, error: 'unknown_record' });
+  assert.deepEqual(closeCase(there, id, { by: 'human' }, T0), { ok: false, error: 'unknown_record' });
+  assert.equal(of(b, id)?.next, 'ping the reviewer');
+});
+
+test('case: the agent goes on with a case that it opened, while the case waits for a veto', () => {
+  const b = box({ write: ['case'], class: 'veto' });
+  const task = scenario(b);
+  const r = addRecord(b.rt, { type: 'case', text: 'The index is rebuilt by hand.', paths: [], by: 'agent', task, next: 'ask why' }, T0);
+  assert.ok(r.ok);
+  assert.equal(r.record.state, 'pending');
+  assert.ok(stepCase(b.rt, r.record.id, { next: 'the owner answered', by: 'agent', task }, T0 + DAY).ok);
+  assert.deepEqual([of(b, r.record.id, T0 + DAY)?.state, of(b, r.record.id, T0 + DAY)?.next], ['pending', 'the owner answered']);
+  // A draft is not shown at a start: the human has not let it pass yet.
+  assert.deepEqual(casesForStart(b.rt, 2000, T0 + DAY).lines, []);
+});

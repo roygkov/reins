@@ -11,7 +11,7 @@ import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, measure, propose } from '../craft/craft.ts';
-import { listRecords, recordsForStart } from '../memory/store.ts';
+import { casesForStart, listRecords, recordsForStart } from '../memory/store.ts';
 
 // `capabilities`: what the client can do. `before`: it tells the core before an action.
 // `choice`: it can show the human a question with a choice. Absent: the client can.
@@ -23,6 +23,7 @@ export type ClientLevel = 'full' | 'no_choice' | 'no_before';
 export const levelOf = (c: SessionEvent['capabilities']): ClientLevel => (c?.before === false ? 'no_before' : c?.choice === false ? 'no_choice' : 'full');
 
 const START_MEMORY_BYTES = 2000; // the memory records in the context of a session start
+const START_CASES_BYTES = 1500; // the open cases in the context of a session start
 const nameOf = sessionName;
 const fileOf = sessionFile;
 
@@ -121,6 +122,12 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   if (open.length > 0) {
     context.push('Open scenario tasks (read one with `reins input <task>`):');
     for (const t of open) context.push(`- ${t.id}: ${t.scenario ?? ''}, ${t.state}`);
+  }
+  // What is not finished in this project: the cases with their next steps.
+  const cases = casesForStart(rt, START_CASES_BYTES);
+  if (cases.lines.length > 0) {
+    context.push('Open cases of this project (what is not finished; a scenario that may write cases gives a step with `reins memory next <id> <step> task=<task>` and ends one with `reins memory close <id> task=<task>`):', ...cases.lines);
+    if (cases.more > 0) context.push(`${cases.more} more cases: \`reins memory find <word>\`.`);
   }
   // The memory of the project: what was decided and what was learned, before the agent acts.
   const memory = recordsForStart(rt, START_MEMORY_BYTES);

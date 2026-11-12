@@ -19,7 +19,8 @@ import { loadTask, type Runtime } from '../core/runtime.ts';
 
 // pending: a draft in its veto window. active: used. stale: its place changed or nobody cited it
 // for its term. replaced: a newer decision took its place. vetoed: removed by the human.
-export type RecordState = 'pending' | 'active' | 'stale' | 'replaced' | 'vetoed';
+// closed: a case that ended.
+export type RecordState = 'pending' | 'active' | 'stale' | 'replaced' | 'vetoed' | 'closed';
 export type MemoryRecord = {
   id: string;
   type: RecordType;
@@ -43,6 +44,11 @@ export type MemoryRecord = {
   last_use?: string; // the time of the last report that cited the record
   scope?: 'common'; // the record is for every project, not only for the project that wrote it
   wrong?: number; // how many times the human said "this was wrong"
+  // A case: what is not finished.
+  next?: string; // the next step
+  status?: string; // the outer status, when there is one: the state of a card, of a merge request
+  carried?: number; // the days the case was shown at a start of a session since its last step
+  carried_day?: string; // the last day that was counted
 };
 
 export type NewRecord = {
@@ -50,6 +56,7 @@ export type NewRecord = {
   verified?: string; // for an imported record: the time of the import, so its term starts then
   root?: string; // the directory that the paths are relative to: gives the record its anchor
   because?: string; rejected?: string; revisit?: string; supersedes?: string; source?: string; created?: string;
+  next?: string; status?: string; // of a case
 };
 export type AddError = 'bad_type' | 'bad_text' | 'bad_path' | 'human_only' | 'not_allowed' | 'no_reason' | 'unknown_record';
 
@@ -59,9 +66,10 @@ const DAY = 24 * 60 * 60 * 1000;
 const MAX_TEXT = 2000;
 const MAX_PATHS = 20;
 const ID = /^m[0-9a-f]{10}$/;
-const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 'vetoed'];
-const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong'] as const;
-const ENCODED = ['paths', 'anchor', 'because', 'rejected', 'revisit', 'source', 'history'] as const;
+const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'];
+const MAX_STEP = 500; // characters of a next step and of an outer status
+const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong', 'carried', 'carried_day'] as const;
+const ENCODED = ['paths', 'anchor', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status'] as const;
 
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
 const fileOf = (rt: Runtime, type: string, id: string): string => path.join(memoryDir(rt), type, `${id}.md`);
@@ -115,6 +123,12 @@ function parse(text: string): Omit<MemoryRecord, 'uses'> | null {
     if (Number.isInteger(wrong) && wrong > 0) fields.wrong = wrong;
     else delete fields.wrong;
   }
+  if (fields.carried !== undefined) {
+    const carried = Number(fields.carried);
+    if (Number.isInteger(carried) && carried >= 0) fields.carried = carried;
+    else delete fields.carried;
+  }
+  for (const key of ['next', 'status'] as const) if (fields[key] !== undefined && typeof fields[key] !== 'string') delete fields[key];
   const body = lines.slice(end + 1).join('\n').replace(/\n+$/, '');
   return { ...(fields as object), paths: (fields.paths as string[] | undefined) ?? [], history: Array.isArray(fields.history) ? fields.history : [], text: body } as Omit<MemoryRecord, 'uses'>;
 }
@@ -211,6 +225,15 @@ function at(record: Omit<MemoryRecord, 'uses'>, now: number, uses: { n: number; 
 
 const badPath = (p: unknown): boolean => typeof p !== 'string' || p === '' || p.length > 300 || path.isAbsolute(p) || p.split('/').includes('..') || /[\r\n]/.test(p);
 
+// What the manifest of an open scenario task lets the agent write: null when the task is not there,
+// is over, or its manifest does not name the type.
+function mayWrite(rt: Runtime, id: string | undefined, type: RecordType): { class?: string } | null {
+  const task = id === undefined ? null : loadTask(rt, id);
+  const memory = task?.manifest?.memory;
+  if (task === null || task === undefined || task.state === 'closed' || task.state === 'skipped' || memory === undefined || !memory.write.includes(type)) return null;
+  return memory;
+}
+
 export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now()): { ok: true; record: MemoryRecord } | { ok: false; error: AddError } {
   if (!(RECORD_TYPES as readonly string[]).includes(input.type)) return { ok: false, error: 'bad_type' };
   const type = input.type as RecordType;
@@ -221,10 +244,16 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     // The agent writes nothing on its own word: a decision never, any other type only when the
     // manifest of its scenario task names the type.
     if (type === 'decision') return { ok: false, error: 'human_only' };
-    const task = input.task === undefined ? null : loadTask(rt, input.task);
-    const memory = task?.manifest?.memory;
-    if (task === null || task.state === 'closed' || task.state === 'skipped' || memory === undefined || !memory.write.includes(type)) return { ok: false, error: 'not_allowed' };
+    const memory = mayWrite(rt, input.task, type);
+    if (memory === null) return { ok: false, error: 'not_allowed' };
     pending = memory.class !== 'auto';
+  }
+  // A next step and an outer status are things of a case.
+  for (const key of ['next', 'status'] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (type !== 'case') return { ok: false, error: 'bad_type' };
+    if (typeof value !== 'string' || value.length > MAX_STEP || /[\r\n]/.test(value)) return { ok: false, error: 'bad_text' };
   }
   // A decision without its reason is of no use in a month (harness-memory, page 2, rule 1).
   if (type === 'decision' && (input.because === undefined || input.because.trim() === '')) return { ok: false, error: 'no_reason' };
@@ -246,6 +275,10 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
   for (const key of ['because', 'rejected', 'revisit', 'source'] as const) {
     const value = input[key];
     if (value !== undefined && value.trim() !== '') record[key] = scrub(value).slice(0, MAX_TEXT);
+  }
+  for (const key of ['next', 'status'] as const) {
+    const value = input[key];
+    if (value !== undefined && value.trim() !== '') record[key] = scrub(value.trim());
   }
   const place = input.paths[0];
   if (input.root !== undefined && place !== undefined && path.isAbsolute(input.root)) {
@@ -270,8 +303,8 @@ export function listRecords(rt: Runtime, now: number = Date.now()): MemoryRecord
 // The veto of the human: the record is never used. The file stays: a removal leaves its trace.
 export function vetoRecord(rt: Runtime, id: string, now: number = Date.now()): boolean {
   const record = stored(rt).find((r) => r.id === id);
-  // A replaced decision is out of use already: a veto of it would only open the way to restore it.
-  if (record === undefined || record.state === 'vetoed' || record.state === 'replaced') return false;
+  // A replaced decision and a closed case are out of use already: a veto of one would only open the way to restore it.
+  if (record === undefined || record.state === 'vetoed' || record.state === 'replaced' || record.state === 'closed') return false;
   write(rt, { ...record, state: 'vetoed', history: [...record.history, { at: new Date(now).toISOString(), state: 'vetoed' }] });
   rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: 'vetoed' } });
   return true;
@@ -338,7 +371,8 @@ const byWeight = (a: MemoryRecord, b: MemoryRecord): number =>
 // The records of the project for the start of a session: one line for a record, within a size
 // limit. `more`: how many records did not fit.
 export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Date.now()): { lines: string[]; more: number } {
-  const found = findRecords(rt, { paths: [], all: true, silent: true }, now).sort(byWeight);
+  // The cases have their own place in the start of a session: see `casesForStart`.
+  const found = findRecords(rt, { paths: [], all: true, silent: true }, now).filter((r) => r.type !== 'case').sort(byWeight);
   const lines: string[] = [];
   let size = 0;
   for (const r of found) {
@@ -369,6 +403,81 @@ export function searchRecords(rt: Runtime, words: string[], limit = 20, now: num
   // The journal counts the records that the agent got: the share of used records rests on it.
   if (records.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: records.length } });
   return { records, more: Math.max(0, found.length - limit) };
+}
+
+// ---- A case: what is not finished. It lives until it is closed; each step replaces the next step.
+
+export type CaseError = 'not_allowed' | 'unknown_record' | 'bad_type' | 'bad_text';
+type Who = { by: 'agent' | 'human'; task?: string };
+
+// The case that a change is about. The agent changes a case only in a task whose manifest lets
+// it write cases; the human needs no task. Only a case in use takes a change.
+function caseFor(rt: Runtime, id: string, who: Who, now: number): { ok: true; record: Omit<MemoryRecord, 'uses'> } | { ok: false; error: CaseError } {
+  if (who.by === 'agent' && mayWrite(rt, who.task, 'case') === null) return { ok: false, error: 'not_allowed' };
+  const record = stored(rt).find((r) => r.id === id);
+  // A case of another project is not a case of this one: the memory directory is one for all projects.
+  if (record === undefined || (record.project !== rt.project && record.scope !== 'common')) return { ok: false, error: 'unknown_record' };
+  if (record.type !== 'case') return { ok: false, error: 'bad_type' };
+  // A case in use, or a draft in its veto window: the agent that opened a case can go on with it.
+  const state = at(record, now, readUses(rt)[id]).state;
+  if (state !== 'active' && state !== 'pending') return { ok: false, error: 'unknown_record' };
+  return { ok: true, record };
+}
+
+// A step of a case: its next step is another one now, and the count of carried days starts again.
+export function stepCase(rt: Runtime, id: string, change: Who & { next: string; status?: string }, now: number = Date.now()): { ok: true; record: MemoryRecord } | { ok: false; error: CaseError } {
+  const found = caseFor(rt, id, change, now);
+  if (!found.ok) return found;
+  const next = change.next.trim();
+  const status = change.status?.trim();
+  if (next === '' || next.length > MAX_STEP || /[\r\n]/.test(next) || (status !== undefined && (status.length > MAX_STEP || /[\r\n]/.test(status)))) return { ok: false, error: 'bad_text' };
+  const { carried_day: _, ...rest } = found.record;
+  // The step is a proof that the case is alive: its term starts again.
+  const record = { ...rest, next: scrub(next), carried: 0, verified: new Date(now).toISOString(), ...(status !== undefined && status !== '' ? { status: scrub(status) } : {}) };
+  write(rt, record);
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(change.task !== undefined ? { task: change.task } : {}), data: { record: id, type: 'case', state: 'active', step: 1 } });
+  return { ok: true, record: at(record, now, readUses(rt)[id]) };
+}
+
+// The end of a case: it is out of use. The file stays: an end leaves its trace.
+export function closeCase(rt: Runtime, id: string, who: Who, now: number = Date.now()): { ok: true } | { ok: false; error: CaseError } {
+  const found = caseFor(rt, id, who, now);
+  if (!found.ok) return found;
+  write(rt, { ...found.record, state: 'closed', history: [...found.record.history, { at: new Date(now).toISOString(), state: 'closed' }] });
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(who.task !== undefined ? { task: who.task } : {}), data: { record: id, type: 'case', state: 'closed' } });
+  return { ok: true };
+}
+
+// The open cases of the project for the start of a session: one line for a case, with its next
+// step, within a size limit. A case that is shown is carried one more day: once for a day,
+// however many sessions start. The case that was carried most comes first.
+export function casesForStart(rt: Runtime, maxBytes: number, now: number = Date.now()): { lines: string[]; more: number } {
+  const day = new Date(now).toISOString().slice(0, 10);
+  // The count of a case as it is after this start: a case that was not counted today gets a day.
+  const cases = findRecords(rt, { paths: [], all: true, silent: true }, now).filter((r) => r.type === 'case')
+    .map((r) => ({ r, carried: r.carried_day === day ? r.carried ?? 0 : (r.carried ?? 0) + 1 }))
+    .sort((a, b) => b.carried - a.carried || b.r.created.localeCompare(a.r.created) || a.r.id.localeCompare(b.r.id));
+  const lines: string[] = [];
+  const shown: { id: string; carried: number }[] = [];
+  let size = 0;
+  const one = (text: string, max: number): string => text.replace(/\s+/g, ' ').slice(0, max);
+  for (const { r, carried } of cases) {
+    const line = `- ${r.id} ${carried > 1 ? `(carried ${carried}) ` : ''}${one(r.text, 160)}${r.next !== undefined ? ` → next: ${one(r.next, 160)}` : ''}${r.status !== undefined ? ` [${one(r.status, 60)}]` : ''}`;
+    if (size + Buffer.byteLength(line) + 1 > maxBytes) break;
+    size += Buffer.byteLength(line) + 1;
+    lines.push(line);
+    if (r.carried_day !== day) shown.push({ id: r.id, carried });
+  }
+  // Only a case that got a line was shown: a case that did not fit is not carried by this start.
+  if (shown.length > 0) {
+    const kept = stored(rt);
+    for (const { id, carried } of shown) {
+      const file = kept.find((x) => x.id === id);
+      if (file !== undefined) write(rt, { ...file, carried, carried_day: day });
+    }
+  }
+  if (lines.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: lines.length } });
+  return { lines, more: cases.length - lines.length };
 }
 
 // The human shares a record: it is a record of every project from now on.
@@ -452,7 +561,7 @@ export function importRecords(rt: Runtime, file: string, now: number = Date.now(
     const text = typeof value.text === 'string' ? scrub(value.text) : '';
     if (have.has(`${String(value.type)}\n${text}`)) return;
     const input: NewRecord = { type: String(value.type), text: typeof value.text === 'string' ? value.text : '', paths: Array.isArray(value.paths) ? (value.paths as string[]) : [], by: 'human' };
-    for (const key of ['because', 'rejected', 'revisit', 'created', 'source', 'root'] as const) if (typeof value[key] === 'string') input[key] = value[key];
+    for (const key of ['because', 'rejected', 'revisit', 'created', 'source', 'root', 'next', 'status'] as const) if (typeof value[key] === 'string') input[key] = value[key];
     // The record is old in its own store and new here: its term starts at the import.
     input.verified = new Date(now).toISOString();
     const r = addRecord(rt, input, now);
