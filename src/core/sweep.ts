@@ -8,6 +8,7 @@ import { applyEvent, collectedDir, openTasks, type Runtime } from './runtime.ts'
 import type { Task } from './task.ts';
 import { pruneArchive } from '../journal/writer.ts';
 import { pruneQueue } from './queue.ts';
+import { pruneRecords } from '../memory/store.ts';
 
 const HOUR = 60 * 60 * 1000;
 // A free task: half a day. A scenario task: a day. A publication: an hour, as its envelope.
@@ -52,5 +53,7 @@ export function sweep(rt: Runtime, now: number = Date.now()): string[] {
   }
   // The archive of the journal past the term that the packs name goes away.
   pruneArchive(rt.stateDir, rt.merged.journalKeepDays, now);
+  // The file of a memory record that the human removed, past the term that the packs name.
+  pruneRecords(rt, now);
   return closed;
 }

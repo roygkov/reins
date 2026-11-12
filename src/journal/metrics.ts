@@ -67,6 +67,8 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         m.shape_changes += 1;
         break;
       case 'memory.record_changed':
+        // The file of a removed record that went away past its term is no second veto.
+        if (data.gone !== undefined) break;
         if (data.state === 'vetoed') m.memory.vetoed += 1;
         // A share and a mark "this was wrong" change a record that was written before.
         // A step and the end of a case change a record that was written before, too.

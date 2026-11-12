@@ -55,7 +55,7 @@ export type PackSettings = {
   limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number };
   roles?: string[];
   checks?: string[];
-  memory?: { types?: string[]; veto_days?: number };
+  memory?: { types?: string[]; veto_days?: number; keep_days?: number };
   tools?: Record<string, ToolRule>;
   rules?: PackRule[];
   models?: Partial<Record<ModelLevel, string>>; // the name of the model of the client for a level
@@ -99,6 +99,7 @@ export type Merged = {
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
   gate: GateData; // the rule data of the gate that the packs add, upper pack first
   defaultLevel?: ModelLevel; // the level of the model for a manifest that names none: the lowest pack that gives one
+  memoryKeepDays?: number; // how long the file of a removed memory record is kept: the longest that a pack names
   journalKeepDays?: number; // the term of the archive of the journal: the longest that a pack names
   // The terms of the queue. A wait and an approval are barriers: the shortest that a pack names
   // holds. The keeping of ended entries is a record: the longest holds.
@@ -279,12 +280,14 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   const checks = names(errors, value.checks, 'checks');
   if (checks !== undefined) settings.checks = checks;
 
-  const memory = section(errors, value.memory, 'memory', ['types', 'veto_days']);
+  const memory = section(errors, value.memory, 'memory', ['types', 'veto_days', 'keep_days']);
   if (memory !== null) {
     const types = names(errors, memory.types, 'memory.types', RECORD_TYPES);
     // How long a record that the harness wrote waits for a veto of the human.
     const veto = limit(errors, memory.veto_days, 'memory.veto_days');
-    settings.memory = { ...(types !== undefined && { types }), ...(veto !== undefined && { veto_days: veto }) };
+    // How long the file of a record that the human removed is kept.
+    const kept = limit(errors, memory.keep_days, 'memory.keep_days');
+    settings.memory = { ...(types !== undefined && { types }), ...(veto !== undefined && { veto_days: veto }), ...(kept !== undefined && { keep_days: kept }) };
   }
   if (value.tools !== undefined) {
     // Only the organization says what a tool does: a lower level could turn a write into a read.
@@ -617,6 +620,8 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   if (kept !== undefined && (m.queueKeepDays === undefined || kept > m.queueKeepDays)) m.queueKeepDays = kept;
   const veto = s.memory?.veto_days;
   if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
+  const removed = s.memory?.keep_days;
+  if (removed !== undefined && (m.memoryKeepDays === undefined || removed > m.memoryKeepDays)) m.memoryKeepDays = removed;
   narrow('readConnectors', s.connectors?.read);
   narrow('writeActions', s.connectors?.write);
   narrow('memoryTypes', s.memory?.types);

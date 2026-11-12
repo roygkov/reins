@@ -10,9 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, pruneArchive, readJournal, readJournalSince } from '../src/journal/writer.ts';
 import { validateRow, type JournalRow } from '../src/contracts/journal.ts';
-import { eight } from '../src/journal/metrics.ts';
+import { eight, summarize } from '../src/journal/metrics.ts';
 import type { Runtime } from '../src/core/runtime.ts';
 import { sweep } from '../src/core/sweep.ts';
+import { addRecord, listRecords, restoreRecord, vetoRecord } from '../src/memory/store.ts';
 import { afterAction, beforeAction, type ClientTools } from '../src/client/before.ts';
 import { loadCases } from './cases.ts';
 
@@ -187,6 +188,50 @@ test('week: the pack sets how long the archive is kept, and the sweep removes wh
   assert.deepEqual(fs.readdirSync(archive), ['fresh.jsonl']);
   assert.equal(pruneArchive(b.rt.stateDir, undefined, NOW), 0, 'without a term nothing is removed');
   assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', journal: { keep_days: 0, more: 1 } }, 'person').errors.map((e) => `${e.code} ${e.path}`), ['unknown_field journal.more', 'not_positive journal.keep_days']);
+});
+
+test('week: the pack sets how long a removed record is kept, and the sweep removes its file', () => {
+  const b = box({ organization: { memory: { keep_days: 30 } }, person: { memory: { keep_days: 10 } } });
+  assert.equal(b.rt.merged.memoryKeepDays, 30, 'the longest term of the packs');
+  const made = (text: string) => {
+    const r = addRecord(b.rt, { type: 'decision', text, because: 'the owner said so', paths: [], by: 'human' }, NOW - 100 * DAY);
+    assert.ok(r.ok);
+    return r.record.id;
+  };
+  const [old, fresh, back, live] = [made('one cache'), made('logs in UTC'), made('one queue'), made('no retries')] as [string, string, string, string];
+  vetoRecord(b.rt, old, NOW - 40 * DAY);
+  vetoRecord(b.rt, fresh, NOW - 5 * DAY);
+  // A record that the human took back counts from nothing: it is in use.
+  vetoRecord(b.rt, back, NOW - 90 * DAY);
+  restoreRecord(b.rt, back, NOW - 80 * DAY);
+  sweep(b.rt, NOW);
+  assert.deepEqual(listRecords(b.rt, NOW).map((r) => [r.id, r.state]).sort(), [[fresh, 'vetoed'], [back, 'active'], [live, 'active']].sort());
+  const rows = readJournalSince(b.rt.stateDir).filter((r) => r.kind === 'memory.record_changed' && r.data?.gone === 1);
+  assert.deepEqual(rows.map((r) => r.data), [{ record: old, type: 'decision', state: 'vetoed', gone: 1 }]);
+  for (const row of rows) assert.deepEqual(validateRow(row), []);
+  // The end of the file is no veto and no new record in the numbers.
+  assert.deepEqual(summarize(rows).memory, { written: 0, vetoed: 0, reads: 0 });
+  // A second sweep finds nothing; the record cannot come back.
+  sweep(b.rt, NOW);
+  assert.equal(readJournalSince(b.rt.stateDir).filter((r) => r.kind === 'memory.record_changed' && r.data?.gone === 1).length, 1);
+  assert.equal(restoreRecord(b.rt, old, NOW), false);
+  // The term of this project is no term of another project: its records stay.
+  const other = { ...b.rt, project: 'p9z8y7x6' };
+  const foreign = addRecord(other, { type: 'decision', text: 'one bus', because: 'the owner said so', paths: [], by: 'human' }, NOW - 100 * DAY);
+  assert.ok(foreign.ok);
+  vetoRecord(other, foreign.record.id, NOW - 40 * DAY);
+  sweep(b.rt, NOW);
+  assert.equal(listRecords(b.rt, NOW).some((r) => r.id === foreign.record.id), true);
+  sweep(other, NOW);
+  assert.equal(listRecords(b.rt, NOW).some((r) => r.id === foreign.record.id), false);
+  // Without a term nothing is removed.
+  const none = box();
+  const r = addRecord(none.rt, { type: 'decision', text: 'one cache', because: 'the owner said so', paths: [], by: 'human' }, NOW - 900 * DAY);
+  assert.ok(r.ok);
+  vetoRecord(none.rt, r.record.id, NOW - 800 * DAY);
+  sweep(none.rt, NOW);
+  assert.equal(listRecords(none.rt, NOW).length, 1);
+  assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', memory: { keep_days: 0 } }, 'person').errors.map((e) => `${e.code} ${e.path}`), ['not_positive memory.keep_days']);
 });
 
 // ---- Cases of the review.

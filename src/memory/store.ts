@@ -371,6 +371,37 @@ export function vetoRecord(rt: Runtime, id: string, now: number = Date.now()): b
   return true;
 }
 
+// The term of a removed record. The file of a record that the human removed stays for the term
+// that the packs name, then it goes away: after that the record cannot come back. Without a term
+// the file stays for ever. The term counts from the removal, not from the time of the file.
+// The packs of a project set the term of its records only: the records of another project keep
+// the term of their packs.
+export function pruneRecords(rt: Runtime, now: number = Date.now()): string[] {
+  const keepDays = rt.merged.memoryKeepDays;
+  if (keepDays === undefined) return [];
+  const gone: string[] = [];
+  for (const record of stored(rt)) {
+    if (record.state !== 'vetoed' || record.project !== rt.project) continue;
+    const last = record.history[record.history.length - 1];
+    const removed = last?.state === 'vetoed' ? Date.parse(last.at) : NaN;
+    // A removal with no time that can be read is not judged: the file stays.
+    if (!Number.isFinite(removed) || now - removed <= keepDays * DAY) continue;
+    const file = fileOf(rt, record.type, record.id);
+    try {
+      // The human can take the record back at this same time: the file is read again just before it goes.
+      if (parse(fs.readFileSync(file, 'utf8'))?.state !== 'vetoed') continue;
+      fs.rmSync(file);
+    } catch {
+      continue;
+    }
+    changed(rt, record.id);
+    // The list of the kinds of the journal is closed: the end of a removed record is its last change.
+    rt.journal.write({ kind: 'memory.record_changed', project: record.project, data: { record: record.id, type: record.type, state: 'vetoed', gone: 1 } });
+    gone.push(record.id);
+  }
+  return gone;
+}
+
 // A record that is in use goes out of use: nobody cited it. The human can restore it.
 // `idleDays`: the record must be without a citation for this long, as it was when the change was proposed.
 export function retireRecord(rt: Runtime, id: string, now: number = Date.now(), idleDays = 0): boolean {
