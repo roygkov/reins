@@ -268,6 +268,78 @@ test('craft: a scenario from contracts is measured by its returns for one task',
   assert.deepEqual(measure(b.rt, NOW).map((p) => p.effect), ['better']);
 });
 
+test('craft: an accepted proposal that made things worse gets a proposal to undo it, and the acceptance undoes the ready change', () => {
+  const b = box();
+  const r = (kind: string) => ({ kind, scenario: 'fix-flaky-test', scenario_v: 1, ...(kind === 'task.returned' ? { data: { n: 1, reason: 'human' } } : {}) });
+  for (let i = 0; i < 3; i += 1) {
+    const made = proposeContract(b.rt, CONTRACT, {});
+    assert.ok(made.ok);
+    approveContract(b.rt, made.task.id);
+  }
+  rows(b, NOW - DAY, [...times(3, [r('task.started')]), r('task.returned')]);
+  const accepted = Date.now() + 1000;
+  const first = propose(b.rt, accepted);
+  assert.deepEqual(first.map((p) => [p.pattern, p.change?.kind]), [['repeated_contract', 'manifest']]);
+  assert.equal(resolveProposal(b.rt, first[0]?.id ?? '', 'accepted', accepted), true);
+  const file = path.join(b.packs.person ?? '', 'manifests', 'fix-flaky-test.json');
+  assert.equal(fs.existsSync(file), true);
+  // The scenario returns more often than the contracts did: worse.
+  rows(b, accepted + DAY, [...times(3, [r('task.started')]), ...times(3, [r('task.returned')])]);
+  assert.deepEqual(measure(b.rt, accepted + 8 * DAY).map((p) => p.effect), ['worse']);
+  const undo = listProposals(b.rt).find((p) => p.pattern === 'rollback');
+  assert.deepEqual([undo?.key, undo?.state, undo?.change?.kind], [first[0]?.id, 'open', 'remove_manifest']);
+  assert.deepEqual(measure(b.rt, accepted + 9 * DAY), [], 'one proposal to undo, once');
+  assert.equal(listProposals(b.rt).filter((p) => p.pattern === 'rollback').length, 1);
+  for (const row of readJournal(b.rt.journal.file).filter((x) => x.kind.startsWith('craft.'))) assert.deepEqual(validateRow(row), []);
+  // The acceptance removes the manifest that the craft wrote, and the first proposal says that it was undone.
+  assert.equal(resolveProposal(b.rt, undo?.id ?? '', 'accepted', accepted + 9 * DAY), true);
+  assert.equal(fs.existsSync(file), false);
+  const all = listProposals(b.rt);
+  assert.equal(all.find((p) => p.id === undo?.id)?.applied, true);
+  assert.equal(all.find((p) => p.id === first[0]?.id)?.undone, new Date(accepted + 9 * DAY).toISOString());
+  // The pattern has its proposal already, accepted: it is not proposed again, before the undo and after it.
+  assert.deepEqual(propose(b.rt, accepted + 9 * DAY).map((p) => p.pattern), []);
+});
+
+test('craft: a manifest that the human changed is not removed by an undo, and a proposal with no ready change is undone by hand', () => {
+  const b = box();
+  const r = (kind: string) => ({ kind, scenario: 'fix-flaky-test', scenario_v: 1, ...(kind === 'task.returned' ? { data: { n: 1, reason: 'human' } } : {}) });
+  for (let i = 0; i < 3; i += 1) {
+    const made = proposeContract(b.rt, CONTRACT, {});
+    assert.ok(made.ok);
+    approveContract(b.rt, made.task.id);
+  }
+  rows(b, NOW - DAY, [...times(3, [r('task.started')]), r('task.returned')]);
+  const accepted = Date.now() + 1000;
+  const first = propose(b.rt, accepted);
+  resolveProposal(b.rt, first[0]?.id ?? '', 'accepted', accepted);
+  const file = path.join(b.packs.person ?? '', 'manifests', 'fix-flaky-test.json');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('Fix the flaky test', 'Fix the flaky test, my way'));
+  rows(b, accepted + DAY, [...times(3, [r('task.started')]), ...times(3, [r('task.returned')])]);
+  measure(b.rt, accepted + 8 * DAY);
+  const undo = listProposals(b.rt).find((p) => p.pattern === 'rollback');
+  assert.equal(resolveProposal(b.rt, undo?.id ?? '', 'accepted', accepted + 9 * DAY), true);
+  assert.equal(fs.existsSync(file), true, 'the file of the human stays');
+  assert.equal(listProposals(b.rt).find((p) => p.id === undo?.id)?.applied, false);
+  assert.equal(listProposals(b.rt).find((p) => p.id === first[0]?.id)?.undone, undefined, 'nothing was undone');
+  // A rule that asks more after its proposal was accepted: the human made that change by hand, so the undo has no ready change.
+  const c = box();
+  rows(c, NOW - 9 * DAY, times(5, question('default.unknown-tool')));
+  const asked = propose(c.rt, NOW - 8 * DAY);
+  resolveProposal(c.rt, asked[0]?.id ?? '', 'accepted', NOW - 8 * DAY);
+  rows(c, NOW - 7 * DAY, times(9, question('default.unknown-tool')));
+  assert.deepEqual(measure(c.rt, NOW).map((p) => p.effect), ['worse']);
+  const byHand = listProposals(c.rt).find((p) => p.pattern === 'rollback');
+  assert.deepEqual([byHand?.key, byHand?.change], [asked[0]?.id, undefined]);
+  // The human undid the change by hand and accepted: the first proposal says that it was undone.
+  resolveProposal(c.rt, byHand?.id ?? '', 'accepted', NOW);
+  assert.equal(listProposals(c.rt).find((p) => p.id === asked[0]?.id)?.undone, new Date(NOW).toISOString());
+  // An undo is outside the count of proposals in a week.
+  c.rt.merged.craft = { per_week: 1 };
+  rows(c, NOW - DAY, times(5, question('shell.rm')));
+  assert.deepEqual(propose(c.rt, NOW + DAY).map((p) => p.key), ['shell.rm']);
+});
+
 test('craft: a record that a report cited in the last month is not unused, and is not made stale', () => {
   const b = box();
   const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);

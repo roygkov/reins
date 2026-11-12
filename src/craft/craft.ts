@@ -13,13 +13,16 @@ import { loadTask } from '../core/runtime.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listRecords, retireRecord } from '../memory/store.ts';
 
-export type Pattern = { pattern: 'repeated_question' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low'; key: string; n: number };
+// `rollback`: an accepted proposal made things worse; the key is the id of that proposal.
+export type Pattern = { pattern: 'repeated_question' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
-export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale' };
+// The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
+export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale' } | { kind: 'remove_manifest'; path: string; manifest: unknown };
 export type Effect = 'better' | 'same' | 'worse' | 'not_measured';
 // `rejected_n`: the size of the pattern when the human rejected it. `applied`: the ready change was made.
-export type Proposal = Pattern & { id: string; created: string; state: 'open' | 'accepted' | 'rejected'; change?: Change; resolved?: string; applied?: boolean; effect?: Effect; rejected_n?: number };
+// `undone`: the time when the human accepted the undo of this proposal.
+export type Proposal = Pattern & { id: string; created: string; state: 'open' | 'accepted' | 'rejected'; change?: Change; resolved?: string; applied?: boolean; effect?: Effect; rejected_n?: number; undone?: string };
 
 const DAY = 24 * 60 * 60 * 1000;
 // The thresholds of the code. A pack can set its own: the section `craft`.
@@ -171,7 +174,8 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
   // The count of proposals in a week, when the packs name one: the human reads a few, not a heap.
   // What does not fit waits: its pattern stays in the journal and is found again.
   const perWeek = rt.merged.craft?.per_week;
-  let week = [...known.values()].filter((p) => now - Date.parse(p.created) < 7 * DAY && Date.parse(p.created) <= now).length;
+  // An undo is outside the count: it comes from a measure, not from a pattern.
+  let week = [...known.values()].filter((p) => p.pattern !== 'rollback' && now - Date.parse(p.created) < 7 * DAY && Date.parse(p.created) <= now).length;
   for (const found of [...detect(rows, rt.merged.craft), ...unusedRecords(rt, now)]) {
     const before = known.get(`${found.pattern} ${found.key}`);
     if (before !== undefined && !(before.state === 'rejected' && found.n >= 2 * (before.rejected_n ?? before.n))) continue;
@@ -206,6 +210,19 @@ function apply(rt: Runtime, p: Proposal, now: number): boolean {
   const change = p.change;
   if (change === undefined) return false;
   if (change.kind === 'memory') return retireRecord(rt, change.record, now, rt.merged.craft?.unused_days ?? UNUSED_DAYS);
+  if (change.kind === 'remove_manifest') {
+    // The undo removes only what the craft wrote: a file that the human changed since is the work of the human.
+    const dir = rt.merged.packs.find((x) => x.level === 'person')?.dir;
+    if (dir === undefined || !/^manifests\/[a-z][a-z0-9-]{0,62}\.json$/.test(change.path)) return false;
+    try {
+      const file = path.join(dir, change.path);
+      if (fs.readFileSync(file, 'utf8') !== `${JSON.stringify(change.manifest, null, 2)}\n`) return false;
+      fs.rmSync(file);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   // A new scenario lies in the pack of the person. A file that is there already is not replaced.
   const dir = rt.merged.packs.find((x) => x.level === 'person')?.dir;
   if (dir === undefined || !NAME.test(p.key)) return false;
@@ -223,7 +240,14 @@ export function resolveProposal(rt: Runtime, id: string, state: 'accepted' | 're
   const p = listProposals(rt).find((x) => x.id === id);
   if (p === undefined || p.state !== 'open') return false;
   const resolved = new Date(now).toISOString();
-  save(rt, state === 'accepted' ? { ...p, state, resolved, applied: apply(rt, p, now) } : { ...p, state, resolved, rejected_n: p.n });
+  const applied = state === 'accepted' ? apply(rt, p, now) : false;
+  save(rt, state === 'accepted' ? { ...p, state, resolved, applied } : { ...p, state, resolved, rejected_n: p.n });
+  // The undo was accepted: the proposal that it undoes says so. A ready change that could not be
+  // made (the human changed the file) undid nothing: the first proposal stays as it is.
+  if (state === 'accepted' && p.pattern === 'rollback' && (p.change === undefined || applied)) {
+    const first = listProposals(rt).find((x) => x.id === p.key);
+    if (first !== undefined) save(rt, { ...first, undone: resolved });
+  }
   rt.journal.write({ kind: 'craft.proposal_resolved', project: rt.project, data: { proposal: id, state } });
   return true;
 }
@@ -260,6 +284,26 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
   return 'not_measured';
 }
 
+// An accepted proposal made things worse: the craft proposes to undo it. The human decides. The
+// undo has a ready change only when the first proposal had one that can be taken back.
+function proposeUndo(rt: Runtime, first: Proposal, now: number): void {
+  const change: Change | undefined = first.applied === true && first.change?.kind === 'manifest' ? { kind: 'remove_manifest', path: first.change.path, manifest: first.change.manifest } : undefined;
+  const p: Proposal = {
+    pattern: 'rollback', key: first.id, n: 1, id: `c${crypto.createHash('sha256').update(`rollback ${first.id}`).digest('hex').slice(0, 10)}`,
+    created: new Date(now).toISOString(), state: 'open', ...(change !== undefined ? { change } : {}),
+  };
+  try {
+    fs.writeFileSync(path.join(dirOf(rt), `${p.id}.json`), JSON.stringify(p), { flag: 'wx' });
+  } catch {
+    return; // it is there already
+  }
+  rt.journal.write({ kind: 'craft.proposal_created', project: rt.project, data: { proposal: p.id, pattern: p.pattern } });
+}
+
+// One proposal in the words for the human.
+export const proposalLine = (p: Proposal): string =>
+  p.pattern === 'rollback' ? `${p.id}: undo of the proposal ${p.key}, its effect was worse` : `${p.id}: ${p.pattern} of "${p.key.replace(/\s+/g, ' ').slice(0, 80)}", seen ${p.n} times`;
+
 // Measures the accepted proposals that are a week old. Returns those that got an effect now.
 export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {
   const out: Proposal[] = [];
@@ -278,6 +322,7 @@ export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {
     if (effect === 'not_measured') continue;
     rt.journal.write({ kind: 'craft.effect_measured', project: rt.project, data: { proposal: p.id, effect } });
     out.push(next);
+    if (effect === 'worse') proposeUndo(rt, next, now);
   }
   return out;
 }

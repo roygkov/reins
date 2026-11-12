@@ -10,7 +10,7 @@ import type { Runtime } from '../core/runtime.ts';
 import { EIGHT, eight } from '../journal/metrics.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listRecords } from '../memory/store.ts';
-import { listProposals } from './craft.ts';
+import { listProposals, proposalLine } from './craft.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NAME = /^week-(\d{4}-\d{2}-\d{2})\.md$/;
@@ -28,7 +28,7 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   const open = proposals.filter((p) => p.state === 'open');
   lines.push('', '## Needs a decision of the human', '');
   if (open.length === 0) lines.push('Nothing.');
-  for (const p of open) lines.push(`- ${p.id}: ${p.pattern} of "${one(p.key, 80)}", seen ${p.n} times${p.change !== undefined ? `; the ready change: ${p.change.kind}` : ''}. \`reins craft accept ${p.id}\` or \`reins craft reject ${p.id}\``);
+  for (const p of open) lines.push(`- ${proposalLine(p)}${p.change !== undefined ? `; the ready change: ${p.change.kind}` : ''}. \`reins craft accept ${p.id}\` or \`reins craft reject ${p.id}\``);
   // The summary is of the machine, as the numbers are: the drafts of all the projects of the memory directory.
   const pending = listRecords(rt, now).filter((r) => r.state === 'pending');
   lines.push('', '## Waits for its term', '');
@@ -40,7 +40,7 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   const accepted = proposals.filter((p) => p.state === 'accepted' && p.resolved !== undefined && now - Date.parse(p.resolved) < 35 * DAY);
   lines.push('', '## Accepted, and the effect', '');
   if (accepted.length === 0) lines.push('Nothing.');
-  for (const p of accepted) lines.push(`- ${p.id}: ${p.pattern} of "${one(p.key, 80)}", accepted ${(p.resolved ?? '').slice(0, 10)}: ${p.effect === undefined || p.effect === 'not_measured' ? 'not measured' : p.effect}`);
+  for (const p of accepted) lines.push(`- ${proposalLine(p)}, accepted ${(p.resolved ?? '').slice(0, 10)}: ${p.pattern === 'rollback' ? 'an undo' : p.effect === undefined || p.effect === 'not_measured' ? 'not measured' : p.effect}${p.undone !== undefined ? `, undone ${p.undone.slice(0, 10)}` : ''}`);
   return `${lines.join('\n')}\n`;
 }
 

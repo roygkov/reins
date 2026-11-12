@@ -313,12 +313,17 @@ test('week: the summary of the week is a file: the numbers, what needs a decisio
   fs.mkdirSync(path.join(b.rt.stateDir, 'craft'), { recursive: true });
   fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c0123456789.json'), JSON.stringify({ id: 'c0123456789', pattern: 'repeated_question', key: 'tool.unknown', n: 7, created: new Date(real).toISOString(), state: 'open' }));
   fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c1123456789.json'), JSON.stringify({ id: 'c1123456789', pattern: 'check_fails_often', key: 'change-review', n: 4, created: new Date(real - 9 * DAY).toISOString(), state: 'accepted', resolved: new Date(real - 8 * DAY).toISOString(), effect: 'better' }));
+  // An open undo, and a proposal that was undone.
+  fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c2123456789.json'), JSON.stringify({ id: 'c2123456789', pattern: 'rollback', key: 'c1123456789', n: 1, created: new Date(real).toISOString(), state: 'open' }));
+  fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c3123456789.json'), JSON.stringify({ id: 'c3123456789', pattern: 'repeated_contract', key: 'fix-flaky-test', n: 3, created: new Date(real - 9 * DAY).toISOString(), state: 'accepted', resolved: new Date(real - 8 * DAY).toISOString(), effect: 'worse', undone: new Date(real - DAY).toISOString() }));
   const text = weekText(b.rt, real);
+  assert.match(text, /- c2123456789: undo of the proposal c1123456789, its effect was worse\. `reins craft accept c2123456789`/);
+  assert.match(text, /- c3123456789: repeated_contract of "fix-flaky-test", seen 3 times, accepted \d{4}-\d{2}-\d{2}: worse, undone \d{4}-\d{2}-\d{2}/);
   assert.match(text, /^# reins: the week to \d{4}-\d{2}-\d{2}\n/);
   for (const name of ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']) assert.match(text, new RegExp(`^\\| ${name} \\| `, 'm'));
   assert.match(text, /## Needs a decision of the human\n\n- c0123456789: repeated_question of "tool.unknown", seen 7 times\. `reins craft accept c0123456789` or `reins craft reject c0123456789`/);
   assert.match(text, /## Waits for its term\n\nNothing\./);
-  assert.match(text, /## Accepted, and the effect\n\n- c1123456789: check_fails_often of "change-review", accepted \d{4}-\d{2}-\d{2}: better/);
+  assert.match(text, /## Accepted, and the effect\n\n- c1123456789: check_fails_often of "change-review", seen 4 times, accepted \d{4}-\d{2}-\d{2}: better/);
   // A client without a window writes no summary: nobody reads its notice.
   process.env.REINS_HEADLESS = '1';
   try {

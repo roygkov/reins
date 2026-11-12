@@ -11,7 +11,7 @@ import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
-import { listProposals, measure, propose } from '../craft/craft.ts';
+import { listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
 import { writeWeek } from '../craft/weekly.ts';
 import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
@@ -152,7 +152,7 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   const proposals = listProposals(rt).filter((p) => p.state === 'open');
   if (proposals.length > 0) {
     context.push('Proposals of the harness for the human (say them to the human; `reins craft accept|reject <id>` resolves one):');
-    for (const p of proposals.slice(0, 10)) context.push(`- ${p.id}: ${p.pattern} of "${p.key}", seen ${p.n} times`);
+    for (const p of proposals.slice(0, 10)) context.push(`- ${proposalLine(p)}`);
   }
   // The summary of the week is a file and a notice: once in seven days the harness writes it and says where it is.
   // A client without a window has no human who reads the notice: the summary waits for a session with one.
