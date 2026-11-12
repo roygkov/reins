@@ -243,6 +243,11 @@ function hold(rt: Runtime, task: Task, session: string | undefined): void {
   patchSession(rt, session, { scenario: task.id });
 }
 
+// A step of the harness ran past its time: a fact of the journal, with the step and the task.
+export function stepTimeout(rt: Runtime, task: string, where: 'collect' | 'check' | 'run'): void {
+  rt.journal.write({ kind: 'harness.step_timeout', project: rt.project, task, data: { where } });
+}
+
 // The preparation of a task that has a manifest: the collect script and the run condition.
 function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<string, unknown> | null } {
   const manifest = start.manifest;
@@ -285,7 +290,10 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
   if (workBefore !== null && rt.workDir !== undefined) {
     if (workState(rt.workDir) !== workBefore) return { task: prepared({ type: 'collect_failed', reason: 'changed_work' }), collected: null };
   }
-  if (!result.ok) return { task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
+  if (!result.ok) {
+    if (result.reason === 'timeout') stepTimeout(rt, id, 'collect');
+    return { task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
+  }
   // The run condition is the name of a flag. False: the task closes without the model.
   if (manifest.run_if !== undefined && result.flags[manifest.run_if] === false) {
     return { task: prepared({ type: 'prepared', work: false, flag: manifest.run_if }), collected: null };
@@ -650,7 +658,10 @@ function scriptCheck(rt: Runtime, task: Task): Answer {
     // and it reaches this machine (a local server of the tests, a container engine).
     ...scriptSandbox(rt, task.manifest, checkedWork(rt, task), true),
   });
-  if (!r.ok) return none('check_failed');
+  if (!r.ok) {
+    if (r.reason === 'timeout') stepTimeout(rt, task.id, 'check');
+    return none('check_failed');
+  }
   const result = r.outputs.result;
   return result === 'PASS' || result === 'FAIL' ? { result, n: 0, faults: [] } : none('check_failed');
 }

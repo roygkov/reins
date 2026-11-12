@@ -13,6 +13,7 @@ import { workState } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { applyDue, listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
+import { noteMerge } from '../core/merged.ts';
 import { writeWeek } from '../craft/weekly.ts';
 import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
@@ -92,6 +93,8 @@ const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' :
 // The start of a session: what the agent must know before it acts.
 export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] } {
   noteDirectory(rt, e.cwd, e.session);
+  // The merge of the packs is a fact of the journal: the first start, and every change of a pack.
+  noteMerge(rt);
   // Housekeeping that needs no human: tasks past their term end, new patterns become proposals.
   sweep(rt);
   propose(rt);

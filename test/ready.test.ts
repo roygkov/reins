@@ -553,3 +553,21 @@ test('ready: the texts and the deciding values of a citation check are named in 
   assert.deepEqual(errors({ ...ok, reject: { severity: ['note'] }, unquoted: { severity: ['note'] } }), ['duplicate done.unquoted.severity[0]']);
   assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, texts: ['discussion'], reject: {}, unquoted: {} }), ['not_allowed done.texts', 'not_allowed done.reject', 'not_allowed done.unquoted']);
 });
+
+// ---- A step that ran past its time is a fact of the journal.
+
+test('ready: a collect script and a check script past their time leave a row of the journal', () => {
+  const slow = '#!/bin/sh\ncat >/dev/null\nsleep 5\n';
+  const c = box({ collect: slow });
+  const copened = openScenario({ ...c.rt, collectTimeoutMs: 300 }, 'change-review', { change_id: '7' }, {});
+  assert.ok(copened.ok);
+  assert.deepEqual(readJournal(c.rt.journal.file).filter((x) => x.kind === 'harness.step_timeout').map((x) => [x.data?.where, x.task]), [['collect', copened.task.id]]);
+  const k = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: slow });
+  const rt = { ...k.rt, checkScriptTimeoutMs: 300 };
+  const opened = openScenario(rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  submitReport(rt, opened.task.id, REPORT);
+  const rows = readJournal(k.rt.journal.file);
+  assert.deepEqual(rows.filter((x) => x.kind === 'harness.step_timeout').map((x) => [x.data?.where, x.task]), [['check', opened.task.id]]);
+  for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+});

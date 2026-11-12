@@ -130,7 +130,9 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
         measured += 1;
         if (data.effect === 'better') better += 1;
         break;
-      case 'harness.failure': case 'harness.step_timeout': case 'harness.client_shape_changed': failures += 1; break;
+      case 'harness.failure': case 'harness.client_shape_changed': failures += 1; break;
+      // A collect step past its time already has its failure row: the same fault is not counted twice.
+      case 'harness.step_timeout': if (data.where !== 'collect') failures += 1; break;
       default: break;
     }
   }

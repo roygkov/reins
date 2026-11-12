@@ -14,6 +14,7 @@ import { applyEvent, loadTask, openScenario, openTasks, type Runtime } from '../
 import { afterAction, beforeAction } from '../src/client/before.ts';
 import { agentStopped, humanRequest, sessionEnd, sessionStart } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
+import { mergeView } from '../src/core/merged.ts';
 
 const HOOK = fileURLToPath(new URL('../clients/claude-code/hooks/hook.ts', import.meta.url));
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'session-'));
@@ -264,4 +265,44 @@ test('session: the plugin registers the session events', () => {
   for (const [name, mode] of [['SessionStart', 'session-start'], ['UserPromptSubmit', 'prompt'], ['Stop', 'stop'], ['SessionEnd', 'session-end']]) {
     assert.match(hooks[name as string][0].hooks[0].command, new RegExp(`hook\\.ts" ${mode}$`), name);
   }
+});
+
+// ---- The merge of the packs is a fact of the journal.
+
+test('session: the merge of the packs is written once, and again when a pack changes', () => {
+  const b = box();
+  const merges = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.packs_merged').map((r) => r.data);
+  sessionStart(b.rt, { session: 's1', cwd: b.cwd });
+  sessionStart(b.rt, { session: 's2', cwd: b.cwd });
+  assert.equal(merges().length, 1);
+  assert.deepEqual([merges()[0]?.levels, merges()[0]?.rejected], [3, 0]);
+  assert.match(String(merges()[0]?.merge), /^[0-9a-f]{12}$/);
+  // A pack changed: a manifest is refused now, and the person pack does not connect.
+  fs.writeFileSync(path.join(b.root, 'packs/project/manifests/change-review.json'), JSON.stringify({ ...(manifests.get('review') as object), done: { kind: 'none' } }));
+  fs.writeFileSync(path.join(b.root, 'packs/person/pack.json'), '{');
+  const changed: Runtime = { ...b.rt, merged: loadPacks({ organization: path.join(b.root, 'packs/organization'), project: path.join(b.root, 'packs/project'), person: path.join(b.root, 'packs/person') }) };
+  sessionStart(changed, { session: 's3', cwd: b.cwd });
+  sessionStart(changed, { session: 's4', cwd: b.cwd });
+  assert.equal(merges().length, 2);
+  assert.deepEqual([merges()[1]?.levels, merges()[1]?.rejected], [2, 1]);
+  const rows = readJournal(b.rt.journal.file);
+  assert.deepEqual(rows.filter((r) => r.kind === 'harness.manifest_rejected').map((r) => [r.data?.level, r.data?.manifest, r.data?.code]), [['project', 'change-review', 'missing']]);
+  assert.deepEqual(rows.filter((r) => r.kind === 'harness.failure' && r.data?.where === 'pack').map((r) => [r.data?.level, r.data?.code]), [['person', 'bad_json']]);
+  for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+  // A change of what a pack says about a connector is a new merge too.
+  sessionStart({ ...changed, merged: { ...changed.merged, connectorNetwork: ['tracker'] } }, { session: 's6', cwd: b.cwd });
+  assert.equal(merges().length, 3);
+  // Another project has its own merge in the same state.
+  sessionStart({ ...b.rt, project: 'p9z9z9z9z' }, { session: 's5', cwd: b.cwd });
+  assert.equal(merges().length, 4);
+});
+
+test('session: the human reads which level gave each value of the merge', () => {
+  const b = box();
+  const view = mergeView(b.rt);
+  assert.deepEqual(view.packs.map((p) => [p.level, p.connected, p.errors]), [['organization', true, []], ['project', true, []], ['person', true, []]]);
+  assert.deepEqual(view.rejected, []);
+  assert.equal(view.values.maxTokens?.value, b.rt.merged.context.maxTokens);
+  assert.equal(view.values.maxTokens?.level, b.rt.merged.origin.maxTokens);
+  assert.ok(Object.values(view.values).some((v) => v.level === 'organization'));
 });

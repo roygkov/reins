@@ -143,7 +143,9 @@ for (const [name, body, reason] of [
     assert.ok(Date.now() - before < 2500, 'the limits hold for the children of the script');
     assert.ok(opened.ok);
     assert.deepEqual([opened.task.state, opened.task.label], ['closed', 'not_verified']);
-    const rows = readJournal(rt.journal.file);
+    // A step past its time is a row of its own, before the failure.
+    const rows = readJournal(rt.journal.file).filter((r) => r.kind !== 'harness.step_timeout');
+    assert.equal(readJournal(rt.journal.file).some((r) => r.kind === 'harness.step_timeout'), reason === 'timeout');
     assert.deepEqual(rows.map((r) => r.kind), ['task.opened', 'task.kind_decided', 'harness.failure', 'task.closed']);
     assert.deepEqual(rows[2]?.data, { where: 'collect', reason });
   });

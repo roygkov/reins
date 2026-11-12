@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadTask, type Runtime } from '../core/runtime.ts';
+import { loadTask, stepTimeout, type Runtime } from '../core/runtime.ts';
 import { MODEL_NAME } from '../packs/packs.ts';
 
 export type RunReply = { ran: boolean; exit?: number; error?: 'no_runner' | 'nested_run' | 'no_model' | 'timeout' | 'start_failed' };
@@ -97,10 +97,13 @@ export function runTask(rt: Runtime, id: string): RunReply {
   const said = linesOf(typeof r.stdout === 'string' ? r.stdout : '');
   if (r.error !== undefined) {
     stopGroup(said.group);
-    return { ran: false, error: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : 'start_failed' };
+    const timeout = (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+    if (timeout) stepTimeout(rt, id, 'run');
+    return { ran: false, error: timeout ? 'timeout' : 'start_failed' };
   }
   // The program between ended with no answer (the system stopped it): the group of the client must not stay.
   if (said.reply === undefined) stopGroup(said.group);
+  if (said.reply?.error === 'timeout') stepTimeout(rt, id, 'run');
   return said.reply ?? { ran: false, error: 'start_failed' };
 }
 
@@ -182,6 +185,8 @@ export function runTasks(rt: Runtime, ids: string[], parallel: number = rt.runne
       stopGroup(said.group);
     }
     const reply: ManyReply = said.reply ?? { ran: false, error: 'timeout' };
+    // A program between that died says nothing too: only the time limit is a step past its time.
+    if (said.reply?.error === 'timeout' || (said.reply === undefined && Date.now() >= r.until)) stepTimeout(rt, r.id, 'run');
     fs.rmSync(r.file, { force: true });
     // A work tree that the client left as it was goes away. One with a change or with a new
     // commit stays: the human finds the work of the task there.
