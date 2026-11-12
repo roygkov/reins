@@ -17,7 +17,8 @@ import { casesForStart, listRecords, recordsForStart, stateForStart } from '../m
 
 // `capabilities`: what the client can do. `before`: it tells the core before an action.
 // `choice`: it can show the human a question with a choice. Absent: the client can.
-export type SessionEvent = { session?: string; cwd: string; client?: string; capabilities?: { before?: boolean; choice?: boolean } };
+// `headless`: the client runs without a window, nobody answers it.
+export type SessionEvent = { session?: string; cwd: string; client?: string; capabilities?: { before?: boolean; choice?: boolean }; headless?: boolean };
 export type ClientLevel = 'full' | 'no_choice' | 'no_before';
 
 // The level of a client (harness-client, page 3). Without the event before an action the harness
@@ -236,13 +237,35 @@ export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
 
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result
 // is "not verified" (harness-core, page 2, rule 4).
-export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; label?: string; changed?: boolean; unguarded?: boolean } {
+const MAX_RETURNS = 2; // a stop gets the task back this many times; after that the run ends as it is
+
+// The reply "return the report". A client without a window stopped, and the scenario task that
+// its session holds still executes: there is no human to speak with, so the stop is not the end
+// of the work. The client is told to go on, a few times at most for one task.
+function unfinishedTask(rt: Runtime, e: SessionEvent): { task: string; scenario: string } | undefined {
+  if (e.headless !== true) return undefined;
+  const held = currentScenario(rt, e.session);
+  const task = held === undefined ? null : loadTask(rt, held);
+  if (task === null || task.session !== e.session || task.state !== 'executing') return undefined;
+  const before = readSession(rt, e.session)?.returns;
+  const n = before?.task === task.id ? before.n : 0;
+  if (n >= MAX_RETURNS) return undefined;
+  patchSession(rt, e.session, { returns: { task: task.id, n: n + 1 } });
+  return { task: task.id, scenario: task.scenario ?? '' };
+}
+
+type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string } };
+
+export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   settleQuestions(rt, e.session);
   // A measured fact: actions of this session ended, and the client told the harness before none
   // of them. The human hears it once, at the first stop after it, whatever the stop finds.
   const seen = readSession(rt, e.session);
-  const unguarded: { unguarded?: boolean } = seen?.unguarded === true && seen.told !== true ? { unguarded: true } : {};
+  const unfinished = unfinishedTask(rt, e);
+  const unguarded: Pick<Stopped, 'unguarded' | 'unfinished'> = { ...(seen?.unguarded === true && seen.told !== true ? { unguarded: true } : {}), ...(unfinished !== undefined ? { unfinished } : {}) };
   if (unguarded.unguarded === true) patchSession(rt, e.session, { told: true });
+  // The client goes on: this stop is not the end of the request, so its free task stays open.
+  if (unfinished !== undefined) return { ...unguarded };
   const id = current(rt, e.session).id;
   if (id === undefined) return { ...unguarded };
   const before = seen?.work;
@@ -252,7 +275,7 @@ export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; lab
   const changed = typeof before === 'string' && now !== null ? now !== before : undefined;
   const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000', ...(changed === true ? { changed: true } : {}) }, 'agent');
   if (!('task' in r) || r.error !== undefined) return { ...unguarded };
-  const out: { task: string; label?: string; changed?: boolean; unguarded?: boolean } = { task: id, ...unguarded };
+  const out: Stopped = { task: id, ...unguarded };
   if (r.task.label !== undefined) out.label = r.task.label;
   if (changed !== undefined) out.changed = changed;
   return out;

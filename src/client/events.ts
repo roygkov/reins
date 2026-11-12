@@ -31,6 +31,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
   if (head === null || !isObj(value)) return UNREADABLE;
   const session = head.session !== undefined ? { session: head.session } : {};
   const e: SessionEvent = { cwd: head.cwd, client, ...session };
+  if (value.headless === true) e.headless = true;
   switch (head.event) {
     case 'session_start': {
       if (isObj(value.capabilities)) {

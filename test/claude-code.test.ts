@@ -50,8 +50,8 @@ function box(): Box {
 }
 
 type Out = { code: number | null; stdout: string; json: any };
-function run(file: string, b: Box | null, args: string[], input: string): Out {
-  const env: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: b?.root ?? SB };
+function run(file: string, b: Box | null, args: string[], input: string, more: Record<string, string> = {}): Out {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: b?.root ?? SB, ...more };
   if (b !== null) env.REINS_CONFIG = b.config;
   const p = spawnSync(process.execPath, [file, ...args], { env, input, encoding: 'utf8', cwd: b?.cwd ?? SB });
   let json: unknown = null;
@@ -305,6 +305,21 @@ test('claude-code: actions with no hook before them: the human reads it at the s
   assert.match(said, /did not tell the harness before them/);
   run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
   assert.doesNotMatch(run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.systemMessage ?? '', /did not tell the harness/);
+});
+
+test('claude-code: a run without a window that stops before the report of its task is told to go on', () => {
+  const b = box();
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (...args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  const id = reins('open', 'draft-message').task;
+  // The session takes the task when it reads the input.
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'), { REINS_HEADLESS: '1' });
+  reins('input', id);
+  const stop = run(HOOK, b, ['stop'], hookEvent(b, 'Stop'), { REINS_HEADLESS: '1' });
+  assert.equal(stop.json?.decision, 'block');
+  assert.match(stop.json?.reason ?? '', new RegExp(`the task ${id} .* is not finished.*reins report ${id}`));
+  // With a window the same stop passes.
+  assert.equal(run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.decision, undefined);
 });
 
 test('claude-code: the next request also settles a question: a turn that the human broke has no end', () => {

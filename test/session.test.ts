@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { loadTask, openScenario, openTasks, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, loadTask, openScenario, openTasks, type Runtime } from '../src/core/runtime.ts';
 import { afterAction, beforeAction } from '../src/client/before.ts';
 import { agentStopped, humanRequest, sessionEnd, sessionStart } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
@@ -100,6 +100,29 @@ test('session: a client that says it tells the harness before an action is measu
   assert.equal(agentStopped(b.rt, { session: 's3', cwd: b.cwd }).unguarded, undefined);
   assert.equal(levels().length, 6);
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
+test('session: a client without a window that stops with its scenario task not finished gets the task back, twice at most', () => {
+  const b = box();
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  assert.equal(loadTask(b.rt, id)?.state, 'executing');
+  // With a window the agent stops to speak with the human: nothing is returned.
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unfinished, undefined);
+  // Without a window nobody answers: the stop is not the end of the work, and the free task of the request stays open.
+  const free = humanRequest(b.rt, { session: 's1', cwd: b.cwd }).task;
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd, headless: true }), { unfinished: { task: id, scenario: 'draft-message' } });
+  assert.equal(loadTask(b.rt, free)?.state, 'executing');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd, headless: true }).unfinished, { task: id, scenario: 'draft-message' });
+  const last = agentStopped(b.rt, { session: 's1', cwd: b.cwd, headless: true });
+  assert.deepEqual([last.unfinished, last.task, loadTask(b.rt, free)?.state], [undefined, free, 'closed'], 'the third stop ends the run and closes the free task');
+  // Another session does not hold the task; a task that is not executing is not returned.
+  assert.equal(agentStopped(b.rt, { session: 's2', cwd: b.cwd, headless: true }).unfinished, undefined);
+  const next = openScenario(b.rt, 'draft-message', {}, { session: 's3' });
+  assert.ok(next.ok);
+  applyEvent(b.rt, next.task.id, { type: 'expire' }, 'harness');
+  assert.equal(agentStopped(b.rt, { session: 's3', cwd: b.cwd, headless: true }).unfinished, undefined);
 });
 
 test('session: when the agent stops, the free task closes as not verified', () => {

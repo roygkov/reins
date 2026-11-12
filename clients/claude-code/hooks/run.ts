@@ -208,6 +208,7 @@ function session(mode: string): void {
     const rt = runtime(value.cwd);
     if (rt === null) return;
     const e: SessionEvent = { cwd: value.cwd, client: 'claude_code' };
+    if (process.env.REINS_HEADLESS === '1') e.headless = true;
     if (typeof value.session_id === 'string' && value.session_id !== '') e.session = value.session_id;
     // The last answer of the model has no action after it: what it spent is counted at the end
     // of the turn, at the end of a subordinate and before a compaction.
@@ -237,7 +238,9 @@ function session(mode: string): void {
       if (stopped.changed === true) words.push('reins: this request changed the work tree and no check judged the result: not verified. A scenario with a done check gives a verified result (`reins scenarios`).');
       // A measured fact: the client did not tell the harness before its actions.
       if (stopped.unguarded === true) words.push('reins: this client ran actions and did not tell the harness before them: the barriers did not act in this session. Look at the hooks of the plugin.');
-      if (words.length > 0) process.stdout.write(JSON.stringify({ systemMessage: words.join('\n') }));
+      // The reply "return the report": the client does not end its turn and gets the words of the harness.
+      const back = stopped.unfinished === undefined ? {} : { decision: 'block', reason: `reins: the task ${stopped.unfinished.task} of the scenario ${stopped.unfinished.scenario} is not finished. Go on with it and submit the report with \`reins report ${stopped.unfinished.task} <file>\`. Nobody answers questions in this run.` };
+      if (words.length > 0 || stopped.unfinished !== undefined) process.stdout.write(JSON.stringify({ ...(words.length > 0 ? { systemMessage: words.join('\n') } : {}), ...back }));
     }
     else if (mode === 'session-end') sessionEnd(rt, e);
     else if (mode === 'pre-compact') beforeCompaction(rt, e);
