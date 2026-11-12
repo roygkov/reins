@@ -31,6 +31,7 @@ function say(decision: 'allow' | 'ask' | 'deny', reason: string): void {
 // The fields of the hook input that the adapter relies on, checked at every event.
 let skipsQuestions = false; // the permission mode of the client that shows no question
 let interrupted = false; // the event says that the tool was broken off
+let failed = false; // the event says that the tool ended with an error
 let transcript: string | undefined; // the file where the client keeps the session, with what the model spent
 
 function readEvent(): ToolCall | null {
@@ -58,6 +59,7 @@ function readEvent(): ToolCall | null {
   if (typeof value.tool_use_id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value.tool_use_id)) call.callId = value.tool_use_id;
   // A tool that the human broke off says nothing about the answer of the human.
   interrupted = value.hook_event_name === 'PostToolUseFailure' && value.is_interrupt === true;
+  failed = value.hook_event_name === 'PostToolUseFailure' && value.is_interrupt !== true;
   // A run without a window is named by the command that starts it: nobody answers a question there.
   if (process.env.REINS_HEADLESS === '1') call.headless = true;
   return call;
@@ -193,7 +195,7 @@ function post(): void {
     if (rt === null) return;
     // A tool that failed after it started ran on the "yes" of the human. A tool that was broken
     // off is neither a "yes" nor a "no": its question ends without a word.
-    afterAction(rt, call, TOOLS, !skipsQuestions && !interrupted);
+    afterAction(rt, call, TOOLS, !skipsQuestions && !interrupted, failed);
     spent(rt, call.session);
   } catch {
     // "after" never blocks the client

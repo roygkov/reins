@@ -15,7 +15,8 @@ import { listRecords, retireRecord } from '../memory/store.ts';
 
 // `rollback`: an accepted proposal made things worse; the key is the id of that proposal.
 // `repeated_approval`: a rule asked many times and the human said "yes" every time.
-export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
+// `tool_fails_often`: one tool ended with an error many times.
+export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
@@ -30,6 +31,7 @@ const DAY = 24 * 60 * 60 * 1000;
 // The thresholds of the code. A pack can set its own: the section `craft`.
 const MIN_QUESTIONS = 5; // the same rule asked this often: describe the tool or name the write in a scenario
 const MIN_APPROVALS = 5; // the human said "yes" to one rule this often, and never "no": the question costs more than it guards
+const MIN_TOOL_FAILURES = 5; // one tool failed this often: its description, its connector or the way the agent calls it is wrong
 const MIN_CHECKS = 4; // a scenario with this many checks ...
 const FAIL_SHARE = 0.5; // ... and this share of FAIL: its instructions do not lead to a ready report
 const MIN_RAISES = 3; // a scenario with this many raises of the level of the model ...
@@ -41,11 +43,11 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number> };
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map() };
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
   // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
@@ -59,6 +61,9 @@ function count(rows: JournalRow[]): Counts {
       const rule = row.data?.rule;
       if (question && typeof rule === 'string') add(c.asked, rule);
       question = false;
+    } else if (row.kind === 'executor.tool_failed') {
+      const tool = row.data?.tool;
+      if (typeof tool === 'string') add(c.failed, tool);
     } else if (row.kind === 'task.human_decision') {
       // The answer of the human to a question of a rule. A row without a rule (an older journal) is not counted.
       // A rule that guards the harness itself or the form of the client is no matter of the craft: its question is never "too many".
@@ -103,6 +108,7 @@ export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
     if (k.all >= (set.min_checks ?? MIN_CHECKS) && k.fail / k.all >= FAIL_SHARE) out.push({ pattern: 'check_fails_often', key, n: k.fail });
   }
   for (const [key, n] of c.contracts) if (n >= (set.min_contracts ?? MIN_CONTRACTS)) out.push({ pattern: 'repeated_contract', key, n });
+  for (const [key, n] of c.failed) if (n >= (set.min_tool_failures ?? MIN_TOOL_FAILURES)) out.push({ pattern: 'tool_fails_often', key, n });
   // The agent asked for the higher level in most tasks of a scenario: the level of the manifest
   // is too low for the work. A task raises once, so the count of raises is a count of tasks.
   for (const [key, n] of c.raised) {
@@ -324,6 +330,11 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
     // The size of the sample of a measure is a number of the code: a pack does not set how an effect is judged.
     if (a < MIN_CONTRACTS || b === 0) return 'not_measured';
     return compare((after.returned.get(p.key) ?? 0) / a, (before.returned.get(p.key) ?? 0) / b);
+  }
+  if (p.pattern === 'tool_fails_often') {
+    // No decision of the policy after the acceptance: the agent did not act, so nothing is measured.
+    if (after.decisions === 0 || (before.failed.get(p.key) ?? 0) === 0) return 'not_measured';
+    return compare(after.failed.get(p.key) ?? 0, before.failed.get(p.key) ?? 0);
   }
   if (p.pattern === 'level_too_low') {
     const a = after.started.get(p.key) ?? 0;

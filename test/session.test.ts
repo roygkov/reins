@@ -141,6 +141,21 @@ test('session: the answer of the human to a question names the rule that asked',
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
 });
 
+test('session: a tool that failed is a fact of the journal: the name of the tool, no text of the error', () => {
+  const b = box();
+  const failures = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.tool_failed');
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  const call = { cwd: b.cwd, tool: 'read_file', input: { path: '/x' }, session: 's1' };
+  beforeAction(b.rt, call, CLIENT);
+  afterAction(b.rt, call, CLIENT, true, true);
+  assert.deepEqual(failures().map((r) => [r.task, r.data]), [[task, { tool: 'read_file' }]]);
+  // A tool that ran to its end writes no such row; a name that is no plain name is not written.
+  afterAction(b.rt, call, CLIENT);
+  afterAction(b.rt, { ...call, tool: 'a tool with spaces' }, CLIENT, true, true);
+  assert.equal(failures().length, 1);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
 test('session: when the agent stops, the free task closes as not verified', () => {
   const b = box();
   const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });

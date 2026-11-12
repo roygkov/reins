@@ -58,7 +58,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       if (typeof value.executor === 'string' && value.executor !== '') call.sub = value.executor;
       if (value.headless === true) call.headless = true;
       if (head.event === 'after') {
-        afterAction(rt, call, tools, value.asked !== false);
+        afterAction(rt, call, tools, value.asked !== false, value.failed === true);
         // What the model spent since the event before, when the client knows it.
         if (typeof value.tokens === 'number') noteCost(rt, { ...session, tokens: value.tokens });
         return {};

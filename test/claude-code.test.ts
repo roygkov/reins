@@ -322,6 +322,17 @@ test('claude-code: a run without a window that stops before the report of its ta
   assert.equal(run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.decision, undefined);
 });
 
+test('claude-code: a failed tool is written to the journal, a tool that the human broke off is not', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const failed = () => fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l)).filter((r) => r.kind === 'executor.tool_failed').map((r) => r.data);
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' }, error: 'no such file' }));
+  assert.deepEqual(failed(), [{ tool: 'Read' }]);
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' }, error: 'stopped', is_interrupt: true }));
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } }));
+  assert.equal(failed().length, 1);
+});
+
 test('claude-code: the next request also settles a question: a turn that the human broke has no end', () => {
   const b = box();
   run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));

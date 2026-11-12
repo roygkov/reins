@@ -210,6 +210,21 @@ test('craft: a rule that asked many times and got "yes" every time is a pattern 
   assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['repeated_approval', 'better']]);
 });
 
+test('craft: a tool that fails often is a pattern, and its effect is the count of its failures', () => {
+  const b = box();
+  const failed = (tool: string) => ({ kind: 'executor.tool_failed', data: { tool } });
+  rows(b, NOW - DAY, [...times(5, [failed('mcp__tracker__get_change')]), ...times(4, [failed('Read')])]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file)), [{ pattern: 'tool_fails_often', key: 'mcp__tracker__get_change', n: 5 }]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_tool_failures: 4 }).map((p) => p.key).sort(), ['Read', 'mcp__tracker__get_change']);
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.change]), [['tool_fails_often', 'mcp__tracker__get_change', undefined]]);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
+  // No action of the agent after the acceptance: nothing is measured. With work and fewer failures: better.
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY), []);
+  rows(b, NOW + DAY, [...question('default.write'), failed('mcp__tracker__get_change')]);
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['tool_fails_often', 'better']]);
+});
+
 // ---- The class "with a veto window".
 
 test('craft: with a term of the packs a proposal whose change can be taken back applies itself, unless the human rejected it', () => {

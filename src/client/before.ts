@@ -465,7 +465,10 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // that the human approved: the grant is confirmed and this first use is counted.
 // `asked`: false when the client did not show the question to the human (a mode of the client
 // that skips permission questions). Then the run of the tool is no approval.
-export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true): { confirmed: boolean } {
+// `failed`: the tool started and ended with an error (not broken off by the human).
+export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean } {
+  // A tool that failed is a fact for the craft: the name of the tool, never the text of the error.
+  if (failed && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_failed', data: { tool: call.tool } }]);
   // The measure of the level of the client. The adapter said that the client tells the harness
   // before an action; an action ended, and no such word came in this session. The barriers did
   // not act: that is a fact for the journal and for the human, written once for a session.

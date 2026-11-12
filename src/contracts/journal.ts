@@ -22,7 +22,7 @@ export const EVENT_KINDS = [
   // the check
   'check.started', 'check.answered', 'check.no_answer', 'check.invalidated', 'check.retries_exceeded',
   // executors and cost
-  'executor.started', 'executor.report_received', 'executor.report_judged', 'executor.level_raised', 'executor.cost',
+  'executor.started', 'executor.report_received', 'executor.report_judged', 'executor.level_raised', 'executor.cost', 'executor.tool_failed',
   // memory
   'memory.read', 'memory.record_used', 'memory.record_changed',
   // craft
@@ -99,6 +99,7 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'check.started': { check_kind: DONE_KINDS },
   'check.no_answer': { check_kind: DONE_KINDS },
   'check.retries_exceeded': { n: 'number' },
+  'executor.tool_failed': { tool: 'token' },
   'memory.read': { n: 'number' },
   'memory.record_used': { record: 'token' },
   'memory.record_changed': { record: 'token', state: ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'] },
