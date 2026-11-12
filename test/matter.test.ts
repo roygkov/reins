@@ -186,8 +186,9 @@ test('case: a case of another project is not a case of this one', () => {
   const b = box();
   const id = open(b, 'The MR waits for a review.', 'ping the reviewer');
   const there: Runtime = { ...b.rt, project: 'p9z8y7x6' };
-  assert.deepEqual(stepCase(there, id, { next: 'x', by: 'human' }, T0), { ok: false, error: 'unknown_record' });
-  assert.deepEqual(closeCase(there, id, { by: 'human' }, T0), { ok: false, error: 'unknown_record' });
+  // The answer says why: the case is there, in another project. The command runs from the directory of that project.
+  assert.deepEqual(stepCase(there, id, { next: 'x', by: 'human' }, T0), { ok: false, error: 'other_project' });
+  assert.deepEqual(closeCase(there, id, { by: 'human' }, T0), { ok: false, error: 'other_project' });
   assert.equal(of(b, id)?.next, 'ping the reviewer');
 });
 
@@ -302,7 +303,7 @@ test('case: the human gives a step to a case and ends it with words of his own',
   assert.equal(reins(['memory', 'next', mine, 'ping', 'the', 'reviewer', 'task=t0123456789ab']).json.error, 'usage');
   assert.deepEqual(reins(['memory', 'end', mine]).json, { ok: true, record: mine, state: 'closed' });
   assert.deepEqual(reins(['memory', 'end', mine]).json, { ok: false, error: 'unknown_record' });
-  assert.deepEqual(reins(['memory', 'step', id, 'x']).json, { ok: false, error: 'unknown_record' }, 'a case of another project');
+  assert.deepEqual(reins(['memory', 'step', id, 'x']).json, { ok: false, error: 'other_project' }, 'a case of another project');
   // The agent can type these commands, so a client with the hook asks the human first.
   for (const command of [`reins memory step ${mine} 'a step'`, `reins memory end ${mine}`, `cd /x && reins memory end ${mine}`]) {
     const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command } }, { shell: { kind: 'shell', command: 'command' } });

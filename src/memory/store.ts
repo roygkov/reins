@@ -424,7 +424,8 @@ export function searchRecords(rt: Runtime, words: string[], limit = 20, now: num
 
 // ---- A case: what is not finished. It lives until it is closed; each step replaces the next step.
 
-export type CaseError = 'not_allowed' | 'unknown_record' | 'bad_type' | 'bad_text';
+// `other_project`: the case is there, but it is a case of another project.
+export type CaseError = 'not_allowed' | 'unknown_record' | 'other_project' | 'bad_type' | 'bad_text';
 type Who = { by: 'agent' | 'human'; task?: string };
 
 // The case that a change is about. The agent changes a case only in a task whose manifest lets
@@ -433,7 +434,8 @@ function caseFor(rt: Runtime, id: string, who: Who, now: number): { ok: true; re
   if (who.by === 'agent' && mayWrite(rt, who.task, 'case') === null) return { ok: false, error: 'not_allowed' };
   const record = stored(rt).find((r) => r.id === id);
   // A case of another project is not a case of this one: the memory directory is one for all projects.
-  if (record === undefined || (record.project !== rt.project && record.scope !== 'common')) return { ok: false, error: 'unknown_record' };
+  if (record === undefined) return { ok: false, error: 'unknown_record' };
+  if (record.project !== rt.project && record.scope !== 'common') return { ok: false, error: 'other_project' };
   if (record.type !== 'case') return { ok: false, error: 'bad_type' };
   // A case in use, or a draft in its veto window: the agent that opened a case can go on with it.
   const state = at(record, now, readUses(rt)[id]).state;
