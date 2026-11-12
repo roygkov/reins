@@ -44,7 +44,7 @@ export type Manifest = {
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
+  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -326,6 +326,7 @@ function permissions(r: Report, value: unknown, pack: PackContext, inputs: Set<s
 }
 
 const MAX_GUARDS = 20;
+const MAX_PARTS = 5;
 // A pattern of the files of a check: a path inside the work, with `/` between its parts. `*` is
 // any text inside one part, `**` is any text. It never leaves the work.
 function isGuard(value: unknown): value is string {
@@ -344,11 +345,24 @@ export function guardPattern(guard: string): RegExp {
 }
 
 function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
+  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
-  if (kind !== null && needsCheck && d.check === undefined) r.add('missing', 'done.check');
+  // A check of several named parts stands in place of the one name: every part is a script of a pack.
+  if (d.checks !== undefined) {
+    if (d.check !== undefined || (kind !== null && !needsCheck)) r.add('not_allowed', 'done.checks');
+    else {
+      const parts = list(r, d.checks, 'done.checks');
+      if (parts !== null && (parts.length < 2 || parts.length > MAX_PARTS)) r.add('not_in_range', 'done.checks');
+      else (parts ?? []).forEach((part, i) => {
+        const name = named(r, part, `done.checks[${i}]`, NAME);
+        if (name !== null && parts !== null && parts.indexOf(part) !== i) r.add('duplicate', `done.checks[${i}]`);
+        else inPack(r, pack.checks, name, `done.checks[${i}]`);
+      });
+    }
+  }
+  if (kind !== null && needsCheck && d.check === undefined && d.checks === undefined) r.add('missing', 'done.check');
   if (kind !== null && !needsCheck && d.check !== undefined) r.add('not_allowed', 'done.check');
   else inPack(r, pack.checks, named(r, d.check, 'done.check', NAME), 'done.check');
   // The citation check reads the source that the collect step prepared, never a path of the agent.

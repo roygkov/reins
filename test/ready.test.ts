@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +28,7 @@ const TOOLS = { 'tracker__add_comment': { kind: 'write', action: 'comment', targ
 const REPORT = JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'the first line of the file', text: 'x' }] });
 
 type Box = { rt: Runtime; root: string; cwd: string };
-type Opts = { collect?: string; check?: string; done?: Record<string, unknown>; output?: Record<string, unknown>; organization?: Record<string, unknown> };
+type Opts = { collect?: string; check?: string; parts?: Record<string, string>; done?: Record<string, unknown>; output?: Record<string, unknown>; organization?: Record<string, unknown> };
 let n = 0;
 function box(o: Opts = {}): Box {
   n += 1;
@@ -47,8 +48,13 @@ function box(o: Opts = {}): Box {
     if (rel.endsWith('.sh')) fs.writeFileSync(file, collect.replaceAll('$OUT', out).replaceAll('$WORK', cwd), { mode: 0o755 });
     else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), ...(o.done !== undefined ? { done: o.done } : {}), ...(o.output !== undefined ? { output: o.output } : {}) }));
     else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
+    else if (rel === 'project/pack.json' && o.parts !== undefined) fs.writeFileSync(file, JSON.stringify({ ...(value as object), checks: Object.keys(o.parts) }));
     else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), tools: TOOLS, ...(o.organization ?? {}) }));
     else fs.writeFileSync(file, JSON.stringify(value));
+  }
+  for (const [name, body] of Object.entries(o.parts ?? {})) {
+    fs.mkdirSync(path.join(root, 'packs/project/check'), { recursive: true });
+    fs.writeFileSync(path.join(root, `packs/project/check/${name}.sh`), body.replaceAll('$WORK', cwd), { mode: 0o755 });
   }
   if (o.check !== undefined) {
     fs.mkdirSync(path.join(root, 'packs/project/check'), { recursive: true });
@@ -413,6 +419,8 @@ test('ready: a check that changed after its answer ends the publication without 
   const same = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: PASSING });
   const kept = accepted(same);
   assert.match(loadTask(same.rt, kept)?.check ?? '', /^[0-9a-f]{32}$/);
+  // The version of a check of one name is the fingerprint of its one file.
+  assert.equal(loadTask(same.rt, kept)?.check, crypto.createHash('sha256').update(fs.readFileSync(path.join(same.root, 'packs/project/check/tests.sh'))).digest('hex').slice(0, 32));
   assert.equal(verifyWork(same.rt, kept), true);
   const b = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: PASSING });
   const id = accepted(b);
@@ -570,4 +578,55 @@ test('ready: a collect script and a check script past their time leave a row of 
   const rows = readJournal(k.rt.journal.file);
   assert.deepEqual(rows.filter((x) => x.kind === 'harness.step_timeout').map((x) => [x.data?.where, x.task]), [['check', opened.task.id]]);
   for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+// ---- A check of several named parts.
+
+const PART = (result: string) => `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"outputs":{"result":"${result}"}}'\n`;
+
+test('ready: a check of several parts passes only when every part passes, and a red answer names each part that did not', () => {
+  const run = (parts: Record<string, string>) => {
+    const b = box({ done: { kind: 'command', checks: Object.keys(parts), retries: 0, source: 'worktree' }, parts });
+    const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+    assert.ok(opened.ok, JSON.stringify(opened));
+    const r = submitReport(b.rt, opened.task.id, REPORT);
+    assert.ok('step' in r && r.answer !== undefined);
+    const row = readJournal(b.rt.journal.file).find((x) => x.kind === 'check.answered' || x.kind === 'check.no_answer');
+    for (const x of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(x), [], x.kind);
+    return { result: r.answer.result, parts: r.answer.parts, state: r.step.task.state, data: [row?.data?.parts, row?.data?.failed], task: loadTask(b.rt, opened.task.id) };
+  };
+  const green = run({ tests: PART('PASS'), lint: PART('PASS') });
+  assert.deepEqual([green.result, green.state, green.parts, green.data], ['PASS', 'publishing', undefined, [2, 0]]);
+  assert.match(green.task?.check ?? '', /^[0-9a-f]{32}$/);
+  // Every part runs: the answer names all that did not pass, not only the first one.
+  const red = run({ tests: PART('FAIL'), lint: PART('PASS'), types: PART('FAIL') });
+  assert.deepEqual([red.result, red.state, red.data], ['FAIL', 'waiting_human', [3, 2]]);
+  assert.deepEqual(red.parts, [{ name: 'tests', result: 'FAIL' }, { name: 'types', result: 'FAIL' }]);
+  // A part that gives no answer is not a pass; a part that failed makes the whole answer red.
+  const silent = run({ tests: PART('PASS'), lint: '#!/bin/sh\ncat >/dev/null\nexit 3\n' });
+  assert.deepEqual([silent.result, silent.parts], ['none', [{ name: 'lint', result: 'none' }]]);
+  const mixed = run({ tests: PART('FAIL'), lint: '#!/bin/sh\ncat >/dev/null\nexit 3\n' });
+  assert.deepEqual([mixed.result, mixed.parts], ['FAIL', [{ name: 'tests', result: 'FAIL' }, { name: 'lint', result: 'none' }]]);
+});
+
+test('ready: a change of any part of a check after its answer ends the publication', () => {
+  const b = box({ done: { kind: 'command', checks: ['tests', 'lint'], retries: 0, source: 'worktree' }, parts: { tests: PART('PASS'), lint: PART('PASS') } });
+  const id = accepted(b);
+  assert.equal(verifyWork(b.rt, id), true);
+  fs.appendFileSync(path.join(b.root, 'packs/project/check/lint.sh'), '# weaker\n');
+  assert.equal(verifyWork(b.rt, id), false);
+  assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.invalidated')?.data?.reason, 'check_changed');
+});
+
+test('ready: the parts of a check are a list of names of the packs, in place of the one name', () => {
+  const errors = (done: Record<string, unknown>) => validateManifest({ ...manifests.get('review'), done }, { checks: ['tests', 'lint', 'types'] }).filter((e) => e.path.startsWith('done')).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ kind: 'command', checks: ['tests', 'lint'], retries: 1 }), []);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', checks: ['tests', 'lint'], retries: 1 }), ['not_allowed done.checks']);
+  assert.deepEqual(errors({ kind: 'command', retries: 1 }), ['missing done.check']);
+  assert.deepEqual(errors({ kind: 'command', checks: ['tests'], retries: 1 }), ['not_in_range done.checks']);
+  assert.deepEqual(errors({ kind: 'command', checks: ['tests', 'tests'], retries: 1 }), ['duplicate done.checks[1]']);
+  assert.deepEqual(errors({ kind: 'command', checks: ['tests', 'other'], retries: 1 }), ['not_in_pack done.checks[1]']);
+  assert.deepEqual(errors({ kind: 'command', checks: 'tests', retries: 1 }), ['not_array done.checks']);
+  assert.deepEqual(errors({ kind: 'citations', source: 'worktree', checks: ['tests', 'lint'], retries: 1 }), ['not_allowed done.checks']);
+  assert.deepEqual(errors({ kind: 'command', checks: ['a', 'b', 'c', 'd', 'e', 'f'].map(() => 'tests'), retries: 1 }).slice(0, 1), ['not_in_range done.checks']);
 });

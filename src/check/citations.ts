@@ -34,6 +34,7 @@ export type Answer = {
   reason?: AnswerReason;
   n: number; // the items that were read
   faults: { n: number; fault: ItemFault }[]; // at most one for an item, `n` counts from 1
+  parts?: { name: string; result: 'FAIL' | 'none' }[]; // a check of several parts: each part that did not pass
 };
 
 export type CitationOptions = {

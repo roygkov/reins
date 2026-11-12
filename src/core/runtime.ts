@@ -403,14 +403,30 @@ export function verifyWork(rt: Runtime, id: string, now: number = Date.now()): b
 // The version of the check of a task: the fingerprint of the script of the pack that decides.
 // The citation check is code of the core: it has no version of its own.
 function checkVersion(rt: Runtime, task: Task): string | null {
-  const name = task.manifest?.done.check;
-  const file = name === undefined ? undefined : rt.merged.scriptFiles[`check/${name}`];
-  if (file === undefined) return null;
-  try {
-    return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 32);
-  } catch {
-    return null;
+  const names = checkNames(task);
+  if (names.length === 0) return null;
+  // A check of several parts has one version: a change of any part is a change of the check.
+  // A check of one name keeps its version as it always was, the fingerprint of the one file: a
+  // task that was accepted before this code keeps its answer.
+  const several = task.manifest?.done.checks !== undefined;
+  const hash = crypto.createHash('sha256');
+  for (const name of names) {
+    const file = rt.merged.scriptFiles[`check/${name}`];
+    if (file === undefined) return null;
+    try {
+      if (several) hash.update(name).update('\0').update(fs.readFileSync(file)).update('\0');
+      else hash.update(fs.readFileSync(file));
+    } catch {
+      return null;
+    }
   }
+  return hash.digest('hex').slice(0, 32);
+}
+
+// The scripts of the check of a task: the parts that its manifest names, or the one name.
+function checkNames(task: Task): string[] {
+  const done = task.manifest?.done;
+  return done?.checks ?? (done?.check !== undefined ? [done.check] : []);
 }
 
 export type Proposed = { ok: true; task: Task } | { ok: false; error: 'bad_contract'; details: Fault<string>[] };
@@ -647,10 +663,27 @@ const DEFAULT_CHECK_SCRIPT_MS = 5 * 60_000;
 // The script gets the task, its inputs and the paths of the report and of the collected results,
 // and prints one result: PASS or FAIL. A script that is missing or fails gives no answer.
 function scriptCheck(rt: Runtime, task: Task): Answer {
-  const none = (reason: 'no_check' | 'check_failed'): Answer => ({ result: 'none', reason, n: 0, faults: [] });
-  const name = task.manifest?.done.check;
-  const file = name === undefined ? undefined : rt.merged.scriptFiles[`check/${name}`];
-  if (file === undefined) return none('no_check');
+  const names = checkNames(task);
+  if (names.length === 0) return { result: 'none', reason: 'no_check', n: 0, faults: [] };
+  // Every part runs, also after a part that failed: a red answer names each part that did not pass.
+  // The time limit is of one part: the parts run one after another.
+  const results = names.map((name) => ({ name, ...partCheck(rt, task, name) }));
+  if (names.length === 1 && task.manifest?.done.checks === undefined) {
+    const one = results[0];
+    return one === undefined || one.result === 'none' ? { result: 'none', reason: one?.reason ?? 'no_check', n: 0, faults: [] } : { result: one.result, n: 0, faults: [] };
+  }
+  const bad = results.filter((p) => p.result !== 'PASS').map((p) => ({ name: p.name, result: p.result as 'FAIL' | 'none' }));
+  // Every part without an answer has no script: the cause is the pack, not a run of a script.
+  const silent = results.filter((p) => p.result === 'none');
+  const reason = silent.length > 0 && silent.every((p) => p.reason === 'no_check') ? 'no_check' : 'check_failed';
+  if (bad.length === 0) return { result: 'PASS', n: names.length, faults: [] };
+  // One part that failed makes the answer red. Without one, a part that gave no answer leaves the whole check without an answer.
+  return bad.some((p) => p.result === 'FAIL') ? { result: 'FAIL', n: names.length, faults: [], parts: bad } : { result: 'none', reason, n: names.length, faults: [], parts: bad };
+}
+
+function partCheck(rt: Runtime, task: Task, name: string): { result: 'PASS' | 'FAIL' | 'none'; reason?: 'no_check' | 'check_failed' } {
+  const file = rt.merged.scriptFiles[`check/${name}`];
+  if (file === undefined) return { result: 'none', reason: 'no_check' };
   const collected = taskFile(rt, task.id, '.collect');
   const r = runCollect(file, { inputs: task.inputs, task: task.id, report: reportFile(rt, task.id), collected: fs.existsSync(collected) ? collected : null }, {
     outputs: ['result'], flags: [], timeoutMs: rt.checkScriptTimeoutMs ?? DEFAULT_CHECK_SCRIPT_MS, maxBytes: 64 * 1024,
@@ -661,10 +694,10 @@ function scriptCheck(rt: Runtime, task: Task): Answer {
   });
   if (!r.ok) {
     if (r.reason === 'timeout') stepTimeout(rt, task.id, 'check');
-    return none('check_failed');
+    return { result: 'none', reason: 'check_failed' };
   }
   const result = r.outputs.result;
-  return result === 'PASS' || result === 'FAIL' ? { result, n: 0, faults: [] } : none('check_failed');
+  return result === 'PASS' || result === 'FAIL' ? { result } : { result: 'none', reason: 'check_failed' };
 }
 
 export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task' | 'busy' | 'too_large' };
@@ -698,6 +731,12 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   // The second answer of a soak is about the work and the check of the first: a soak shows that one state held over the term.
   if (before.soak !== undefined && answer.result === 'PASS' && ((work ?? undefined) !== before.work || (version ?? undefined) !== before.check)) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
   const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
+  // A check of several parts: how many parts ran and how many did not pass. The names stay in the answer for the agent.
+  if (before.manifest?.done.checks !== undefined) {
+    detail.parts = before.manifest.done.checks.length;
+    // The count of the parts that did not pass is a fact only of an answer that the parts gave.
+    if (answer.parts !== undefined || answer.result === 'PASS') detail.failed = answer.parts?.length ?? 0;
+  }
   if (answer.reason !== undefined) detail.reason = answer.reason;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const r = withLock(rt, id, (): Checked => {
