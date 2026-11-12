@@ -57,7 +57,7 @@ export type PackSettings = {
   // network: the read connectors that need the network. files: the files of a connector under the home directory.
   connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]>; network?: string[]; files?: Record<string, string[]> };
   envs?: { known?: string[]; production?: string[] };
-  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number };
+  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number };
   roles?: string[];
   checks?: string[];
   memory?: { types?: string[]; veto_days?: number; keep_days?: number; case_end?: string[] };
@@ -305,7 +305,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     settings.envs = { ...(known !== undefined && { known }), ...(production !== undefined && { production }) };
   }
 
-  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads']);
+  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes']);
   if (limits !== null) {
     const out: NonNullable<PackSettings['limits']> = {};
     if (limits.level !== undefined) {
@@ -318,6 +318,9 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     // The reads of one task through connectors: a read costs the system that answers it.
     const reads = limit(errors, limits.reads, 'limits.reads');
     if (reads !== undefined) out.reads = reads;
+    // The changes of a free task before the harness offers a contract.
+    const freeChanges = limit(errors, limits.free_changes, 'limits.free_changes');
+    if (freeChanges !== undefined) out.free_changes = freeChanges;
     if (tokens !== undefined) out.tokens = tokens;
     if (writes !== undefined) out.writes = writes;
     if (executors !== undefined) out.executors = executors;
@@ -834,7 +837,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   narrow('envs', s.envs?.known);
   narrow('roles', s.roles);
 
-  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads', value: number | undefined): void => {
+  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges', value: number | undefined): void => {
     if (value === undefined) return;
     const before = c[key];
     if (before === undefined || value < before) {
@@ -846,6 +849,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   lower('maxWriteLimit', s.limits?.writes);
   lower('maxExecutors', s.limits?.executors);
   lower('maxReads', s.limits?.reads);
+  lower('maxFreeChanges', s.limits?.free_changes);
   const level = s.limits?.level;
   if (level !== undefined && (c.maxLevel === undefined || rank(level) < rank(c.maxLevel))) {
     c.maxLevel = level;

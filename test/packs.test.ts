@@ -147,3 +147,12 @@ test('packs: the limit of reads of a task is the lowest one of the levels', () =
   assert.equal(merged(undefined, undefined).context.maxReads, undefined);
   assert.deepEqual(merged(50, 10).packs.map((p) => p.errors), [[], [], []]);
 });
+
+test('packs: the number of changes of a free task before the offer of a contract is the lowest one of the levels', () => {
+  const org = structuredClone(bases.get('three')?.['organization/pack.json']) as { limits?: Record<string, unknown> };
+  const person = structuredClone(bases.get('three')?.['person/pack.json']) as { limits?: Record<string, unknown> };
+  const m = three({ 'organization/pack.json': { ...org, limits: { ...org.limits, free_changes: 20 } }, 'person/pack.json': { ...person, limits: { ...person.limits, free_changes: 8 } } });
+  assert.deepEqual(m.packs.map((p) => p.errors), [[], [], []]);
+  assert.equal(m.context.maxFreeChanges, 8);
+  assert.deepEqual(faults(three({ 'person/pack.json': { ...person, limits: { ...person.limits, free_changes: 0 } } }), 'person'), ['not_positive limits.free_changes']);
+});

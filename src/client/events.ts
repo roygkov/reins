@@ -62,7 +62,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
         // What the model spent since the event before, when the client knows it.
         if (typeof value.tokens === 'number') noteCost(rt, { ...session, tokens: value.tokens });
         // The source of the output: the client tells the agent that the output is data of that source.
-        return done.source !== undefined ? { source: done.source } : {};
+        return { ...(done.source !== undefined ? { source: done.source } : {}), ...(done.offer !== undefined ? { offer: done.offer } : {}) };
       }
       const r = beforeAction(rt, call, tools);
       const out: EventReply = { outcome: r.outcome, rule: r.rule };

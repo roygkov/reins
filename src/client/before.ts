@@ -17,7 +17,7 @@ import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
 import { touchedPlaces } from './places.ts';
-import { sessionTask } from './session.ts';
+import { heldFreeTask, sessionTask } from './session.ts';
 import { guardPattern } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
@@ -592,13 +592,52 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // `failed`: the tool started and ended with an error (not broken off by the human).
 // `source`: the connector that the output of the call came from. What a connector returns is data
 // of an outer source, never instructions: the client says so to the agent (harness-connector, pages 4 and 6).
-export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean; source?: string } {
-  const settled = settle(rt, call, clientTools, asked, failed);
+// `offer`: a free task grew by facts (harness-core, page 8): it made the number of changes that
+// the packs name. The client offers the human a contract, once for a task; the work goes on.
+export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean; source?: string; offer?: 'contract' } {
+  const base = settle(rt, call, clientTools, asked, failed);
+  const settled: { confirmed: boolean; offer?: 'contract' } = !failed && grew(rt, call, clientTools) ? { ...base, offer: 'contract' } : base;
   if (failed || Object.hasOwn(clientTools, call.tool)) return settled;
   // The table of the tools that decided the call: the one of the task that the session holds.
   const rule = packRule(frozenRuntime(rt, currentScenario(rt, call.session)).merged.tools, call.tool);
   const reads = rule !== undefined && rule.connector !== undefined && (rule.kind === 'read' || readsNow(rule.read_when, call.input));
   return reads && rule.connector !== undefined ? { ...settled, source: rule.connector } : settled;
+}
+
+// Counts a change of the free task of the session. True once: when the count reaches the number of the packs.
+function grew(rt: Runtime, call: ToolCall, clientTools: ClientTools): boolean {
+  const max = rt.merged.context.maxFreeChanges;
+  if (max === undefined) return false;
+  // A session that holds a task of a scenario works under its manifest.
+  const held = currentScenario(rt, call.session);
+  const scenario = held === undefined ? null : loadTask(rt, held);
+  if (scenario !== null && scenario.state !== 'closed' && scenario.state !== 'skipped') return false;
+  const id = heldFreeTask(rt, call.session);
+  if (id === undefined) return false;
+  // A change: a file tool, a write of a connector, a tool without a description, a shell command whose parse names a place that it changes.
+  const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
+  let change: boolean;
+  if (own === undefined) {
+    const rule = packRule(rt.merged.tools, call.tool);
+    change = rule === undefined || (rule.kind === 'write' && !readsNow(rule.read_when, call.input));
+  } else if (own.kind === 'local') change = true;
+  else if (own.kind === 'shell') {
+    const command = call.input[own.command];
+    // Also a command that the gate reads as a write (a push, a deploy, a statement on a database)
+    // and a command of git that changes the tree or the history: they name no file.
+    change = typeof command === 'string' && (touchedPlaces(command, call.cwd, os.homedir(), true).some((p) => p.write || p.tree || p.into) || GIT_CHANGE.test(command) || shellAction(command, call.cwd, gateConfig(rt, call.cwd)).action.kind === 'write');
+  } else change = false;
+  if (!change) return false;
+  let offer = false;
+  mutateTask(rt, id, (task) => {
+    if (task.kind !== 'free') return null;
+    const changes = (task.changes ?? 0) + 1;
+    offer = changes >= max && task.offered !== true;
+    return { ...task, changes, ...(offer ? { offered: true } : {}) };
+  });
+  // The kind of the task stays "free", and the facts brought the offer: a fact of the journal (page 8, rule 5).
+  if (offer) record(rt, call, [{ kind: 'task.kind_decided', data: { kind: 'free', reason: 'facts', offer: 'contract', changes: max } }]);
+  return offer;
 }
 
 function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: boolean, failed: boolean): { confirmed: boolean } {

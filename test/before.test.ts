@@ -9,6 +9,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { applyEvent, frozenRuntime, openScenario, submitReport, loadTask, type Runtime } from '../src/core/runtime.ts';
 import { tokenLimit } from '../src/client/cost.ts';
+import { humanRequest } from '../src/client/session.ts';
 import { afterAction, beforeAction, type ClientTools, type ToolCall } from '../src/client/before.ts';
 import { findRoot, loadConfig } from '../src/gate/index.ts';
 import { grantsOf } from '../src/core/task.ts';
@@ -510,4 +511,38 @@ test('before: the limit of reads is a positive number of a pack', () => {
   assert.deepEqual(settings(50).errors, []);
   assert.equal(settings(50).settings?.limits?.reads, 50);
   assert.deepEqual(settings(0).errors.map((e) => `${e.code} ${e.path}`), ['not_positive limits.reads']);
+});
+
+// ---- A free task grows by facts: past a number of changes the harness offers a contract.
+
+test('before: a free task that made the number of changes of the packs gets one offer of a contract', () => {
+  const b = box();
+  const rt: Runtime = { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, maxFreeChanges: 3 } } };
+  const after = (tool: string, input: Record<string, unknown>, session = 's1', failed = false) => afterAction(rt, { ...call(b, tool, input), session }, CLIENT, true, failed).offer;
+  const id = humanRequest(rt, { session: 's1', cwd: b.cwd }).task;
+  // A read, a command that changes nothing and a change that failed are not changes.
+  assert.deepEqual([after('read_file', { path: 'src/a.ts' }), after('shell', { command: 'cat src/a.ts' }), after('write_file', { path: 'src/a.ts' }, 's1', true)], [undefined, undefined, undefined]);
+  assert.deepEqual([after('write_file', { path: 'src/a.ts' }), after('shell', { command: 'echo x > src/b.ts' })], [undefined, undefined]);
+  // The third change reaches the number: the offer comes once, and the work goes on.
+  assert.equal(after('tracker__add_comment', { change: '7' }), 'contract');
+  assert.equal(after('write_file', { path: 'src/a.ts' }), undefined);
+  assert.deepEqual([loadTask(rt, id)?.changes, loadTask(rt, id)?.offered, loadTask(rt, id)?.state], [4, true, 'executing']);
+  // The offer is a fact of the journal, written once.
+  const offers = readJournal(rt.journal.file).filter((x) => x.kind === 'task.kind_decided' && x.data?.offer === 'contract');
+  assert.deepEqual(offers.map((x) => [x.task, x.data?.kind, x.data?.reason, x.data?.changes]), [[id, 'free', 'facts', 3]]);
+  for (const row of readJournal(rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+  // A command that names no file but changes the history or an outer system is a change too.
+  const other = box();
+  const ort: Runtime = { ...other.rt, merged: { ...other.rt.merged, context: { ...other.rt.merged.context, maxFreeChanges: 2 } } };
+  humanRequest(ort, { session: 's1', cwd: other.cwd });
+  const run = (command: string) => afterAction(ort, { ...call(other, 'shell', { command }), session: 's1' }, CLIENT).offer;
+  assert.deepEqual([run('git status'), run('git commit -am x'), run('git push origin main')], [undefined, undefined, 'contract']);
+  // A task of a scenario gets no offer: it has its manifest.
+  const opened = openScenario(rt, 'change-review', { change_id: '7' }, { session: 's2' });
+  assert.ok(opened.ok);
+  for (let i = 0; i < 5; i += 1) assert.equal(after('write_file', { path: 'src/a.ts' }, 's2'), undefined);
+  // Without the number of the packs nothing is counted.
+  const plain = box();
+  humanRequest(plain.rt, { session: 's1', cwd: plain.cwd });
+  for (let i = 0; i < 5; i += 1) assert.equal(afterAction(plain.rt, { ...call(plain, 'write_file', { path: 'src/a.ts' }), session: 's1' }, CLIENT).offer, undefined);
 });
