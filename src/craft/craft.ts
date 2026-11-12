@@ -11,7 +11,7 @@ import { isObj } from '../contracts/shape.ts';
 import type { Runtime } from '../core/runtime.ts';
 import { loadTask } from '../core/runtime.ts';
 import { readJournalSince } from '../journal/writer.ts';
-import { listRecords, retireRecord } from '../memory/store.ts';
+import { addRecord, listRecords, retireRecord } from '../memory/store.ts';
 
 // `rollback`: an accepted proposal made things worse; the key is the id of that proposal.
 // `repeated_approval`: a rule asked many times and the human said "yes" every time.
@@ -21,7 +21,10 @@ export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'to
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
-export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale' } | { kind: 'remove_manifest'; path: string; manifest: unknown };
+// `pitfall`: a record for the memory, with the text that the code wrote from the facts of the journal;
+// `record`: the record that the acceptance made. `undo` of a memory change: the record goes out of
+// the work also when a report cited it lately.
+export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale'; undo?: true } | { kind: 'remove_manifest'; path: string; manifest: unknown } | { kind: 'pitfall'; text: string; record?: string };
 export type Effect = 'better' | 'same' | 'worse' | 'not_measured';
 // `rejected_n`: the size of the pattern when the human rejected it. `applied`: the ready change was made.
 // `undone`: the time when the human accepted the undo of this proposal.
@@ -196,11 +199,18 @@ function contractManifest(rt: Runtime, name: string): unknown {
   return best?.manifest;
 }
 
-function changeOf(rt: Runtime, found: Pattern): Change | undefined {
+function changeOf(rt: Runtime, found: Pattern, now: number): Change | undefined {
   if (found.pattern === 'record_unused') return { kind: 'memory', record: found.key, state: 'stale' };
   if (found.pattern === 'repeated_contract' && NAME.test(found.key)) {
     const manifest = contractManifest(rt, found.key);
     if (manifest !== undefined) return { kind: 'manifest', path: `manifests/${found.key}.json`, manifest };
+  }
+  // A tool that fails again and again is a pitfall for the memory (harness-craft, page 2). The
+  // text is written by the code from the facts of the journal: the name of the tool and the
+  // count. The journal keeps no text of an error, so the pitfall says where to look, not why.
+  if (found.pattern === 'tool_fails_often' && RULE_NAME.test(found.key)) {
+    // The count is of its time: the text names the day, because the human can accept it days later.
+    return { kind: 'pitfall', text: `The tool ${found.key} failed ${found.n} times in the ${Math.round(PERIOD_MS / DAY)} days to ${new Date(now).toISOString().slice(0, 10)}. Before the next call of it: check its input, and whether the system behind it answers.` };
   }
   return undefined;
 }
@@ -255,7 +265,7 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
     const other = twin === undefined ? undefined : known.get(`${twin} ${found.key}`);
     if (other !== undefined && !(other.state === 'rejected' && found.n >= 2 * (other.rejected_n ?? other.n))) continue;
     if (perWeek !== undefined && week >= perWeek) break;
-    const change = changeOf(rt, found);
+    const change = changeOf(rt, found, now);
     // The class "with a veto window": a change that one command takes back (a memory record that
     // goes stale) applies itself after the term of the packs. Without the term the human decides all.
     const autoDays = rt.merged.craft?.auto_days;
@@ -290,7 +300,15 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
 function apply(rt: Runtime, p: Proposal, now: number): boolean {
   const change = p.change;
   if (change === undefined) return false;
-  if (change.kind === 'memory') return retireRecord(rt, change.record, now, rt.merged.craft?.unused_days ?? UNUSED_DAYS);
+  if (change.kind === 'memory') return retireRecord(rt, change.record, now, change.undo === true ? 0 : (rt.merged.craft?.unused_days ?? UNUSED_DAYS));
+  // The human accepted the pitfall: the record is the word of the human, in use at once. The
+  // proposal keeps the name of the record: an undo of the proposal takes that record out of the work.
+  if (change.kind === 'pitfall') {
+    const added = addRecord(rt, { type: 'pitfall', text: change.text, paths: [], by: 'human' }, now);
+    if (!added.ok) return false;
+    p.change = { ...change, record: added.record.id };
+    return true;
+  }
   if (change.kind === 'remove_manifest') {
     // The undo removes only what the craft wrote: a file that the human changed since is the work of the human.
     const dir = rt.merged.packs.find((x) => x.level === 'person')?.dir;
@@ -428,7 +446,11 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
 // An accepted proposal made things worse: the craft proposes to undo it. The human decides. The
 // undo has a ready change only when the first proposal had one that can be taken back.
 function proposeUndo(rt: Runtime, first: Proposal, now: number): void {
-  const change: Change | undefined = first.applied === true && first.change?.kind === 'manifest' ? { kind: 'remove_manifest', path: first.change.path, manifest: first.change.manifest } : undefined;
+  const change: Change | undefined = first.applied !== true ? undefined
+    : first.change?.kind === 'manifest' ? { kind: 'remove_manifest', path: first.change.path, manifest: first.change.manifest }
+    // The pitfall that the first proposal wrote did not help: the undo takes it out of the work.
+    : first.change?.kind === 'pitfall' && first.change.record !== undefined ? { kind: 'memory', record: first.change.record, state: 'stale', undo: true }
+    : undefined;
   const p: Proposal = {
     pattern: 'rollback', key: first.id, n: 1, id: `c${crypto.createHash('sha256').update(`rollback ${first.id}`).digest('hex').slice(0, 10)}`,
     created: new Date(now).toISOString(), state: 'open', ...(change !== undefined ? { change } : {}),

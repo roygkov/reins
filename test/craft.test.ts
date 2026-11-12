@@ -226,8 +226,19 @@ test('craft: a tool that fails often is a pattern, and its effect is the count o
   assert.deepEqual(detect(readJournal(b.rt.journal.file)), [{ pattern: 'tool_fails_often', key: 'mcp__tracker__get_change', n: 5 }]);
   assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_tool_failures: 4 }).map((p) => p.key).sort(), ['Read', 'mcp__tracker__get_change']);
   const made = propose(b.rt, NOW);
-  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.change]), [['tool_fails_often', 'mcp__tracker__get_change', undefined]]);
+  // The ready change is a pitfall for the memory. Its text is written by the code: the name of the tool and the count.
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.change?.kind]), [['tool_fails_often', 'mcp__tracker__get_change', 'pitfall']]);
+  const text = made[0]?.change?.kind === 'pitfall' ? made[0].change.text : '';
+  assert.match(text, /mcp__tracker__get_change/);
+  assert.match(text, /5 times/);
+  assert.deepEqual(listRecords(b.rt).filter((r) => r.type === 'pitfall'), []);
   resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
+  // The human accepted: the pitfall is a record of the memory of this project, in use at once.
+  const written = listRecords(b.rt).filter((r) => r.type === 'pitfall');
+  assert.deepEqual(written.map((r) => [r.text, r.state, r.project]), [[text, 'active', b.rt.project]]);
+  const kept = listProposals(b.rt).find((p) => p.id === made[0]?.id);
+  assert.deepEqual([kept?.applied, kept?.change?.kind === 'pitfall' ? kept.change.record : undefined], [true, written[0]?.id]);
+  assert.match(text, /days to \d{4}-\d{2}-\d{2}\./);
   // No action of the agent after the acceptance: nothing is measured. With work and fewer failures: better.
   assert.deepEqual(measure(b.rt, NOW + 8 * DAY), []);
   rows(b, NOW + DAY, [...question('default.write'), failed('mcp__tracker__get_change')]);
@@ -612,4 +623,25 @@ test('craft: the switch of a pack is the word "true", and nothing else', () => {
   assert.deepEqual(errors({ off: true }), []);
   assert.deepEqual(errors({ off: false }), ['not_allowed craft.off']);
   assert.deepEqual(errors({ off: 'yes' }), ['not_allowed craft.off']);
+});
+
+test('craft: a pitfall that the human rejects is not written, and one that did not help is taken out of the work by its undo', () => {
+  const failed = (tool: string) => ({ kind: 'executor.tool_failed', data: { tool } });
+  const rejected = box();
+  rows(rejected, NOW - DAY, times(5, [failed('mcp__tracker__get_change')]));
+  assert.equal(resolveProposal(rejected.rt, propose(rejected.rt, NOW)[0]?.id ?? '', 'rejected', NOW), true);
+  assert.deepEqual(listRecords(rejected.rt), []);
+  // Accepted, and the tool fails more often after it: the craft proposes the undo, with the record as its change.
+  const b = box();
+  rows(b, NOW - DAY, times(5, [failed('mcp__tracker__get_change')]));
+  const first = propose(b.rt, NOW)[0];
+  resolveProposal(b.rt, first?.id ?? '', 'accepted', NOW);
+  const record = listRecords(b.rt).find((r) => r.type === 'pitfall');
+  rows(b, NOW + DAY, [...question('default.write'), ...times(9, [failed('mcp__tracker__get_change')])]);
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => p.effect), ['worse']);
+  const undo = listProposals(b.rt).find((p) => p.pattern === 'rollback');
+  assert.deepEqual(undo?.change, { kind: 'memory', record: record?.id, state: 'stale', undo: true });
+  assert.equal(resolveProposal(b.rt, undo?.id ?? '', 'accepted', NOW + 8 * DAY), true);
+  assert.equal(listRecords(b.rt, NOW + 8 * DAY).find((r) => r.id === record?.id)?.state, 'stale');
+  assert.ok(listProposals(b.rt).find((p) => p.id === first?.id)?.undone !== undefined);
 });
