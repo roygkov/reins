@@ -225,3 +225,41 @@ test('client: an approval without a window stays in its project, and with a wind
   assert.equal(windowed('s-b').outcome, 'defer');
   assert.equal(windowed('s-a').rule, 'queue.approved');
 });
+
+// ---- A failure of the adapter is a fact of the journal.
+
+test('client: a failure of the adapter leaves a row of the journal, also for a read that passes without a word', () => {
+  const b = box();
+  const hook = (event: Record<string, unknown>) =>
+    spawnSync(process.execPath, [CLAUDE, 'pre'], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: 'PreToolUse', ...event }), env: b.env, encoding: 'utf8' }).stdout;
+  // The place of the session files is a file: every decision fails.
+  fs.mkdirSync(b.rt.stateDir, { recursive: true });
+  fs.rmSync(path.join(b.rt.stateDir, 'sessions'), { recursive: true, force: true });
+  fs.writeFileSync(path.join(b.rt.stateDir, 'sessions'), 'not a directory');
+  const failures = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.failure' && r.data?.where === 'adapter');
+  // A write: the human decides, and the journal has the failure.
+  const asked = JSON.parse(hook({ tool_name: 'mcp__x__y', tool_input: {} })).hookSpecificOutput;
+  assert.equal(asked.permissionDecision, 'ask');
+  assert.deepEqual(failures().map((r) => [r.data?.event, r.client]), [['pre', 'claude_code']]);
+  // A read of the client passes without a word, as before; the failure is written all the same.
+  assert.equal(hook({ tool_name: 'Read', tool_input: { file_path: 'a.txt' } }), '');
+  assert.equal(failures().length, 2);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+test('client: the second client writes down an input of an unknown form and a failure of its own', () => {
+  const b = box();
+  const stdio = (input: string) => spawnSync(process.execPath, [STDIO], { input, env: b.env, cwd: b.cwd, encoding: 'utf8' }).stdout;
+  assert.deepEqual(JSON.parse(stdio('not json')), { outcome: 'ask', rule: 'adapter.shape' });
+  assert.deepEqual(JSON.parse(stdio(JSON.stringify({ event: 'no-such-event', cwd: b.cwd }))), { outcome: 'ask', rule: 'adapter.shape' });
+  const rows = readJournal(b.rt.journal.file);
+  assert.deepEqual(rows.filter((r) => r.kind === 'harness.client_shape_changed').map((r) => [r.data?.client, r.data?.event]), [['stdio', 'unknown'], ['stdio', 'unknown']]);
+  // An event with a known name and a part of an unknown form names the event.
+  assert.deepEqual(JSON.parse(stdio(JSON.stringify({ event: 'before', cwd: b.cwd, tool: '', input: {} }))), { outcome: 'ask', rule: 'adapter.shape' });
+  assert.deepEqual(readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.client_shape_changed').map((r) => r.data?.event), ['unknown', 'unknown', 'before']);
+  fs.rmSync(path.join(b.rt.stateDir, 'sessions'), { recursive: true, force: true });
+  fs.writeFileSync(path.join(b.rt.stateDir, 'sessions'), 'not a directory');
+  assert.deepEqual(JSON.parse(stdio(JSON.stringify({ event: 'before', cwd: b.cwd, session: 'live', tool: 'unknown__tool', input: {} }))), { outcome: 'ask', rule: 'adapter.failure' });
+  assert.deepEqual(readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.failure' && r.data?.where === 'adapter').map((r) => [r.data?.event, r.client]), [['before', 'stdio']]);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});

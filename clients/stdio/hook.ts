@@ -14,20 +14,39 @@ import { handleEvent, readEvent, UNREADABLE, type EventReply } from '../../src/c
 
 const HARNESS_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
+// A fact about the adapter itself: a row of the journal, when the journal can be reached.
+function noted(kind: 'harness.client_shape_changed' | 'harness.failure', data: Record<string, string>, cwd?: string): void {
+  try {
+    const rt = clientRuntime(loadRuntime(cwd), 'stdio');
+    rt.journal.write({ kind, project: rt.project, data });
+  } catch {
+    // no configuration, or the journal cannot be reached
+  }
+}
+
 function run(): EventReply {
   let value: unknown;
   try {
     value = JSON.parse(fs.readFileSync(0, 'utf8'));
   } catch {
+    noted('harness.client_shape_changed', { client: 'stdio', event: 'unknown' });
     return UNREADABLE;
   }
   const head = readEvent(value);
-  if (head === null) return UNREADABLE;
+  if (head === null) {
+    // The form of the input is not the form of an event: the client changed, or it is another client.
+    noted('harness.client_shape_changed', { client: 'stdio', event: 'unknown' });
+    return UNREADABLE;
+  }
   try {
     const tools = JSON.parse(fs.readFileSync(new URL('./tools.json', import.meta.url), 'utf8')) as ClientTools;
     const rt = clientRuntime({ ...loadRuntime(head.cwd), harnessDirs: [HARNESS_ROOT] }, 'stdio');
-    return handleEvent(rt, value, tools, 'stdio');
+    const reply = handleEvent(rt, value, tools, 'stdio');
+    // An event whose parts have an unknown form (no tool, no input): the same fact, with the name of the event.
+    if (reply === UNREADABLE || reply.rule === 'adapter.shape') noted('harness.client_shape_changed', { client: 'stdio', event: head.event }, head.cwd);
+    return reply;
   } catch {
+    noted('harness.failure', { where: 'adapter', event: head.event }, head.cwd);
     // Only the event before an action is a barrier: its failure is a question.
     return head.event === 'before' ? { outcome: 'ask', rule: 'adapter.failure' } : {};
   }
