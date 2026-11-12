@@ -31,7 +31,8 @@ export type MemoryRecord = {
   created: string;
   text: string;
   paths: string[]; // the places that the record is about, relative paths
-  anchor?: { path: string; fp: string; root: string }; // the first place with the fingerprint of its content
+  anchor?: { path: string; fp: string; root: string }; // the first place that has a fingerprint, and the directory of all the places
+  anchors?: { path: string; fp: string }[]; // the other places that have a fingerprint
   task?: string;
   veto_until?: string; // a pending record becomes active at this time
   verified?: string; // the last time a human said that the record still holds
@@ -74,7 +75,7 @@ const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 've
 const MAX_STEP = 500; // characters of a next step and of an outer status of a case
 const MAX_STATE_PART = 1000; // characters of the next steps and of the unverified things of a state
 const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong', 'carried', 'carried_day'] as const;
-const ENCODED = ['paths', 'anchor', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status', 'unverified'] as const;
+const ENCODED = ['paths', 'anchor', 'anchors', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status', 'unverified'] as const;
 
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
 const fileOf = (rt: Runtime, type: string, id: string): string => path.join(memoryDir(rt), type, `${id}.md`);
@@ -134,6 +135,8 @@ function parse(text: string): Omit<MemoryRecord, 'uses'> | null {
     else delete fields.carried;
   }
   for (const key of ['next', 'status', 'unverified'] as const) if (fields[key] !== undefined && typeof fields[key] !== 'string') delete fields[key];
+  // The fingerprints of the other places: a list that a human broke is dropped, the record stays.
+  if (fields.anchors !== undefined && !(Array.isArray(fields.anchors) && fields.anchors.every((a) => a !== null && typeof a === 'object' && typeof (a as { path?: unknown }).path === 'string' && typeof (a as { fp?: unknown }).fp === 'string'))) delete fields.anchors;
   const body = lines.slice(end + 1).join('\n').replace(/\n+$/, '');
   return { ...(fields as object), paths: (fields.paths as string[] | undefined) ?? [], history: Array.isArray(fields.history) ? fields.history : [], text: body } as Omit<MemoryRecord, 'uses'>;
 }
@@ -199,13 +202,39 @@ function readUses(rt: Runtime): Record<string, { n: number; last: string }> {
   }
 }
 
+// The fingerprint of a place. A file: its content. A directory: the list of the names in it, each
+// with its kind; the content of the files of the directory is not the business of a record about
+// the directory. A name that starts with a dot is not counted: the system and the tools write
+// such names (`.DS_Store`, a swap file of an editor). A directory with more names than the limit
+// has no fingerprint.
+const MAX_NAMES = 5000;
 const fingerprint = (root: string, rel: string): string | null => {
   try {
-    return crypto.createHash('sha256').update(fs.readFileSync(path.join(root, rel))).digest('hex').slice(0, 12);
+    const place = path.join(root, rel);
+    const hash = crypto.createHash('sha256');
+    if (fs.statSync(place).isDirectory()) {
+      const names = fs.readdirSync(place, { withFileTypes: true }).filter((e) => !e.name.startsWith('.'));
+      if (names.length > MAX_NAMES) return null;
+      hash.update('directory\n');
+      for (const line of names.map((e) => `${e.isDirectory() ? 'd' : 'f'} ${e.name}`).sort()) hash.update(`${line}\n`);
+    } else hash.update(fs.readFileSync(place));
+    return hash.digest('hex').slice(0, 12);
   } catch {
     return null;
   }
 };
+
+// The places of a record with the fingerprints that they have now. A place with no fingerprint
+// (it is gone, or it is no file and no directory) is not in the result.
+function tie(root: string, places: string[]): Pick<MemoryRecord, 'anchor' | 'anchors'> {
+  const found = places.flatMap((place) => {
+    const fp = fingerprint(root, place);
+    return fp === null ? [] : [{ path: place, fp }];
+  });
+  const [first, ...rest] = found;
+  if (first === undefined) return {};
+  return { anchor: { ...first, root }, ...(rest.length > 0 && { anchors: rest }) };
+}
 
 // The records as the files hold them, oldest first, with no computed state.
 function stored(rt: Runtime): Omit<MemoryRecord, 'uses'>[] {
@@ -263,7 +292,8 @@ function at(record: Omit<MemoryRecord, 'uses'>, now: number, uses: { n: number; 
   const out: MemoryRecord = { ...record, uses: uses?.n ?? 0, ...(uses !== undefined ? { last_use: uses.last } : {}) };
   if (out.state === 'pending' && out.veto_until !== undefined && Date.parse(out.veto_until) < now) out.state = 'active';
   if (out.state !== 'active') return out;
-  if (out.anchor !== undefined && fingerprint(out.anchor.root, out.anchor.path) !== out.anchor.fp) out.state = 'stale';
+  const root = out.anchor?.root;
+  if (out.anchor !== undefined && [out.anchor, ...(out.anchors ?? [])].some((a) => fingerprint(root as string, a.path) !== a.fp)) out.state = 'stale';
   else if (out.type !== 'decision') {
     const fresh = Math.max(Date.parse(out.created), out.verified === undefined ? 0 : Date.parse(out.verified), uses === undefined ? 0 : Date.parse(uses.last));
     if (now - fresh > IDLE_DAYS * DAY) out.state = 'stale';
@@ -333,11 +363,7 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     const value = input[key];
     if (value !== undefined && value.trim() !== '') record[key] = scrub(value.trim());
   }
-  const place = input.paths[0];
-  if (input.root !== undefined && place !== undefined && path.isAbsolute(input.root)) {
-    const fp = fingerprint(input.root, place);
-    if (fp !== null) record.anchor = { path: place, fp, root: input.root };
-  }
+  if (input.root !== undefined && path.isAbsolute(input.root)) Object.assign(record, tie(input.root, input.paths));
   if (before !== undefined) {
     record.supersedes = before.id;
     write(rt, { ...before, state: 'replaced', history: [...before.history, { at: new Date(now).toISOString(), state: 'replaced' }] });
@@ -428,10 +454,12 @@ export function restoreRecord(rt: Runtime, id: string, now: number = Date.now())
   // The human says that the record holds: the marks "this was wrong" are gone.
   delete next.wrong;
   if (next.anchor !== undefined) {
-    const fp = fingerprint(next.anchor.root, next.anchor.path);
-    // The place is gone and the human says that the record holds: it is no longer tied to the place.
-    if (fp === null) delete next.anchor;
-    else next.anchor = { ...next.anchor, fp };
+    // A place that is gone and the human says that the record holds: it is no longer tied to that
+    // place. A place that was not there when the record was written and is there now gets its tie.
+    const tied = tie(next.anchor.root, record.paths);
+    delete next.anchor;
+    delete next.anchors;
+    Object.assign(next, tied);
   }
   if (record.state !== 'active') next.history = [...record.history, { at: new Date(now).toISOString(), state: 'active' }];
   write(rt, next);

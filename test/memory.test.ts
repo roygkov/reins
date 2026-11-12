@@ -210,6 +210,71 @@ test('memory: a record about a place goes stale when the place changes', () => {
   assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale', 'a place that is gone makes the record stale');
 });
 
+test('memory: every place of a record has a fingerprint, not only the first', () => {
+  const b = box();
+  const root = repo(b);
+  fs.writeFileSync(path.join(root, 'src/Page.java'), 'int page = 0;\n');
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: ['src/Limit.java', 'src/Page.java', 'src/Gone.java'], root, by: 'human' }, T0);
+  assert.ok(r.ok);
+  assert.deepEqual([r.record.anchor?.path, r.record.anchors?.map((a) => a.path)], ['src/Limit.java', ['src/Page.java']], 'a place that is no file has no fingerprint');
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'active');
+  fs.writeFileSync(path.join(root, 'src/Page.java'), 'int page = 1;\n');
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale', 'the second place changed');
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'active');
+  // The second place is gone: the record is stale, and a restore unties it from that place only.
+  fs.rmSync(path.join(root, 'src/Page.java'));
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale');
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  const now = listRecords(b.rt, T0)[0];
+  assert.deepEqual([now?.state, now?.anchor?.path, now?.anchors], ['active', 'src/Limit.java', undefined]);
+  // A place that was not there at the start and is there at the restore gets its tie.
+  fs.writeFileSync(path.join(root, 'src/Gone.java'), '');
+  fs.writeFileSync(path.join(root, 'src/Limit.java'), 'int limit = items.length - 1;\n');
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  assert.deepEqual(listRecords(b.rt, T0)[0]?.anchors?.map((a) => a.path), ['src/Gone.java']);
+  fs.rmSync(path.join(root, 'src/Gone.java'));
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  // A list of fingerprints that a human broke is dropped: the record stays.
+  const file = path.join(b.rt.stateDir, 'memory', 'pitfall', `${r.record.id}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^anchor: /m, 'anchors: {}\nanchor: '));
+  assert.deepEqual([listRecords(b.rt, T0)[0]?.state, listRecords(b.rt, T0)[0]?.anchors], ['active', undefined]);
+  // The first place is no file: the record is tied to the first place that is one.
+  const late = addRecord(b.rt, { type: 'pitfall', text: 'Pages count from zero.', paths: ['src/Gone.java', 'src/Limit.java'], root, by: 'human' }, T0);
+  assert.ok(late.ok);
+  assert.deepEqual([late.record.anchor?.path, late.record.anchors], ['src/Limit.java', undefined]);
+  // The first place is gone and the second holds: a restore moves the tie to the second.
+  fs.writeFileSync(path.join(root, 'src/Page.java'), 'int page = 2;\n');
+  const two = addRecord(b.rt, { type: 'pitfall', text: 'Two places.', paths: ['src/Page.java', 'src/Limit.java'], root, by: 'human' }, T0);
+  assert.ok(two.ok);
+  fs.rmSync(path.join(root, 'src/Page.java'));
+  assert.equal(restoreRecord(b.rt, two.record.id, T0), true);
+  const moved = listRecords(b.rt, T0).find((x) => x.id === two.record.id);
+  assert.deepEqual([moved?.state, moved?.anchor?.path, moved?.anchors], ['active', 'src/Limit.java', undefined]);
+});
+
+test('memory: a place that is a directory has the fingerprint of its list of names', () => {
+  const b = box();
+  const root = repo(b);
+  fs.mkdirSync(path.join(root, 'src/api'));
+  const r = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: ['src'], root, by: 'human' }, T0);
+  assert.ok(r.ok);
+  assert.match(r.record.anchor?.fp ?? '', /^[0-9a-f]{12}$/);
+  // The content of a file of the directory is not the business of the record.
+  fs.writeFileSync(path.join(root, 'src/Limit.java'), 'int limit = items.length + 1;\n');
+  fs.writeFileSync(path.join(root, 'src/api/Deep.java'), '');
+  // A name that starts with a dot is the work of the system or of a tool.
+  fs.writeFileSync(path.join(root, 'src/.DS_Store'), '');
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'active');
+  fs.writeFileSync(path.join(root, 'src/Page.java'), '');
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale', 'a new name in the directory');
+  assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  // A file that takes the place of a directory of the same name is a change.
+  fs.rmSync(path.join(root, 'src/api'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src/api'), '');
+  assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale');
+});
+
 test('memory: a record that no report cited for its term goes stale, a cited one stays', () => {
   const b = box();
   const used = addRecord(b.rt, { type: 'pitfall', text: 'Used.', paths: [], by: 'human' }, T0);
