@@ -409,7 +409,7 @@ function main(args: string[]): Out {
       const status = rest.slice(2).find((m) => m.startsWith('status='))?.slice(7);
       const r = stepCase(rt, id, { by: 'human', next: rest[1] ?? '', ...(status !== undefined ? { status } : {}) });
       if (!r.ok) throw new Stop(r.error);
-      return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}) };
+      return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}), ...(r.record.state === 'closed' ? { state: 'closed' } : {}) };
     }
     if ((first === 'next' && rest.length >= 2) || (first === 'close' && rest.length >= 1)) {
       const id = rest[0] ?? '';
@@ -427,7 +427,7 @@ function main(args: string[]): Out {
       const status = value('status');
       const r = stepCase(rt, id, { ...who, next: rest[1] ?? '', ...(status !== undefined ? { status } : {}) });
       if (!r.ok) throw new Stop(r.error);
-      return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}) };
+      return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}), ...(r.record.state === 'closed' ? { state: 'closed' } : {}) };
     }
     // `add <type> <text> [task=<id>] [path=<p>]...` is the agent; `decide <text> because=<reason> ...` is the human.
     if ((first === 'add' && rest.length >= 2) || (first === 'decide' && rest.length >= 1)) {

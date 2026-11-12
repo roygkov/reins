@@ -55,7 +55,7 @@ export type PackSettings = {
   limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number };
   roles?: string[];
   checks?: string[];
-  memory?: { types?: string[]; veto_days?: number; keep_days?: number };
+  memory?: { types?: string[]; veto_days?: number; keep_days?: number; case_end?: string[] };
   tools?: Record<string, ToolRule>;
   rules?: PackRule[];
   models?: Partial<Record<ModelLevel, string>>; // the name of the model of the client for a level
@@ -100,6 +100,7 @@ export type Merged = {
   vetoDays?: number; // the veto window of a memory record: the longest that a pack names
   gate: GateData; // the rule data of the gate that the packs add, upper pack first
   defaultLevel?: ModelLevel; // the level of the model for a manifest that names none: the lowest pack that gives one
+  caseEnd?: string[]; // the outer statuses that end a case: all that the packs name
   memoryKeepDays?: number; // how long the file of a removed memory record is kept: the longest that a pack names
   journalKeepDays?: number; // the term of the archive of the journal: the longest that a pack names
   // The terms of the queue. A wait and an approval are barriers: the shortest that a pack names
@@ -282,14 +283,27 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   const checks = names(errors, value.checks, 'checks');
   if (checks !== undefined) settings.checks = checks;
 
-  const memory = section(errors, value.memory, 'memory', ['types', 'veto_days', 'keep_days']);
+  const memory = section(errors, value.memory, 'memory', ['types', 'veto_days', 'keep_days', 'case_end']);
   if (memory !== null) {
     const types = names(errors, memory.types, 'memory.types', RECORD_TYPES);
     // How long a record that the harness wrote waits for a veto of the human.
     const veto = limit(errors, memory.veto_days, 'memory.veto_days');
     // How long the file of a record that the human removed is kept.
     const kept = limit(errors, memory.keep_days, 'memory.keep_days');
-    settings.memory = { ...(types !== undefined && { types }), ...(veto !== undefined && { veto_days: veto }), ...(kept !== undefined && { keep_days: kept }) };
+    // The outer statuses that end a case: plain one-line words, as the outer system writes them.
+    let ends: string[] | undefined;
+    if (memory.case_end !== undefined) {
+      if (!Array.isArray(memory.case_end)) errors.push({ code: 'not_array', path: 'memory.case_end' });
+      else {
+        ends = [];
+        memory.case_end.forEach((item, i) => {
+          if (typeof item !== 'string' || item.trim() === '' || item.length > 80 || /[\r\n]/.test(item)) errors.push({ code: 'bad_name', path: `memory.case_end[${i}]` });
+          else if ((ends as string[]).some((e) => e.toLowerCase() === item.trim().toLowerCase())) errors.push({ code: 'duplicate', path: `memory.case_end[${i}]` });
+          else (ends as string[]).push(item.trim());
+        });
+      }
+    }
+    settings.memory = { ...(types !== undefined && { types }), ...(veto !== undefined && { veto_days: veto }), ...(kept !== undefined && { keep_days: kept }), ...(ends !== undefined && { case_end: ends }) };
   }
   if (value.tools !== undefined) {
     // Only the organization says what a tool does: a lower level could turn a write into a read.
@@ -629,6 +643,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   if (idle !== undefined && (m.scenarioIdleDays === undefined || idle > m.scenarioIdleDays)) m.scenarioIdleDays = idle;
   const veto = s.memory?.veto_days;
   if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
+  for (const end of s.memory?.case_end ?? []) if (!(m.caseEnd ?? []).some((e) => e.toLowerCase() === end.toLowerCase())) m.caseEnd = [...(m.caseEnd ?? []), end];
   const removed = s.memory?.keep_days;
   if (removed !== undefined && (m.memoryKeepDays === undefined || removed > m.memoryKeepDays)) m.memoryKeepDays = removed;
   narrow('readConnectors', s.connectors?.read);

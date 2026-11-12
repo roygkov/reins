@@ -557,6 +557,17 @@ export function stepCase(rt: Runtime, id: string, change: Who & { next: string; 
   const { carried_day: _, ...rest } = found.record;
   // The step is a proof that the case is alive: its term starts again.
   const record = { ...rest, next: scrub(next), carried: 0, verified: new Date(now).toISOString(), ...(status !== undefined && status !== '' ? { status: scrub(status) } : {}) };
+  // An outer status that the packs name as an end: the outer system says that the work is over,
+  // so the case ends with this step. The whole status counts, or its part after the last colon
+  // ("card: Released"): a word of the list in the middle of other words is no end.
+  const said = (status ?? '').toLowerCase();
+  const tail = said.slice(said.lastIndexOf(':') + 1).trim();
+  if (said !== '' && (rt.merged.caseEnd ?? []).some((end) => end.toLowerCase() === said || end.toLowerCase() === tail)) {
+    const closed = { ...record, state: 'closed' as RecordState, history: [...record.history, { at: new Date(now).toISOString(), state: 'closed' as RecordState }] };
+    write(rt, closed);
+    rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(change.task !== undefined ? { task: change.task } : {}), data: { record: id, type: 'case', state: 'closed', status: 1 } });
+    return { ok: true, record: at(closed, now, readUses(rt)[id]) };
+  }
   write(rt, record);
   rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(change.task !== undefined ? { task: change.task } : {}), data: { record: id, type: 'case', state: 'active', step: 1 } });
   return { ok: true, record: at(record, now, readUses(rt)[id]) };

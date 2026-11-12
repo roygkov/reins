@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPacks } from '../src/packs/packs.ts';
+import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { openScenario, type Runtime } from '../src/core/runtime.ts';
@@ -74,6 +74,41 @@ test('case: a case keeps its next step and its outer status, and a human can rea
   assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: 'x is slow', paths: [], by: 'human', next: 'y' }, T0), { ok: false, error: 'bad_type' });
   assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'n'.repeat(501) }, T0), { ok: false, error: 'bad_text' });
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
+test('case: a step with an outer status that the packs name as an end closes the case', () => {
+  const b = box();
+  b.rt.merged.caseEnd = ['done', 'Released'];
+  const id = open(b, 'The release card waits for the window.', 'look at the card on Monday');
+  // A status that is no end: the case stays open.
+  const kept = stepCase(b.rt, id, { next: 'the window is on Friday', status: 'card: Planned', by: 'human' }, T0 + DAY);
+  assert.ok(kept.ok);
+  assert.equal(kept.record.state, 'active');
+  // The words of the list in the middle of a status are no end: the whole status, or its part after the last colon.
+  assert.equal((stepCase(b.rt, id, { next: 'x', status: 'not done yet', by: 'human' }, T0 + DAY) as { record: { state: string } }).record.state, 'active');
+  const ended = stepCase(b.rt, id, { next: 'nothing: the card is released', status: 'card: RELEASED', by: 'human' }, T0 + 2 * DAY);
+  assert.ok(ended.ok);
+  assert.deepEqual([ended.record.state, ended.record.status, ended.record.next], ['closed', 'card: RELEASED', 'nothing: the card is released']);
+  assert.deepEqual(listRecords(b.rt, T0 + 2 * DAY).find((r) => r.id === id)?.history.at(-1), { at: new Date(T0 + 2 * DAY).toISOString(), state: 'closed' });
+  assert.deepEqual(casesForStart(b.rt, 4000, T0 + 3 * DAY).lines, []);
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.record_changed' && r.data?.record === id);
+  assert.deepEqual(rows.at(-1)?.data, { record: id, type: 'case', state: 'closed', status: 1 });
+  for (const row of rows) assert.deepEqual(validateRow(row), []);
+  assert.deepEqual(stepCase(b.rt, id, { next: 'x', by: 'human' }, T0 + 3 * DAY), { ok: false, error: 'unknown_record' }, 'a closed case takes no step');
+  // The whole status as one word, and the command shows the end.
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (...args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  const packFile = path.join(b.root, 'packs/person/pack.json');
+  fs.writeFileSync(packFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(packFile, 'utf8')), memory: { case_end: ['Done', 'In Prod'] } }));
+  // The command line of the test runs in the project of the directory: the case is opened there.
+  const lines = path.join(b.root, 'two.jsonl');
+  fs.writeFileSync(lines, `${JSON.stringify({ type: 'case', text: 'The MR waits for a review.', next: 'ping the reviewer' })}\n`);
+  assert.equal(reins('memory', 'import', lines).added, 1);
+  const second = reins('memory').records.find((r: any) => r.text === 'The MR waits for a review.').id;
+  const out = reins('memory', 'step', second, 'merged and released', 'status=in prod');
+  assert.deepEqual(out, { ok: true, record: second, next: 'merged and released', status: 'in prod', state: 'closed' });
+  // The packs: the lists add up; a word is one plain line.
+  assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', memory: { case_end: ['Done', '', 7, 'a\nb', 'Done'] } }, 'person').errors.map((e) => `${e.code} ${e.path}`), ['bad_name memory.case_end[1]', 'bad_name memory.case_end[2]', 'bad_name memory.case_end[3]', 'duplicate memory.case_end[4]']);
 });
 
 test('case: the agent changes a case only in a task whose manifest lets it write cases', () => {
