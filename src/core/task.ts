@@ -39,6 +39,9 @@ export type Task = {
   work?: string; // the fingerprint of the work that the accepted result holds for
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more
+  checked?: number; // the time of the accepted answer
+  check?: string; // the fingerprint of the check that gave it
+  soak?: number; // the first PASS came: the second answer is due at this time
   red?: boolean; // the last answer of the check was not PASS: the files of the check are protected
   widened?: boolean; // the human let a contract task go on past its contract
 };
@@ -50,8 +53,9 @@ export type TaskEvent =
   | { type: 'report'; size: number; fp: string; changed?: boolean }
   // `detail`: counts and a reason code of the check for the journal, never text.
   // `work`: the fingerprint of the work that the check saw.
-  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string }
-  | { type: 'invalidate' }
+  // `at`: the time of the answer. `check`: the fingerprint of the check that answered.
+  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string; at?: number; check?: string }
+  | { type: 'invalidate'; reason?: 'work_changed' | 'check_changed' | 'expired' }
   | { type: 'limit' } // the task went past its limit of tokens
   | { type: 'scope' } // a contract task needs a write that its contract does not name // the work changed after the check: the answer does not hold any more
   | { type: 'ask' }
@@ -209,15 +213,20 @@ export function step(task: Task, event: TaskEvent): Step {
       if (task.state !== 'checking' || done === undefined) return refuse(task);
       const detail = event.detail ?? {};
       if (event.result === 'PASS') {
-        const { red: _, ...green } = task;
-        return accept(event.work === undefined ? green : { ...green, work: event.work }, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
+        const { red: _, soak, checked: _c, check: _k, ...green } = task;
+        const at = event.at ?? 0;
+        const pass: RowDraft = { kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } };
+        // The soak: the first PASS is not the result. The check answers again after the term.
+        if (done.soak_minutes !== undefined && soak === undefined) return { task: { ...green, soak: at + done.soak_minutes * 60_000, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, rows: [{ ...pass, data: { ...pass.data, soak: done.soak_minutes } }] };
+        return accept({ ...green, checked: at, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
       }
       // No answer means "not ready". The silence of a check is never a success.
       const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { ...detail, check_kind: done.kind } };
       // A check that did not accept the work must not be made weaker instead of the work made better.
-      if (task.returns < done.retries) return back({ ...task, red: true }, [answer], 'check_fail', true);
+      const { soak: _s, check: _k, work: _w, ...rest } = task;
+      if (task.returns < done.retries) return back({ ...rest, red: true }, [answer], 'check_fail', true);
       return {
-        task: { ...task, red: true, state: 'waiting_human', waiting: 'check' },
+        task: { ...rest, red: true, state: 'waiting_human', waiting: 'check' },
         rows: [answer, { kind: 'check.retries_exceeded', data: { n: task.returns } }, { kind: 'task.waiting_human', data: { reason: 'check' } }],
       };
     }
@@ -235,7 +244,7 @@ export function step(task: Task, event: TaskEvent): Step {
       // An accepted result holds for the work that the check saw. The work is not that any more:
       // what would be published now was not checked.
       if (task.state !== 'publishing') return refuse(task);
-      return close(task, 'not_verified', [{ kind: 'check.invalidated' }], 'work_changed');
+      return close(task, 'not_verified', [{ kind: 'check.invalidated', data: { reason: event.reason ?? 'work_changed' } }], event.reason ?? 'work_changed');
     }
     case 'finish': {
       if (task.state !== 'publishing') return refuse(task);

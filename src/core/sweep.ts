@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyEvent, collectedDir, openTasks, type Runtime } from './runtime.ts';
+import { applyEvent, collectedDir, openTasks, runCheck, type Runtime } from './runtime.ts';
 import type { Task } from './task.ts';
 import { pruneArchive } from '../journal/writer.ts';
 import { pruneQueue } from './queue.ts';
@@ -14,6 +14,17 @@ import { switchOffIdle } from './idle.ts';
 const HOUR = 60 * 60 * 1000;
 // A free task: half a day. A scenario task: a day. A publication: an hour, as its envelope.
 const termOf = (task: Task): number => (task.state === 'publishing' ? HOUR : task.kind === 'free' ? 12 * HOUR : 24 * HOUR);
+
+// The soak of a check is over: the check gives its second answer. A script of a pack can run for
+// minutes, so this is a step of the timer and of the `sweep` command, never of a session start.
+export function dueChecks(rt: Runtime, now: number = Date.now()): string[] {
+  const ran: string[] = [];
+  for (const task of openTasks(rt)) {
+    if (task.state !== 'checking' || task.soak === undefined || now < task.soak) continue;
+    if ('step' in runCheck(rt, task.id, now)) ran.push(task.id);
+  }
+  return ran;
+}
 
 export function sweep(rt: Runtime, now: number = Date.now()): string[] {
   const closed: string[] = [];

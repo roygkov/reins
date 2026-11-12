@@ -333,14 +333,34 @@ export function redGuards(rt: Runtime): { root: string; patterns: RegExp[]; dirs
 
 // An accepted result holds for the work that the check saw. False: the work changed after the
 // check, and the publication of the task ended without a verified result.
-export function verifyWork(rt: Runtime, id: string): boolean {
+export function verifyWork(rt: Runtime, id: string, now: number = Date.now()): boolean {
   const task = loadTask(rt, id);
-  if (task === null || task.state !== 'publishing' || task.work === undefined) return true;
+  if (task === null || task.state !== 'publishing') return true;
   const root = sourceRoot(rt, task);
+  const term = task.manifest?.done.valid_minutes;
   // The work had a fingerprint at the check. No fingerprint now is not "the same work".
-  if ((root === null ? null : workState(root)) === task.work) return true;
-  applyEvent(rt, id, { type: 'invalidate' }, 'harness');
+  const reason =
+    task.work !== undefined && (root === null ? null : workState(root)) !== task.work ? 'work_changed'
+    // The check itself is a part of the answer: a weaker check would have given another one.
+    : task.check !== undefined && checkVersion(rt, task) !== task.check ? 'check_changed'
+    : term !== undefined && task.checked !== undefined && now - task.checked > term * 60_000 ? 'expired'
+    : null;
+  if (reason === null) return true;
+  applyEvent(rt, id, { type: 'invalidate', reason }, 'harness');
   return false;
+}
+
+// The version of the check of a task: the fingerprint of the script of the pack that decides.
+// The citation check is code of the core: it has no version of its own.
+function checkVersion(rt: Runtime, task: Task): string | null {
+  const name = task.manifest?.done.check;
+  const file = name === undefined ? undefined : rt.merged.scriptFiles[`check/${name}`];
+  if (file === undefined) return null;
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 32);
+  } catch {
+    return null;
+  }
 }
 
 export type Proposed = { ok: true; task: Task } | { ok: false; error: 'bad_contract'; details: Fault<string>[] };
@@ -583,12 +603,12 @@ function scriptCheck(rt: Runtime, task: Task): Answer {
 }
 
 export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task' | 'busy' | 'too_large' };
-export type Checked = { step: Step; answer: Answer } | { error: 'unknown_task' | 'busy' | 'not_checking' };
+export type Checked = { step: Step; answer: Answer } | { error: 'unknown_task' | 'busy' | 'not_checking' | 'soaking' };
 
 // Runs the check of a task that waits for it, from the report that is kept on the disk, and applies
 // the answer. The answer is computed without the lock and applied under it. A call that met a busy lock, or a
 // process that died after the report, leaves the task in "checking": this call can be made again.
-export function runCheck(rt: Runtime, id: string): Checked {
+export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Checked {
   if (!TASK_ID.test(id)) return { error: 'unknown_task' };
   // The check runs without the lock: a script of a pack can run for minutes, and a lock that old
   // counts as abandoned. The answer is applied under the lock, to the task as it is then, and
@@ -596,6 +616,9 @@ export function runCheck(rt: Runtime, id: string): Checked {
   const before = loadTask(rt, id);
   if (before === null) return { error: 'unknown_task' };
   if (before.state !== 'checking' || !coreChecks(before)) return { error: 'not_checking' };
+  // The soak: the second answer is not due yet.
+  if (before.soak !== undefined && now < before.soak) return { error: 'soaking' };
+  const version = checkVersion(rt, before);
   const text = readReport(rt, id);
   // A report that cannot be read is a fault of the harness: no answer.
   // The answer holds for one state of the work: the work is read before the check and after it.
@@ -605,6 +628,10 @@ export function runCheck(rt: Runtime, id: string): Checked {
   const work = root === null ? null : workState(root);
   // The work changed while the check ran: nothing says which work the answer is about.
   if (workBefore !== null && work !== workBefore) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
+  // The check changed while it ran: nothing says which check answered.
+  if (checkVersion(rt, before) !== version) answer = { result: 'none', reason: 'check_failed', n: 0, faults: [] };
+  // The second answer of a soak is about the work and the check of the first: a soak shows that one state held over the term.
+  if (before.soak !== undefined && answer.result === 'PASS' && ((work ?? undefined) !== before.work || (version ?? undefined) !== before.check)) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
   const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
   if (answer.reason !== undefined) detail.reason = answer.reason;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -612,8 +639,8 @@ export function runCheck(rt: Runtime, id: string): Checked {
       const task = loadTask(rt, id);
       if (task === null) return { error: 'unknown_task' };
       // The same wait: the same count of returns and the same report that the check read.
-      if (task.state !== 'checking' || task.returns !== before.returns || readReport(rt, id) !== text) return { error: 'not_checking' };
-      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, ...(work !== null ? { work } : {}) })), answer };
+      if (task.state !== 'checking' || task.returns !== before.returns || task.soak !== before.soak || readReport(rt, id) !== text) return { error: 'not_checking' };
+      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null ? { work } : {}) })), answer };
     });
     if (r !== 'busy') return r;
   }

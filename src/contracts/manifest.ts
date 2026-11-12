@@ -44,7 +44,7 @@ export type Manifest = {
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string; guards?: string[] };
+  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -317,7 +317,7 @@ export function guardPattern(guard: string): RegExp {
 }
 
 function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[]): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed', 'guards'], ['kind', 'retries']);
+  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
@@ -344,6 +344,15 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
       if (guards.length > MAX_GUARDS) r.add('not_in_range', 'done.guards');
       else guards.forEach((g, i) => { if (!isGuard(g)) r.add('bad_name', `done.guards[${i}]`); });
     }
+  }
+  // The term of an answer: after it a green answer holds no more. The soak: an outer state changes
+  // with time, so the first PASS waits for a second answer after the term.
+  for (const [key, max, allowed] of [['valid_minutes', 7 * 24 * 60, kind !== 'human'], ['soak_minutes', 24 * 60, kind === 'external']] as const) {
+    const n = d[key];
+    if (n === undefined) continue;
+    if (kind !== null && !allowed) r.add('not_allowed', `done.${key}`);
+    else if (!isInt(n)) r.add('not_integer', `done.${key}`);
+    else if (n < 1 || n > max) r.add('not_in_range', `done.${key}`);
   }
   if (d.retries !== undefined) {
     if (!isInt(d.retries)) r.add('not_integer', 'done.retries');

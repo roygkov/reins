@@ -11,7 +11,8 @@ import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { validateManifest } from '../src/contracts/manifest.ts';
-import { applyEvent, loadTask, openScenario, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, loadTask, openScenario, runCheck, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
+import { dueChecks, sweep } from '../src/core/sweep.ts';
 import { runCollect, sandboxProfile } from '../src/core/collect.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { loadCases } from './cases.ts';
@@ -400,4 +401,110 @@ test('ready: the list of the files of a check is a list of patterns inside the w
   assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: ['/etc/x', '../x', 'a/../b', '', 7, 'a\\b'] }), [0, 1, 2, 3, 4, 5].map((i) => `bad_name done.guards[${i}]`));
   assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: 'test' }), ['not_array done.guards']);
   assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: Array.from({ length: 21 }, (_, i) => `d${i}/**`) }), ['not_in_range done.guards']);
+});
+
+// ---- The answer holds for one version of the check, for a term, and after a soak.
+
+const PASSING = "#!/bin/sh\ncat >/dev/null\nif [ -e $WORK/../red ]; then printf '%s' '{\"outputs\":{\"result\":\"FAIL\"}}'; else printf '%s' '{\"outputs\":{\"result\":\"PASS\"}}'; fi\n";
+const MIN = 60_000;
+
+test('ready: a check that changed after its answer ends the publication without a verified result', () => {
+  const same = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: PASSING });
+  const kept = accepted(same);
+  assert.match(loadTask(same.rt, kept)?.check ?? '', /^[0-9a-f]{32}$/);
+  assert.equal(verifyWork(same.rt, kept), true);
+  const b = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: PASSING });
+  const id = accepted(b);
+  fs.appendFileSync(path.join(b.root, 'packs/project/check/tests.sh'), '# weaker\n');
+  assert.equal(verifyWork(b.rt, id), false);
+  const task = loadTask(b.rt, id);
+  assert.deepEqual([task?.state, task?.label], ['closed', 'not_verified']);
+  const rows = readJournal(b.rt.journal.file);
+  assert.equal(rows.find((x) => x.kind === 'check.invalidated')?.data?.reason, 'check_changed');
+  assert.equal(rows.find((x) => x.kind === 'task.closed')?.data?.reason, 'check_changed');
+  for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+  // A check that is not there any more is not the same check.
+  const gone = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: PASSING });
+  const lost = accepted(gone);
+  fs.rmSync(path.join(gone.root, 'packs/project/check/tests.sh'));
+  assert.equal(verifyWork(gone.rt, lost), false);
+});
+
+test('ready: an answer holds for the term that the manifest names', () => {
+  const b = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree', valid_minutes: 5 }, check: PASSING });
+  const id = accepted(b);
+  const at = loadTask(b.rt, id)?.checked ?? 0;
+  assert.ok(Math.abs(Date.now() - at) < MIN);
+  assert.equal(verifyWork(b.rt, id, at + 4 * MIN), true);
+  assert.equal(verifyWork(b.rt, id, at + 6 * MIN), false);
+  assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.invalidated')?.data?.reason, 'expired');
+  // Without the term an answer has no end of its own.
+  const free = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: PASSING });
+  assert.equal(verifyWork(free.rt, accepted(free), Date.now() + 600 * MIN), true);
+});
+
+test('ready: with a soak the first PASS is not the result: the check answers a second time after the term', () => {
+  const done = { kind: 'external', check: 'tests', retries: 0, source: 'worktree', soak_minutes: 10 };
+  const b = box({ done, check: PASSING });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  const first = submitReport(b.rt, id, REPORT);
+  assert.ok('step' in first);
+  assert.equal(first.step.task.state, 'checking', JSON.stringify(first));
+  const until = loadTask(b.rt, id)?.soak ?? 0;
+  assert.ok(Math.abs(until - Date.now() - 10 * MIN) < MIN);
+  assert.equal(comment(b).task, undefined, 'nothing is published during the soak');
+  // Before the term the check does not run again.
+  assert.deepEqual(runCheck(b.rt, id), { error: 'soaking' });
+  assert.deepEqual(runCheck(b.rt, id, until - 1), { error: 'soaking' });
+  const second = runCheck(b.rt, id, until + 1);
+  assert.ok('step' in second);
+  assert.equal(second.step.task.state, 'publishing');
+  assert.equal(loadTask(b.rt, id)?.soak, undefined);
+  const rows = readJournal(b.rt.journal.file);
+  assert.deepEqual(rows.filter((x) => x.kind === 'check.answered').map((x) => [x.data?.result, x.data?.soak]), [['PASS', 10], ['PASS', undefined]]);
+  for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+
+  // A red second answer is a red answer: the first PASS counts nothing.
+  const r = box({ done, check: PASSING });
+  const o = openScenario(r.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(o.ok);
+  submitReport(r.rt, o.task.id, REPORT);
+  fs.writeFileSync(path.join(r.root, 'red'), '');
+  const red = runCheck(r.rt, o.task.id, Date.now() + 11 * MIN);
+  assert.ok('step' in red);
+  assert.deepEqual([red.step.task.state, red.step.task.waiting, red.step.task.soak], ['waiting_human', 'check', undefined]);
+
+  // The sweep of the harness gives the second answer when the term is over.
+  const s = box({ done, check: PASSING });
+  const so = openScenario(s.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(so.ok);
+  submitReport(s.rt, so.task.id, REPORT);
+  assert.deepEqual(dueChecks(s.rt, Date.now() + 5 * MIN), []);
+  // A session start runs no script of a check.
+  sweep(s.rt, Date.now() + 11 * MIN);
+  assert.equal(loadTask(s.rt, so.task.id)?.state, 'checking');
+  assert.deepEqual(dueChecks(s.rt, Date.now() + 11 * MIN), [so.task.id]);
+  assert.equal(loadTask(s.rt, so.task.id)?.state, 'publishing');
+
+  // The soak is about one state of the work: a change of the work during the term gives no answer.
+  const w = box({ done, check: PASSING });
+  const wo = openScenario(w.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(wo.ok);
+  submitReport(w.rt, wo.task.id, REPORT);
+  fs.appendFileSync(path.join(w.cwd, 'a.txt'), 'one more line\n');
+  const moved = runCheck(w.rt, wo.task.id, Date.now() + 11 * MIN);
+  assert.ok('step' in moved);
+  assert.deepEqual([moved.answer.result, moved.answer.reason, moved.step.task.state], ['none', 'work_changed', 'waiting_human']);
+});
+
+test('ready: the term of an answer and the soak are numbers of minutes in the manifest', () => {
+  const errors = (done: Record<string, unknown>) => validateManifest({ ...manifests.get('review'), done }).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ kind: 'external', check: 'tests', retries: 1, valid_minutes: 30, soak_minutes: 10 }), []);
+  assert.deepEqual(errors({ kind: 'citations', source: 'worktree', retries: 1, valid_minutes: 30 }), []);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, soak_minutes: 10 }), ['not_allowed done.soak_minutes']);
+  assert.deepEqual(errors({ kind: 'human', retries: 1, valid_minutes: 10 }), ['not_allowed done.valid_minutes']);
+  assert.deepEqual(errors({ kind: 'external', check: 'tests', retries: 1, valid_minutes: 0, soak_minutes: 1441 }), ['not_in_range done.valid_minutes', 'not_in_range done.soak_minutes']);
+  assert.deepEqual(errors({ kind: 'external', check: 'tests', retries: 1, valid_minutes: '5', soak_minutes: 1.5 }), ['not_integer done.valid_minutes', 'not_integer done.soak_minutes']);
 });

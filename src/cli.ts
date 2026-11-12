@@ -31,7 +31,7 @@ import { applyEvent, approveContract, collectedDir, loadTask, verifyWork, openSc
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
-import { sweep } from './core/sweep.ts';
+import { dueChecks, sweep } from './core/sweep.ts';
 import { timerText } from './client/timer.ts';
 import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
@@ -286,7 +286,11 @@ function main(args: string[]): Out {
     if (first === undefined || !/^[0-9]{1,3}$/.test(first) || Number(first) > MAX_PAUSE_MINUTES || rest.length > 0) throw new Stop('usage');
     return { ok: true, until: pause(runtime(), Number(first)) };
   }
-  if (command === 'sweep' && first === undefined) return { ok: true, closed: sweep(runtime()) };
+  if (command === 'sweep' && first === undefined) {
+    const rt = runtime();
+    const checked = dueChecks(rt);
+    return { ok: true, closed: sweep(rt), ...(checked.length > 0 ? { checked } : {}) };
+  }
   // The word of the human: a scenario that the harness switched off for want of use acts again.
   if (command === 'enable' && first !== undefined && rest.length === 0) {
     const rt = runtime();
@@ -303,13 +307,18 @@ function main(args: string[]): Out {
     return { ok: true, ...timerText(first === undefined ? 5 : Number(first), fileURLToPath(import.meta.url), process.cwd(), env) };
   }
   // Triggers without a human. A timer of the system runs `tick`; a system that saw an event runs `fire`.
-  if (command === 'tick' && first === undefined) return { ok: true, ...tick(runtime()) };
+  if (command === 'tick' && first === undefined) {
+    const rt = runtime();
+    dueChecks(rt);
+    return { ok: true, ...tick(rt) };
+  }
   // The schedule with a client: every task that it opens and that needs the model gets a run of
   // the client of the machine, one after another.
   if (command === 'tick' && first === 'run' && rest.length === 0) {
     // A client without a window starts no client: nothing is opened, the time of the schedule stays.
     if (process.env.REINS_HEADLESS === '1') throw new Stop('nested_run');
     const rt = runtime();
+    dueChecks(rt);
     // One run of the schedule at a time: a timer that fires while a run still works (cron does)
     // must not start a second client beside the first. The lock holds the number of its process:
     // a lock of a process that is gone is taken over.
