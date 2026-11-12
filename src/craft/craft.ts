@@ -236,6 +236,8 @@ function save(rt: Runtime, p: Proposal): void {
 // pattern that has none yet. A pattern that the human rejected is proposed again only when it
 // grew twice.
 export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
+  // The craft is switched off: no pattern becomes a proposal. What was proposed before stays for the human.
+  if (rt.merged.craft?.off === true) return [];
   const rows = readJournalSince(rt.stateDir, now - PERIOD_MS).filter((r) => Date.parse(r.ts) >= now - PERIOD_MS);
   const known = new Map(listProposals(rt).map((p) => [`${p.pattern} ${p.key}`, p]));
   const made: Proposal[] = [];
@@ -317,6 +319,16 @@ function apply(rt: Runtime, p: Proposal, now: number): boolean {
 // The proposals whose veto window is over apply themselves. Returns those that did.
 export function applyDue(rt: Runtime, now: number = Date.now()): Proposal[] {
   const out: Proposal[] = [];
+  if (rt.merged.craft?.off === true) {
+    // The craft is off: nothing applies itself, now or later. A proposal loses its term, so the
+    // craft that is switched on again does not apply it at once, with no window for a veto: it waits for the human.
+    for (const p of listProposals(rt)) {
+      if (p.state !== 'open' || p.auto_at === undefined) continue;
+      const { auto_at: _, ...rest } = p;
+      save(rt, rest);
+    }
+    return out;
+  }
   // The term is gone from the packs: nothing applies itself, whatever a proposal says.
   if (rt.merged.craft?.auto_days === undefined) return out;
   for (const listed of listProposals(rt)) {
@@ -436,6 +448,7 @@ export const proposalLine = (p: Proposal): string =>
 // Measures the accepted proposals that are a week old. Returns those that got an effect now.
 export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {
   const out: Proposal[] = [];
+  if (rt.merged.craft?.off === true) return out;
   for (const p of listProposals(rt)) {
     if (p.state !== 'accepted' || p.resolved === undefined || (p.effect !== undefined && p.effect !== 'not_measured')) continue;
     const at = Date.parse(p.resolved);

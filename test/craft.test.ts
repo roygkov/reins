@@ -571,3 +571,45 @@ test('craft: a lowered level that brings returns or raises is worse, and one tha
   // The human lowered the level some days after the acceptance: the tasks at the old level between do not hide the change.
   assert.deepEqual(lowered([...times(6, [started('change-review', 'strong')]), ...times(5, [started('change-review', 'medium')])]), ['level_too_high better']);
 });
+
+// ---- The craft is switched off by one setting.
+
+test('craft: with the setting of a pack the craft finds nothing, applies nothing and measures nothing; the rest works', () => {
+  const b = box();
+  rows(b, NOW - DAY, times(6, question('default.write')));
+  const off: typeof b.rt = { ...b.rt, merged: { ...b.rt.merged, craft: { ...b.rt.merged.craft, off: true } } };
+  assert.deepEqual(propose(off, NOW), []);
+  assert.deepEqual(listProposals(off), []);
+  // A proposal that was made before stays for the human: it is listed and can be resolved.
+  const made = propose(b.rt, NOW);
+  assert.equal(made.length, 1);
+  assert.deepEqual(listProposals(off).map((p) => p.id), [made[0]?.id]);
+  assert.equal(resolveProposal(off, made[0]?.id ?? '', 'accepted', NOW), true);
+  rows(b, NOW + DAY, question('default.read'));
+  assert.deepEqual(measure(off, NOW + 8 * DAY), []);
+  assert.equal(measure(b.rt, NOW + 8 * DAY).length, 1, 'the same proposal is measured when the craft is on');
+  // Nothing applies itself while the craft is off.
+  const due = box();
+  const note = addRecord(due.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);
+  assert.ok(note.ok);
+  const auto: typeof due.rt = { ...due.rt, merged: { ...due.rt.merged, craft: { auto_days: 5 } } };
+  assert.equal(propose(auto, NOW).length, 1);
+  const twin = box();
+  const same = addRecord(twin.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);
+  assert.ok(same.ok);
+  const twinAuto: typeof twin.rt = { ...twin.rt, merged: { ...twin.rt.merged, craft: { auto_days: 5 } } };
+  assert.match(proposalLine(propose(twinAuto, NOW)[0] as never), /applies itself/);
+  assert.deepEqual(applyDue({ ...twinAuto, merged: { ...twinAuto.merged, craft: { auto_days: 5, off: true } } }, NOW + 6 * DAY), []);
+  // The proposal lost its term: the craft that is on again does not apply it at once, it waits for the human.
+  assert.doesNotMatch(proposalLine(listProposals(twinAuto)[0] as never), /applies itself/);
+  assert.deepEqual(applyDue(twinAuto, NOW + 7 * DAY), []);
+  assert.equal(listProposals(twinAuto)[0]?.state, 'open');
+  assert.equal(applyDue(auto, NOW + 6 * DAY).length, 1);
+});
+
+test('craft: the switch of a pack is the word "true", and nothing else', () => {
+  const errors = (craft: unknown) => validateSettings({ pack: 1, level: 'person', name: 'me', craft }, 'person').errors.map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ off: true }), []);
+  assert.deepEqual(errors({ off: false }), ['not_allowed craft.off']);
+  assert.deepEqual(errors({ off: 'yes' }), ['not_allowed craft.off']);
+});

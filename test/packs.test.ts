@@ -156,3 +156,12 @@ test('packs: the number of changes of a free task before the offer of a contract
   assert.equal(m.context.maxFreeChanges, 8);
   assert.deepEqual(faults(three({ 'person/pack.json': { ...person, limits: { ...person.limits, free_changes: 0 } } }), 'person'), ['not_positive limits.free_changes']);
 });
+
+test('packs: the switch of the craft of any level holds in the merge', () => {
+  const org = structuredClone(bases.get('three')?.['organization/pack.json']) as Record<string, unknown>;
+  const person = structuredClone(bases.get('three')?.['person/pack.json']) as Record<string, unknown>;
+  assert.equal(three().craft?.off, undefined);
+  assert.equal(three({ 'organization/pack.json': { ...org, craft: { off: true } }, 'person/pack.json': { ...person, craft: { per_week: 3 } } }).craft?.off, true);
+  const low = three({ 'person/pack.json': { ...person, craft: { off: true } } });
+  assert.deepEqual([low.craft?.off, low.packs.map((p) => p.errors.length)], [true, [0, 0, 0]]);
+});

@@ -136,7 +136,8 @@ const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL'
 const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults', 'scenarios', 'craft'] as const;
 // The numbers of the craft that a pack can set, and the scenarios that the craft leaves alone.
 export const CRAFT_NUMBERS = ['min_questions', 'min_approvals', 'min_tool_failures', 'min_chains', 'min_checks', 'min_contracts', 'min_raises', 'min_smooth', 'unused_days', 'per_week', 'auto_days'] as const;
-export type CraftSettings = { [K in (typeof CRAFT_NUMBERS)[number]]?: number } & { keep?: string[] };
+// `off`: the craft is switched off: it finds nothing, applies nothing and measures nothing. The rest of the harness works.
+export type CraftSettings = { [K in (typeof CRAFT_NUMBERS)[number]]?: number } & { keep?: string[]; off?: true };
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -384,7 +385,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     const keep = limit(errors, journal.keep_days, 'journal.keep_days');
     settings.journal = keep === undefined ? {} : { keep_days: keep };
   }
-  const craft = section(errors, value.craft, 'craft', [...CRAFT_NUMBERS, 'keep']);
+  const craft = section(errors, value.craft, 'craft', [...CRAFT_NUMBERS, 'keep', 'off']);
   if (craft !== null) {
     const out: CraftSettings = {};
     for (const key of CRAFT_NUMBERS) {
@@ -393,6 +394,11 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     }
     const keep = names(errors, craft.keep, 'craft.keep');
     if (keep !== undefined) out.keep = keep;
+    // The switch only switches off: a pack that wants the craft says nothing.
+    if (craft.off !== undefined) {
+      if (craft.off === true) out.off = true;
+      else errors.push({ code: 'not_allowed', path: 'craft.off' });
+    }
     settings.craft = out;
   }
   const idle = section(errors, value.scenarios, 'scenarios', ['idle_days']);
@@ -820,9 +826,10 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   const kept = s.queue?.keep_days;
   if (kept !== undefined && (m.queueKeepDays === undefined || kept > m.queueKeepDays)) m.queueKeepDays = kept;
   if (s.craft !== undefined) {
-    const { keep, ...numbers } = s.craft;
+    // The switch of any level holds: a lower pack cannot switch the craft on again.
+    const { keep, off: _, ...numbers } = s.craft;
     const all = [...(m.craft?.keep ?? []), ...(keep ?? []).filter((name) => !(m.craft?.keep ?? []).includes(name))];
-    m.craft = { ...m.craft, ...numbers, ...(all.length > 0 ? { keep: all } : {}) };
+    m.craft = { ...m.craft, ...numbers, ...(all.length > 0 ? { keep: all } : {}), ...(m.craft?.off === true || s.craft.off === true ? { off: true as const } : {}) };
   }
   const idle = s.scenarios?.idle_days;
   if (idle !== undefined && (m.scenarioIdleDays === undefined || idle > m.scenarioIdleDays)) m.scenarioIdleDays = idle;
