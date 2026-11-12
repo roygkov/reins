@@ -546,3 +546,30 @@ test('before: a free task that made the number of changes of the packs gets one 
   humanRequest(plain.rt, { session: 's1', cwd: plain.cwd });
   for (let i = 0; i < 5; i += 1) assert.equal(afterAction(plain.rt, { ...call(plain, 'write_file', { path: 'src/a.ts' }), session: 's1' }, CLIENT).offer, undefined);
 });
+
+// ---- A marker of the production environment in the input of a tool.
+
+test('before: a write of a tool whose input names a production marker is a production write, whatever its row says', () => {
+  const b = box();
+  const rt: Runtime = { ...b.rt, gateConfig: { markers: ['prod', 'live'] } };
+  open({ ...b, rt });
+  const write = (input: Record<string, unknown>, runtime: Runtime = rt) => {
+    const r = beforeAction(runtime, call(b, 'tracker__add_comment', input), CLIENT);
+    return [r.outcome, r.rule, r.envelope];
+  };
+  // The row of the tool says "work": the envelope of the task covers the write after one confirmation.
+  assert.deepEqual(write({ change: '7' }), ['ask', 'default.write', 'confirm']);
+  // A name in the input is a marker: the write goes to production, and the envelope does not cover it.
+  assert.deepEqual(write({ change: '7', cluster: 'prod-eu' }), ['ask', 'default.write', 'production']);
+  assert.deepEqual(write({ change: '7', where: { hosts: ['db.live.example.com'] } }), ['ask', 'default.write', 'production']);
+  // A text of the human is not a name: the word in a sentence marks nothing.
+  assert.deepEqual(write({ change: '7', body: 'the fix goes to prod next week' }), ['ask', 'default.write', 'confirm']);
+  assert.deepEqual(write({ change: '7', cluster: 'product-eu' }), ['ask', 'default.write', 'confirm']);
+  // A space at the edge of a name hides nothing; an input too large or too deep to read counts as production.
+  assert.deepEqual(write({ change: '7', cluster: 'prod-eu\n' }), ['ask', 'default.write', 'production']);
+  assert.deepEqual(write({ change: '7', pad: Array.from({ length: 300 }, (_, i) => `v${i}`), cluster: 'prod-eu' }), ['ask', 'default.write', 'production']);
+  assert.deepEqual(write({ change: '7', a: { b: { c: { d: { e: { cluster: 'prod-eu' } } } } } }), ['ask', 'default.write', 'production']);
+  // Without markers nothing changes.
+  assert.deepEqual(write({ change: '7', cluster: 'prod-eu' }, { ...b.rt, gateConfig: { markers: [] } }), ['ask', 'default.write', 'confirm']);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});

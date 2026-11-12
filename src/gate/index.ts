@@ -32,6 +32,9 @@ const config = require('./config.cjs') as { load(info: RepoInfo | null): GateCon
 const root = require('./root.cjs') as { findRoot(cwd: string): RepoInfo };
 const gitGate = require('./gate-git.cjs') as { setGitBudget(b: { perCall: number; total: number }): { perCall: number; total: number } };
 
+const context = require('./context.cjs') as { isProdName(value: string, markers: unknown): boolean };
+// A name that holds a marker of the production environment as one of its parts.
+export const isProdName = (value: string, markers: unknown): boolean => context.isProdName(value, Array.isArray(markers) ? markers : []);
 export const findRoot = root.findRoot;
 export const loadConfig = config.load;
 export const setGitBudget = gitGate.setGitBudget;

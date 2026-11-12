@@ -21,7 +21,7 @@ import { heldFreeTask, sessionTask } from './session.ts';
 import { guardPattern } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
-import { findRoot, loadConfig, shellAction, type GateConfig } from '../gate/index.ts';
+import { findRoot, loadConfig, shellAction, type GateConfig, isProdName } from '../gate/index.ts';
 import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '../packs/packs.ts';
 
 // `session`: the session of the client, when the client names it.
@@ -267,6 +267,27 @@ function gateConfig(rt: Runtime, cwd: string): GateConfig {
 // `connector`: the read connector that a read tool names in the table of the pack.
 type Read = { action: Action; layers: LayerDecision[]; command?: string; connector?: string } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
 
+// A name in the input of a tool: a short value without a space. A sentence of the human is not a
+// name, so a word in a text marks nothing. The look is bounded: the depth and the count of values;
+// past the bound the call counts as a production one.
+function namesProduction(input: unknown, markers: unknown): boolean {
+  if (!Array.isArray(markers) || markers.length === 0) return false;
+  let left = 200;
+  const look = (value: unknown, depth: number): boolean => {
+    // An input too large or too deep to read to its end is not known to name no production place.
+    if (left <= 0 || depth > 4) return true;
+    left -= 1;
+    if (typeof value === 'string') {
+      const name = value.trim();
+      return !/\s/.test(name) && isProdName(name, markers);
+    }
+    if (Array.isArray(value)) return value.some((x) => look(x, depth + 1));
+    if (value !== null && typeof value === 'object') return Object.values(value).some((x) => look(x, depth + 1));
+    return false;
+  };
+  return look(input, 0);
+}
+
 // What the call is, in the words of the policy.
 function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
   const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
@@ -300,7 +321,10 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
   if (rule === undefined) return { action: UNKNOWN, layers: [] };
   if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV, ...(rule.sensitive === true ? { sensitive: true } : {}) }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
   const known = (rt.merged.context.envs ?? []).includes(rule.env);
-  const production = !known || (rt.merged.context.productionEnvs ?? []).includes(rule.env);
+  // The row of a tool names one environment. The call can name another: a name in its input that
+  // holds a marker of the production environment (a cluster, a host, a project). Then the call
+  // is a production one, whatever the row says: the markers of the gate hold for a tool as for a command.
+  const production = !known || (rt.merged.context.productionEnvs ?? []).includes(rule.env) || namesProduction(call.input, gateConfig(rt, call.cwd).markers);
   // A read of a tool that also writes keeps the environment of the tool: a rule of a pack about
   // that environment still sees the call.
   if (readsNow(rule.read_when, call.input)) return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: { name: rule.env, known, production }, ...(rule.sensitive === true ? { sensitive: true } : {}) }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
