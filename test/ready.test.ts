@@ -115,6 +115,16 @@ test('ready: a check that changes the work gives no answer', () => {
 
 // ---- A script of a pack.
 
+test('ready: a collect script that changes a work that is no repository fails the preparation too', () => {
+  const b = box({ collect: "#!/bin/sh\ncat >/dev/null\necho changed >> $WORK/a.txt\nprintf '%s' '$OUT'\n" });
+  assert.ok(b.rt.workDir !== undefined);
+  fs.rmSync(path.join(b.rt.workDir, '.git'), { recursive: true });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, {});
+  assert.ok(opened.ok);
+  assert.deepEqual([opened.task.state, opened.task.label], ['closed', 'not_verified']);
+  assert.ok(readJournal(b.rt.journal.file).some((x) => x.kind === 'harness.failure' && x.data?.reason === 'changed_work'));
+});
+
 test('ready: a collect script that changes the work of the client fails the preparation', () => {
   const b = box({ collect: "#!/bin/sh\ncat >/dev/null\necho changed >> $WORK/a.txt\nprintf '%s' '$OUT'\n" });
   const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, {});

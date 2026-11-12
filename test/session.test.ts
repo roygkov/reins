@@ -73,7 +73,8 @@ test('session: the next request closes the task of the request before it', () =>
 test('session: when the agent stops, the free task closes as not verified', () => {
   const b = box();
   const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
-  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified' });
+  // The directory of the work is no repository: the fact about the work comes from its files.
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: false });
   assert.equal(loadTask(b.rt, task)?.state, 'closed');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), {}, 'nothing is open: nothing to close');
   assert.notEqual(act(b, 's1'), task, 'an action without a request gets a new free task');

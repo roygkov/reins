@@ -72,7 +72,46 @@ test('work: the state of a work tree changes with an edit, a new file and a comm
   git(b.cwd, 'add', '-A');
   git(b.cwd, 'commit', '-q', '-m', 'more');
   assert.notEqual(workState(b.cwd), added);
-  assert.equal(workState(path.join(b.root, 'packs')), null, 'outside a repository there is no state');
+});
+
+test('work: a directory that is no repository has a state too: the names, the sizes and the times of its files', () => {
+  const b = box();
+  const dir = path.join(b.root, 'plain');
+  fs.mkdirSync(path.join(dir, 'notes'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'notes/a.md'), 'one\n');
+  const base = workState(dir);
+  assert.match(base ?? '', /^[0-9a-f]{16,}$/);
+  assert.equal(workState(dir), base, 'no change: the same state');
+  fs.writeFileSync(path.join(dir, 'notes/a.md'), 'one and two\n');
+  let edited = workState(dir);
+  assert.notEqual(edited, base, 'an edit');
+  fs.writeFileSync(path.join(dir, 'b.md'), '');
+  const added = workState(dir);
+  assert.notEqual(added, edited, 'a new file');
+  fs.rmSync(path.join(dir, 'b.md'));
+  assert.equal(workState(dir), edited, 'the file is gone again: the state before it');
+  // A file of the system is not the work. A file whose name starts with a dot is: `.env`, a config of a tool.
+  fs.writeFileSync(path.join(dir, '.DS_Store'), 'x');
+  assert.equal(workState(dir), edited);
+  fs.writeFileSync(path.join(dir, '.env'), 'x');
+  assert.notEqual(workState(dir), edited);
+  fs.rmSync(path.join(dir, '.env'));
+  // The time of the content can be set back: the change is seen all the same.
+  const stat = fs.statSync(path.join(dir, 'notes/a.md'));
+  fs.writeFileSync(path.join(dir, 'notes/a.md'), 'one and 2wo\n');
+  fs.utimesSync(path.join(dir, 'notes/a.md'), stat.atime, stat.mtime);
+  assert.notEqual(workState(dir), edited);
+  edited = workState(dir);
+  // A link is not followed: its target is not a part of the work.
+  fs.symlinkSync(b.cwd, path.join(dir, 'link'));
+  const linked = workState(dir);
+  assert.notEqual(linked, edited);
+  fs.writeFileSync(path.join(b.cwd, 'far.txt'), 'x');
+  assert.equal(workState(dir), linked);
+  // A directory with more files than the limit has no state: a walk of it costs too much.
+  for (let i = 0; i < 2001; i += 1) fs.writeFileSync(path.join(dir, 'notes', `f${i}`), '');
+  assert.equal(workState(dir), null);
+  assert.equal(workState(path.join(b.root, 'no-such-directory')), null);
 });
 
 test('stop: a request that changed the work tree ends as "not verified", and the client is told', () => {

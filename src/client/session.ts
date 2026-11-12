@@ -234,7 +234,7 @@ export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; lab
   if (id === undefined) return {};
   const before = readSession(rt, e.session)?.work;
   // A fact, not the words of the agent: the work tree is not what it was at the request.
-  // Outside a repository there is no fact about the work: nothing is said.
+  // A work with no fingerprint (a directory of too many files, no answer of git) gives no fact: nothing is said.
   const now = workState(e.cwd);
   const changed = typeof before === 'string' && now !== null ? now !== before : undefined;
   const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000', ...(changed === true ? { changed: true } : {}) }, 'agent');
