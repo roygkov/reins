@@ -11,8 +11,8 @@ import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
-import { detect, listProposals, measure, propose, resolveProposal } from '../src/craft/craft.ts';
-import { addRecord, listRecords } from '../src/memory/store.ts';
+import { applyDue, detect, listProposals, measure, propose, resolveProposal } from '../src/craft/craft.ts';
+import { addRecord, listRecords, restoreRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -182,6 +182,57 @@ test('craft: a proposal without a ready change says so, and its acceptance appli
   assert.deepEqual(made.map((p) => [p.pattern, p.change]), [['repeated_question', undefined]]);
   resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
   assert.equal(listProposals(b.rt)[0]?.applied, false);
+});
+
+// ---- The class "with a veto window".
+
+test('craft: with a term of the packs a proposal whose change can be taken back applies itself, unless the human rejected it', () => {
+  const b = box();
+  b.rt.merged.craft = { auto_days: 5 };
+  const old = NOW - 40 * DAY;
+  const one = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, old);
+  const two = addRecord(b.rt, { type: 'pitfall', text: 'the queue keeps the order', paths: [], by: 'human' }, old);
+  assert.ok(one.ok && two.ok);
+  rows(b, NOW - DAY, times(5, question('default.unknown-tool')));
+  const made = propose(b.rt, NOW);
+  // A record that goes stale comes back with one command: it gets the term. A question about a rule has no ready change: only the human.
+  assert.deepEqual(made.map((p) => [p.pattern, p.auto_at]).sort(), [
+    ['record_unused', new Date(NOW + 5 * DAY).toISOString()], ['record_unused', new Date(NOW + 5 * DAY).toISOString()], ['repeated_question', undefined],
+  ]);
+  const first = made.find((p) => p.key === one.record.id);
+  const second = made.find((p) => p.key === two.record.id);
+  // The human rejects one inside the window.
+  assert.equal(resolveProposal(b.rt, second?.id ?? '', 'rejected', NOW + DAY), true);
+  assert.deepEqual(applyDue(b.rt, NOW + 4 * DAY), [], 'the window is not over');
+  const applied = applyDue(b.rt, NOW + 6 * DAY);
+  assert.deepEqual(applied.map((p) => [p.id, p.state, p.applied, p.auto]), [[first?.id, 'accepted', true, true]]);
+  assert.equal(listRecords(b.rt, NOW + 6 * DAY).find((r) => r.id === one.record.id)?.state, 'stale');
+  assert.equal(listRecords(b.rt, NOW + 6 * DAY).find((r) => r.id === two.record.id)?.state, 'active', 'the rejected one stays');
+  assert.deepEqual(applyDue(b.rt, NOW + 7 * DAY), [], 'once');
+  assert.equal(listProposals(b.rt).find((p) => p.pattern === 'repeated_question')?.state, 'open');
+  const resolved = readJournal(b.rt.journal.file).filter((r) => r.kind === 'craft.proposal_resolved');
+  assert.deepEqual(resolved.map((r) => r.data), [{ proposal: second?.id, state: 'rejected' }, { proposal: first?.id, state: 'accepted', auto: 1 }]);
+  for (const row of resolved) assert.deepEqual(validateRow(row), []);
+  // The human takes it back with one command.
+  assert.equal(restoreRecord(b.rt, one.record.id, NOW + 8 * DAY), true);
+  // The rejected pattern grew twice and opens again: it waits for the human, with no term.
+  const again = propose(b.rt, NOW + 45 * DAY).find((p) => p.key === two.record.id);
+  assert.deepEqual([again?.state, again?.auto_at], ['open', undefined]);
+  // The term went away from the packs after the proposal was made: nothing applies itself.
+  const gone = box();
+  gone.rt.merged.craft = { auto_days: 5 };
+  const kept = addRecord(gone.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, old);
+  assert.ok(kept.ok);
+  assert.equal(propose(gone.rt, NOW).length, 1);
+  gone.rt.merged.craft = {};
+  assert.deepEqual(applyDue(gone.rt, NOW + 6 * DAY), []);
+  assert.equal(listRecords(gone.rt, NOW + 6 * DAY)[0]?.state, 'active');
+  // Without the term nothing applies itself.
+  const plain = box();
+  const note = addRecord(plain.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, old);
+  assert.ok(note.ok);
+  assert.deepEqual(propose(plain.rt, NOW).map((p) => p.auto_at), [undefined]);
+  assert.deepEqual(applyDue(plain.rt, NOW + 400 * DAY), []);
 });
 
 // ---- A rejected pattern.

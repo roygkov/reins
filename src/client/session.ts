@@ -11,7 +11,7 @@ import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
-import { listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
+import { applyDue, listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
 import { writeWeek } from '../craft/weekly.ts';
 import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
@@ -94,6 +94,7 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   // Housekeeping that needs no human: tasks past their term end, new patterns become proposals.
   sweep(rt);
   propose(rt);
+  applyDue(rt);
   measure(rt);
   const level = levelOf(e.capabilities);
   rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level } });

@@ -22,7 +22,8 @@ export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { k
 export type Effect = 'better' | 'same' | 'worse' | 'not_measured';
 // `rejected_n`: the size of the pattern when the human rejected it. `applied`: the ready change was made.
 // `undone`: the time when the human accepted the undo of this proposal.
-export type Proposal = Pattern & { id: string; created: string; state: 'open' | 'accepted' | 'rejected'; change?: Change; resolved?: string; applied?: boolean; effect?: Effect; rejected_n?: number; undone?: string };
+// `auto_at`: the proposal applies itself at this time unless the human rejects it. `auto`: it did.
+export type Proposal = Pattern & { id: string; created: string; state: 'open' | 'accepted' | 'rejected'; change?: Change; resolved?: string; applied?: boolean; effect?: Effect; rejected_n?: number; undone?: string; auto_at?: string; auto?: boolean };
 
 const DAY = 24 * 60 * 60 * 1000;
 // The thresholds of the code. A pack can set its own: the section `craft`.
@@ -181,10 +182,15 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
     if (before !== undefined && !(before.state === 'rejected' && found.n >= 2 * (before.rejected_n ?? before.n))) continue;
     if (perWeek !== undefined && week >= perWeek) break;
     const change = changeOf(rt, found);
+    // The class "with a veto window": a change that one command takes back (a memory record that
+    // goes stale) applies itself after the term of the packs. Without the term the human decides all.
+    const autoDays = rt.merged.craft?.auto_days;
+    // A proposal that the human rejected once and that opens again waits for the human: the "no" was said about this record.
+    const autoAt = change?.kind === 'memory' && autoDays !== undefined && before === undefined ? { auto_at: new Date(now + autoDays * DAY).toISOString() } : {};
     // The id comes from the pattern: two sessions that start together make one proposal, not two.
     const p: Proposal = {
       ...found, id: `c${crypto.createHash('sha256').update(`${found.pattern} ${found.key}`).digest('hex').slice(0, 10)}`, created: new Date(now).toISOString(), state: 'open',
-      ...(change !== undefined ? { change } : {}),
+      ...(change !== undefined ? { change } : {}), ...autoAt,
     };
     try {
       fs.mkdirSync(dirOf(rt), { recursive: true });
@@ -233,6 +239,31 @@ function apply(rt: Runtime, p: Proposal, now: number): boolean {
   } catch {
     return false;
   }
+}
+
+// The proposals whose veto window is over apply themselves. Returns those that did.
+export function applyDue(rt: Runtime, now: number = Date.now()): Proposal[] {
+  const out: Proposal[] = [];
+  // The term is gone from the packs: nothing applies itself, whatever a proposal says.
+  if (rt.merged.craft?.auto_days === undefined) return out;
+  for (const listed of listProposals(rt)) {
+    if (listed.state !== 'open' || listed.auto_at === undefined || listed.change?.kind !== 'memory' || !(Date.parse(listed.auto_at) <= now)) continue;
+    // The human can reject it at this same time: the proposal is read again just before the change.
+    const p = listProposals(rt).find((x) => x.id === listed.id);
+    if (p === undefined || p.state !== 'open' || p.auto_at === undefined) continue;
+    const applied = apply(rt, p, now);
+    // A change that cannot be made (the record was cited since, or it is gone) is not accepted by itself: the proposal waits for the human.
+    if (!applied) {
+      const { auto_at: _, ...rest } = p;
+      save(rt, rest);
+      continue;
+    }
+    const next: Proposal = { ...p, state: 'accepted', resolved: new Date(now).toISOString(), applied, auto: true };
+    save(rt, next);
+    rt.journal.write({ kind: 'craft.proposal_resolved', project: rt.project, data: { proposal: p.id, state: 'accepted', auto: 1 } });
+    out.push(next);
+  }
+  return out;
 }
 
 // The decision of the human. An acceptance makes the ready change of the proposal.
@@ -302,7 +333,7 @@ function proposeUndo(rt: Runtime, first: Proposal, now: number): void {
 
 // One proposal in the words for the human.
 export const proposalLine = (p: Proposal): string =>
-  p.pattern === 'rollback' ? `${p.id}: undo of the proposal ${p.key}, its effect was worse` : `${p.id}: ${p.pattern} of "${p.key.replace(/\s+/g, ' ').slice(0, 80)}", seen ${p.n} times`;
+  p.pattern === 'rollback' ? `${p.id}: undo of the proposal ${p.key}, its effect was worse` : `${p.id}: ${p.pattern} of "${p.key.replace(/\s+/g, ' ').slice(0, 80)}", seen ${p.n} times${p.state === 'open' && p.auto_at !== undefined ? `, applies itself on ${p.auto_at.slice(0, 10)}` : ''}`;
 
 // Measures the accepted proposals that are a week old. Returns those that got an effect now.
 export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {

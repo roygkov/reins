@@ -29,6 +29,11 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   lines.push('', '## Needs a decision of the human', '');
   if (open.length === 0) lines.push('Nothing.');
   for (const p of open) lines.push(`- ${proposalLine(p)}${p.change !== undefined ? `; the ready change: ${p.change.kind}` : ''}. \`reins craft accept ${p.id}\` or \`reins craft reject ${p.id}\``);
+  // What applied itself after its veto window, and the command that takes it back.
+  const auto = proposals.filter((p) => p.auto === true && p.resolved !== undefined && now - Date.parse(p.resolved) < 35 * DAY);
+  lines.push('', '## Applied by itself', '');
+  if (auto.length === 0) lines.push('Nothing.');
+  for (const p of auto) lines.push(`- ${proposalLine(p)}, applied ${(p.resolved ?? '').slice(0, 10)}${p.change?.kind === 'memory' ? `. \`reins memory restore ${p.change.record}\` takes it back` : ''}`);
   // The summary is of the machine, as the numbers are: the drafts of all the projects of the memory directory.
   const pending = listRecords(rt, now).filter((r) => r.state === 'pending');
   lines.push('', '## Waits for its term', '');

@@ -36,7 +36,7 @@ import { timerText } from './client/timer.ts';
 import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
-import { listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
+import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { eight, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
@@ -377,6 +377,7 @@ function main(args: string[]): Out {
     const rt = runtime();
     if (first === undefined) {
       propose(rt);
+      applyDue(rt);
       measure(rt);
       return { ok: true, proposals: listProposals(rt) };
     }
