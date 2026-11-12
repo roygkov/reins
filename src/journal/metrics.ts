@@ -72,7 +72,8 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         if (data.state === 'vetoed') m.memory.vetoed += 1;
         // A share and a mark "this was wrong" change a record that was written before.
         // A step and the end of a case change a record that was written before, too.
-        else if (data.scope === undefined && data.wrong === undefined && data.step === undefined && data.state !== 'closed') m.memory.written += 1;
+        // A record that another one replaced, that went stale or that came back was written before, too.
+        else if (data.scope === undefined && data.wrong === undefined && data.step === undefined && data.restored === undefined && (data.state === 'active' || data.state === 'pending')) m.memory.written += 1;
         break;
       case 'memory.read':
         m.memory.reads += 1;
@@ -87,14 +88,17 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
 // The eight numbers of the specification (harness-journal, page 5): each answers one question of
 // the human. `value` is for the last period, `prev` for the period before it, `n` is the count of
 // the rows that the value stands on. A number without rows has no value.
-export type Number8 = { value: number | null; prev: number | null; n: number };
+// `parts`: for the share of verified results, the count of the results of each label that is
+// counted as verified. A check of the form is not a check of the result: the parts say which it was.
+export type Number8 = { value: number | null; prev: number | null; n: number; parts?: Record<string, number> };
 export const EIGHT = ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures'] as const;
 export type Eight = Record<(typeof EIGHT)[number], Number8>;
 
 const round = (x: number): number => Math.round(x * 100) / 100;
 const share = (part: number, whole: number): { value: number | null; n: number } => ({ value: whole === 0 ? null : round(Math.min(part / whole, 1)), n: whole });
 
-function period(rows: JournalRow[], from: number, to: number): Record<(typeof EIGHT)[number], { value: number | null; n: number }> {
+function period(rows: JournalRow[], from: number, to: number): Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }> {
+  const labels: Record<string, number> = {};
   let closed = 0, verified = 0, started = 0, returned = 0, skipped = 0, asks = 0, yes = 0, tokens = 0, given = 0, used = 0, measured = 0, better = 0, failures = 0;
   const costTasks = new Set<string>();
   for (const row of rows) {
@@ -107,7 +111,10 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
         // free request that changed nothing is a question: it has no result, verified or not.
         if (row.scenario === undefined && data.changed !== 1) break;
         closed += 1;
-        if (typeof data.label === 'string' && data.label !== 'not_verified') verified += 1;
+        if (typeof data.label === 'string' && data.label !== 'not_verified') {
+          verified += 1;
+          labels[data.label] = (labels[data.label] ?? 0) + 1;
+        }
         break;
       case 'task.started': started += 1; break;
       case 'task.returned': returned += 1; break;
@@ -137,7 +144,7 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
     }
   }
   return {
-    verified_share: share(verified, closed),
+    verified_share: { ...share(verified, closed), ...(Object.keys(labels).length > 0 ? { parts: labels } : {}) },
     returns_per_task: { value: started === 0 ? null : round(returned / started), n: started },
     gate_yes_share: share(yes, asks),
     no_model_share: share(skipped, skipped + started),
@@ -153,7 +160,7 @@ export function eight(rows: JournalRow[], now: number = Date.now(), days = 7): E
   const last = period(rows, now - span, now + 1);
   const before = period(rows, now - 2 * span, now - span);
   const out = {} as Eight;
-  for (const name of EIGHT) out[name] = { value: last[name].value, prev: before[name].value, n: last[name].n };
+  for (const name of EIGHT) out[name] = { value: last[name].value, prev: before[name].value, n: last[name].n, ...(last[name].parts !== undefined ? { parts: last[name].parts } : {}) };
   return out;
 }
 

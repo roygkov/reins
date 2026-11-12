@@ -470,7 +470,7 @@ export function restoreRecord(rt: Runtime, id: string, now: number = Date.now())
   }
   if (record.state !== 'active') next.history = [...record.history, { at: new Date(now).toISOString(), state: 'active' }];
   write(rt, next);
-  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: 'active' } });
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: 'active', restored: 1 } });
   return true;
 }
 

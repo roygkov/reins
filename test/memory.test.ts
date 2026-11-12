@@ -205,6 +205,8 @@ test('memory: a record about a place goes stale when the place changes', () => {
   assert.deepEqual(findRecords(b.rt, { paths: ['src/Limit.java'] }, T0), [], 'a stale record does not reach a task');
   // The human looks at it and says that it still holds: the record gets the new fingerprint.
   assert.equal(restoreRecord(b.rt, r.record.id, T0), true);
+  // The row of a restore says that the record came back: it is not a new record.
+  assert.equal(readJournal(b.rt.journal.file).filter((x) => x.kind === 'memory.record_changed').at(-1)?.data?.restored, 1);
   assert.equal(listRecords(b.rt, T0)[0]?.state, 'active');
   fs.rmSync(path.join(root, 'src/Limit.java'));
   assert.equal(listRecords(b.rt, T0)[0]?.state, 'stale', 'a place that is gone makes the record stale');

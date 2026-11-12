@@ -97,7 +97,7 @@ test('week: the eight numbers of the specification are counted from the rows of 
     row(20, 'harness.failure', { data: { where: 'journal' } }),
   ];
   assert.deepEqual(eight(rows, NOW), {
-    verified_share: { value: 0.5, prev: 1, n: 4 },
+    verified_share: { value: 0.5, prev: 1, n: 4, parts: { verified_form: 1, approved_by_human: 1 } },
     returns_per_task: { value: 0.5, prev: null, n: 2 },
     gate_yes_share: { value: 0.67, prev: null, n: 3 },
     no_model_share: { value: 0.5, prev: null, n: 4 },

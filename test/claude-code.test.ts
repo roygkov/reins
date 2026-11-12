@@ -466,3 +466,42 @@ test('claude-code: in the mode `auto` the human answers a question, and a run of
   assert.equal(run(HOOK, b, ['post'], auto).stdout, '');
   assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'allow', 'the grant is confirmed for the task');
 });
+
+test('claude-code: an adapter that does not load asks the human, and the journal has the failure', () => {
+  const b = box();
+  // A copy of the hooks where the adapter is broken and the core is whole.
+  const tree = path.join(b.root, 'harness');
+  const hooks = path.join(tree, 'clients/claude-code/hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  for (const name of ['hook.ts', 'failed.ts']) fs.copyFileSync(path.join(path.dirname(HOOK), name), path.join(hooks, name));
+  fs.writeFileSync(path.join(hooks, 'run.ts'), 'export function main(): void {}\nthrow new Error("broken");\n');
+  fs.symlinkSync(fileURLToPath(new URL('../src', import.meta.url)), path.join(tree, 'src'));
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const run = (mode: string) => spawnSync(process.execPath, [path.join(hooks, 'hook.ts'), mode], { input: '{}', env, cwd: b.cwd, encoding: 'utf8' }).stdout;
+  assert.equal(JSON.parse(run('pre')).hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(run('post'), '');
+  const rows = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure');
+  assert.deepEqual(rows.map((r) => [r.data?.where, r.data?.event, r.client]), [['adapter', 'load', 'claude_code'], ['adapter', 'load', 'claude_code']]);
+  // A copy of the client without a core beside it: the adapter and the writer of the failure come from the source.
+  const cache = path.join(b.root, 'cache/hooks');
+  fs.mkdirSync(cache, { recursive: true });
+  for (const name of ['hook.ts', 'run.ts', 'failed.ts']) fs.copyFileSync(path.join(path.dirname(HOOK), name), path.join(cache, name));
+  const config = path.join(b.root, 'config-source.json');
+  fs.writeFileSync(config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), source: tree }));
+  const out = spawnSync(process.execPath, [path.join(cache, 'hook.ts'), 'pre'], { input: '{}', env: { ...env, REINS_CONFIG: config }, cwd: b.cwd, encoding: 'utf8' }).stdout;
+  assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').length, 3);
+});
+
+test('claude-code: an adapter that loads and breaks outside its guards is a failure of the run', () => {
+  const b = box();
+  const tree = path.join(b.root, 'harness');
+  const hooks = path.join(tree, 'clients/claude-code/hooks');
+  fs.mkdirSync(hooks, { recursive: true });
+  for (const name of ['hook.ts', 'failed.ts']) fs.copyFileSync(path.join(path.dirname(HOOK), name), path.join(hooks, name));
+  fs.writeFileSync(path.join(hooks, 'run.ts'), 'export function main(): void { throw new Error("broken"); }\n');
+  fs.symlinkSync(fileURLToPath(new URL('../src', import.meta.url)), path.join(tree, 'src'));
+  const out = spawnSync(process.execPath, [path.join(hooks, 'hook.ts'), 'pre'], { input: '{}', env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config }, cwd: b.cwd, encoding: 'utf8' }).stdout;
+  assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'ask');
+  assert.deepEqual(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').map((r) => r.data?.event), ['run']);
+});
