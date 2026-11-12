@@ -313,3 +313,52 @@ test('case: the human gives a step to a case and ends it with words of his own',
   const own = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: `reins memory next ${mine} 'a step' task=t0123456789ab` } }, { shell: { kind: 'shell', command: 'command' } });
   assert.notEqual(own.rule, 'protect.human-command');
 });
+
+// ---- The history of the memory: the harness commits the directory of the records when the config says so.
+
+test('history: with `memory_commit` the harness commits every change of the memory, and nothing else', () => {
+  const b = box();
+  const dir = path.join(b.root, 'records');
+  fs.mkdirSync(dir);
+  const git = (...args: string[]): string => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).stdout.trim();
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 't');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'a note of the human that is not committed yet\n');
+  // A file that a run left in the middle of a write, and a hook of the repository that refuses every commit.
+  fs.mkdirSync(path.join(dir, 'decision'));
+  fs.writeFileSync(path.join(dir, 'decision', 'm0000000000.md.123.tmp'), 'half a record\n');
+  fs.writeFileSync(path.join(dir, '.git', 'hooks', 'commit-msg'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  // Without the key the history is the business of the human.
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, memory_dir: dir }));
+  assert.equal(reins(['memory', 'decide', 'we keep one cache', 'because=two caches went out of step']).ok, true);
+  assert.equal(git('log', '--oneline'), '');
+  // With the key every change is one commit of the files of the records.
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, memory_dir: dir, memory_commit: true }));
+  const made = reins(['memory', 'decide', 'we log in UTC', 'because=the servers are in three zones']);
+  assert.equal(made.ok, true);
+  assert.equal(git('log', '--oneline').split('\n').length, 1);
+  assert.match(git('log', '-1', '--format=%s'), /^reins memory: /);
+  // The record before the key and the new one are in the commit; the file of the human is not.
+  assert.deepEqual(git('status', '--short', '-uall').split('\n').sort(), ['?? decision/m0000000000.md.123.tmp', '?? notes.txt']);
+  // A command that changes nothing makes no commit.
+  reins(['memory', 'find', 'cache']);
+  assert.equal(git('log', '--oneline').split('\n').length, 1);
+  assert.equal(reins(['memory', 'veto', made.record.id]).ok, true);
+  assert.equal(git('log', '--oneline').split('\n').length, 2);
+  // A key that is no boolean is a bad config.
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, memory_dir: dir, memory_commit: 'yes' }));
+  assert.equal(reins(['memory']).error, 'bad_config');
+});
+
+test('history: a directory of the records that is no repository works as before', () => {
+  const b = box();
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, memory_commit: true }));
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config, GIT_CEILING_DIRECTORIES: b.root };
+  const p = spawnSync(process.execPath, [CLI, 'memory', 'decide', 'we keep one cache', 'because=two caches went out of step'], { encoding: 'utf8', env, cwd: b.cwd });
+  assert.deepEqual([p.status, JSON.parse(p.stdout).ok, p.stderr], [0, true, '']);
+});

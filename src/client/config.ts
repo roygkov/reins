@@ -16,7 +16,7 @@ import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 // cache has no core beside it: its entry loads the adapter from this directory.
 // `runner`: the command that starts a client without a window, as a list of words; `{task}` and
 // `{prompt}` in a word are filled in, and `{model}` with the model of the level of the task. `runner_timeout_s`: the time limit of one run.
-const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -28,7 +28,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; runner?: string[]; runnerTimeoutMs?: number } {
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; runner?: string[]; runnerTimeoutMs?: number } {
   const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
   let text: string;
   try {
@@ -57,13 +57,16 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   if (value.source !== undefined && (typeof value.source !== 'string' || !path.isAbsolute(value.source))) throw bad;
   // The memory records can live in a directory of the instance, for example a repository with history.
   if (value.memory_dir !== undefined && (typeof value.memory_dir !== 'string' || !path.isAbsolute(value.memory_dir))) throw bad;
+  // The history of the records: the harness commits the directory itself when the config says so.
+  if (value.memory_commit !== undefined && typeof value.memory_commit !== 'boolean') throw bad;
   // The runner is a command that the harness starts: a list of words, never one line for a shell.
   if (value.runner !== undefined && (!Array.isArray(value.runner) || value.runner.length === 0 || value.runner.some((w) => typeof w !== 'string' || w === ''))) throw bad;
   if (value.runner_timeout_s !== undefined && (typeof value.runner_timeout_s !== 'number' || !Number.isInteger(value.runner_timeout_s) || value.runner_timeout_s <= 0)) throw bad;
-  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; runner?: string[]; runnerTimeoutMs?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; runner?: string[]; runnerTimeoutMs?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
   if (Array.isArray(value.runner)) out.runner = value.runner as string[];
   if (typeof value.runner_timeout_s === 'number') out.runnerTimeoutMs = value.runner_timeout_s * 1000;
   if (typeof value.memory_dir === 'string') out.memoryDir = value.memory_dir;
+  if (value.memory_commit === true) out.memoryCommit = true;
   return out;
 }
 
@@ -85,6 +88,7 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file, workDir: cwd };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
   if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;
+  if (config.memoryCommit === true) rt.memoryCommit = true;
   if (config.runner !== undefined) rt.runner = config.runner;
   if (config.runnerTimeoutMs !== undefined) rt.runnerTimeoutMs = config.runnerTimeoutMs;
   return rt;

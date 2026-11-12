@@ -11,6 +11,7 @@
 // - No index yet: the records are read from the files at every call.
 // The text of a record lives in its file. The journal gets only the fact and the type.
 
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -144,6 +145,49 @@ function write(rt: Runtime, record: Omit<MemoryRecord, 'uses'> & { uses?: number
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, serialize(stored as MemoryRecord));
   fs.renameSync(tmp, file);
+  changed(rt, record.id);
+}
+
+// ---- The history of the records. The directory of the records can be a repository. When the
+// config says so (`memory_commit`), the harness commits the files of the records itself: one commit
+// for one run of a command or of a hook, at its end. A command and a hook are one process each:
+// that is how the harness runs. All the files of the records are committed, also one that an
+// earlier run left: `<type>/*.md`. A file that is still being written, and what else lies in the
+// directory, are not.
+
+const pending = new Map<string, { rt: Runtime; ids: Set<string> }>();
+
+function changed(rt: Runtime, id: string): void {
+  if (rt.memoryCommit !== true) return;
+  const dir = memoryDir(rt);
+  let entry = pending.get(dir);
+  if (entry === undefined) {
+    entry = { rt, ids: new Set() };
+    pending.set(dir, entry);
+    if (pending.size === 1) process.once('exit', commitMemory);
+  }
+  entry.ids.add(id);
+}
+
+// Commits what this process changed. A directory that is no repository, and a commit that fails,
+// stop nothing: the records are on the disk in every case.
+export function commitMemory(): void {
+  for (const [dir, { rt, ids }] of pending) {
+    pending.delete(dir);
+    const git = (args: string[]): { ok: boolean; out: string } => {
+      const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' } });
+      return { ok: r.status === 0, out: typeof r.stdout === 'string' ? r.stdout : '' };
+    };
+    if (!git(['rev-parse', '--is-inside-work-tree']).ok) continue;
+    const files = RECORD_TYPES.filter((type) => fs.existsSync(path.join(dir, type))).map((type) => `:(glob)${type}/*.md`);
+    if (files.length === 0 || git(['status', '--porcelain', '--', ...files]).out.trim() === '') continue;
+    const names = [...ids].slice(0, 5).join(' ');
+    // The commit of the records is the work of the harness, not a change of the human: the hooks
+    // of the repository and the signing do not run, so a rule for the commits of people cannot stop it.
+    const done = git(['add', '--', ...files]).ok
+      && git(['-c', 'commit.gpgsign=false', 'commit', '-q', '--no-verify', '-m', `reins memory: ${names}${ids.size > 5 ? ` and ${ids.size - 5} more` : ''}`, '--', ...files]).ok;
+    if (!done) rt.journal.write({ kind: 'harness.failure', project: rt.project, data: { where: 'memory_commit' } });
+  }
 }
 
 function readUses(rt: Runtime): Record<string, { n: number; last: string }> {
