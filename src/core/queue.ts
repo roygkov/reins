@@ -20,13 +20,27 @@ export type Queued = {
   task: string;
   project: string;
   session?: string;
+  until?: string; // the end of the wait, or of the approval: set when the term starts
 };
 
 const ID = /^q[0-9a-f]{10}$/;
 const DAY = 24 * 60 * 60 * 1000;
-const APPROVAL_MS = DAY; // an approval that nobody used for this long is gone
-const WAIT_MS = 7 * DAY; // an action that nobody answered for this long waits no more
-const KEEP_MS = 7 * DAY; // an entry that ended stays this long for the human who looks back
+// The terms of the queue.
+// approval: an approval that nobody used for this long is gone. wait: an action that nobody
+// answered for this long waits no more. Both are barriers: a pack makes them shorter, never
+// longer than the terms here. keep: an entry that ended stays this long for the human who looks
+// back; the packs set it freely.
+const terms = (rt: Runtime): { approval: number; wait: number; keep: number } => ({
+  approval: Math.min(24, rt.merged.queueApprovalHours ?? 24) * 60 * 60 * 1000,
+  wait: Math.min(7, rt.merged.queueWaitDays ?? 7) * DAY,
+  keep: (rt.merged.queueKeepDays ?? 7) * DAY,
+});
+// The end of the term of an entry. It is written into the entry when the term starts: a change
+// of a pack does not bring back an action that waited too long, nor an approval that ran out.
+const endOf = (q: Queued, fallback: number): number => {
+  const until = q.until === undefined ? Number.NaN : Date.parse(q.until);
+  return Number.isNaN(until) ? Date.parse(q.at) + fallback : until;
+};
 const MAX_WHAT = 4000; // the text of the action for the human: the whole command, within reason
 const dirOf = (rt: Runtime): string => path.join(rt.stateDir, 'queue');
 const fileOf = (rt: Runtime, id: string): string => path.join(dirOf(rt), `${id}.json`);
@@ -59,12 +73,12 @@ export function listQueue(rt: Runtime, now: number = Date.now()): Queued[] {
     return [];
   }
   const out: Queued[] = [];
+  const { wait: WAIT_MS, approval: APPROVAL_MS } = terms(rt);
   for (const name of names) {
     const id = name.replace(/\.json$/, '');
     const q = ID.test(id) && name.endsWith('.json') ? read(rt, id) : null;
     if (q === null) continue;
-    const age = now - Date.parse(q.at);
-    if ((q.state === 'waiting' && age <= WAIT_MS) || (q.state === 'approved' && age <= APPROVAL_MS)) out.push(q);
+    if ((q.state === 'waiting' && now <= endOf(q, WAIT_MS)) || (q.state === 'approved' && now <= endOf(q, APPROVAL_MS))) out.push(q);
   }
   return out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : 1));
 }
@@ -103,8 +117,9 @@ export function deferCall(rt: Runtime, call: { session?: string; tool: string; i
   }
   const waiting = known.find((q) => q.state === 'waiting');
   if (waiting !== undefined) return { pass: false, id: waiting.id };
+  const started = Date.now();
   const q: Queued = {
-    id: `q${crypto.randomBytes(5).toString('hex')}`, key, state: 'waiting', at: new Date().toISOString(),
+    id: `q${crypto.randomBytes(5).toString('hex')}`, key, state: 'waiting', at: new Date(started).toISOString(), until: new Date(started + terms(rt).wait).toISOString(),
     tool: call.tool, rule: more.rule, what: shown(more.what), task: more.task, project: rt.project,
     ...(call.session !== undefined ? { session: call.session } : {}),
   };
@@ -117,9 +132,10 @@ export function deferCall(rt: Runtime, call: { session?: string; tool: string; i
 export function resolveQueued(rt: Runtime, id: string, state: 'approved' | 'rejected', now: number = Date.now()): boolean {
   const q = ID.test(id) ? read(rt, id) : null;
   // An action that waited past its term waits no more: an answer that comes too late answers nothing.
-  if (q === null || q.state !== 'waiting' || now - Date.parse(q.at) > WAIT_MS) return false;
+  if (q === null || q.state !== 'waiting' || now > endOf(q, terms(rt).wait)) return false;
   // The time of the approval starts its term.
-  write(rt, { ...q, state, at: new Date(now).toISOString() });
+  const { until: _, ...rest } = q;
+  write(rt, { ...rest, state, at: new Date(now).toISOString(), ...(state === 'approved' ? { until: new Date(now + terms(rt).approval).toISOString() } : {}) });
   row(rt, 'policy.deferred_resolved', q, { queued: q.id, state });
   return true;
 }
@@ -134,6 +150,7 @@ export function pruneQueue(rt: Runtime, now: number = Date.now()): number {
     return 0;
   }
   let removed = 0;
+  const { wait: WAIT_MS, approval: APPROVAL_MS, keep: KEEP_MS } = terms(rt);
   for (const name of names) {
     const id = name.replace(/\.json$/, '');
     const q = ID.test(id) && name.endsWith('.json') ? read(rt, id) : null;
@@ -146,9 +163,8 @@ export function pruneQueue(rt: Runtime, now: number = Date.now()): number {
       }
       continue;
     }
-    const age = now - Date.parse(q.at);
-    const life = q.state === 'waiting' ? WAIT_MS : q.state === 'approved' ? APPROVAL_MS : 0;
-    if (age <= life + KEEP_MS) continue;
+    const end = q.state === 'waiting' ? endOf(q, WAIT_MS) : q.state === 'approved' ? endOf(q, APPROVAL_MS) : Date.parse(q.at);
+    if (now <= end + KEEP_MS) continue;
     fs.rmSync(fileOf(rt, q.id), { force: true });
     removed += 1;
   }

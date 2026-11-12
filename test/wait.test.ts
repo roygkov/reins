@@ -78,6 +78,70 @@ test('wait: an action that nobody answered for a week leaves the queue, and the 
   assert.deepEqual(fs.readdirSync(dir), []);
 });
 
+test('wait: the packs set the terms of the queue, and the shortest term that a pack names holds', () => {
+  const HOUR = 60 * 60 * 1000;
+  const b = box({
+    organization: { queue: { wait_days: 3, approval_hours: 12, keep_days: 2 } },
+    person: { ...DEFER.person, queue: { wait_days: 1, approval_hours: 48, keep_days: 5 } },
+  });
+  const now = Date.now();
+  // The wait: one day, the shorter of the two.
+  const waited = sh(b, 'deploy-tool run').queued ?? '';
+  assert.deepEqual(listQueue(b.rt, now + 23 * HOUR).map((q) => q.id), [waited]);
+  assert.deepEqual(listQueue(b.rt, now + 25 * HOUR), []);
+  assert.equal(resolveQueued(b.rt, waited, 'approved', now + 25 * HOUR), false);
+  // The approval: twelve hours, the shorter of the two.
+  const other = sh(b, 'deploy-tool two').queued ?? '';
+  assert.equal(resolveQueued(b.rt, other, 'approved', now + HOUR), true);
+  assert.deepEqual(listQueue(b.rt, now + 12 * HOUR).map((q) => q.state), ['waiting', 'approved']);
+  assert.deepEqual(listQueue(b.rt, now + 14 * HOUR).map((q) => q.state), ['waiting'], 'the approval was not used in its term');
+  // The entries that ended stay for the longest term that a pack names: five days.
+  const dir = path.join(b.rt.stateDir, 'queue');
+  sweep(b.rt, now + 5 * DAY);
+  assert.equal(fs.readdirSync(dir).length, 2);
+  sweep(b.rt, now + 7 * DAY);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test('wait: a pack makes a term of the queue shorter, never longer, and a change of a pack revives nothing', () => {
+  const HOUR = 60 * 60 * 1000;
+  // A wait and an approval are barriers: a pack that names a long term gets the term of the core.
+  const long = box({ person: { ...DEFER.person, queue: { wait_days: 3650, approval_hours: 100000 } } });
+  const now = Date.now();
+  const id = sh(long, 'deploy-tool run').queued ?? '';
+  assert.deepEqual(listQueue(long.rt, now + 8 * DAY), []);
+  const again = sh(long, 'deploy-tool two').queued ?? '';
+  assert.equal(resolveQueued(long.rt, again, 'approved', now + HOUR), true);
+  assert.deepEqual(listQueue(long.rt, now + 26 * HOUR).map((q) => q.id), [id], 'the approval ran out after a day');
+  // The end of a term is written when the term starts: a longer term of a pack later changes nothing.
+  const short = box({ person: { ...DEFER.person, queue: { wait_days: 1 } } });
+  const waited = sh(short, 'deploy-tool run').queued ?? '';
+  const later: Runtime = { ...short.rt, merged: { ...short.rt.merged, queueWaitDays: 7 } };
+  assert.deepEqual(listQueue(later, now + 2 * DAY), []);
+  assert.equal(resolveQueued(later, waited, 'approved', now + 2 * DAY), false);
+});
+
+test('wait: a term of the queue is a whole number above zero, and a pack names only known terms', () => {
+  for (const [queue, at, code] of [
+    [{ wait_days: 0 }, 'queue.wait_days', 'not_positive'],
+    [{ approval_hours: 1.5 }, 'queue.approval_hours', 'not_integer'],
+    [{ keep_days: 'long' }, 'queue.keep_days', 'not_integer'],
+    [{ forever: true }, 'queue.forever', 'unknown_field'],
+  ] as const) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(SB, 'bad-')));
+    for (const [rel, value] of Object.entries(files)) {
+      const file = path.join(root, 'packs', rel);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      if (rel.endsWith('.sh')) fs.writeFileSync(file, '#!/bin/sh\n', { mode: 0o755 });
+      else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
+      else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), queue }));
+      else fs.writeFileSync(file, JSON.stringify(value));
+    }
+    const merged = loadPacks({ organization: path.join(root, 'packs/organization'), project: path.join(root, 'packs/project'), person: path.join(root, 'packs/person') });
+    assert.deepEqual(merged.packs[0]?.errors, [{ code, path: at }], JSON.stringify(queue));
+  }
+});
+
 // ---- A form of the gate.
 
 test('wait: a form of a lower pack that refuses wins over a form above it that asks', () => {

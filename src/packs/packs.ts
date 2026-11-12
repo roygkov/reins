@@ -62,6 +62,9 @@ export type PackSettings = {
   gate?: GateData;
   defaults?: { level?: ModelLevel }; // the level of the model for a manifest that names none
   journal?: { keep_days?: number }; // how long the archive of the journal is kept
+  // The terms of the queue of deferred actions: how long an action waits for the human, how long
+  // an approval that nobody used holds, how long an entry that ended is kept.
+  queue?: { wait_days?: number; approval_hours?: number; keep_days?: number };
 };
 
 // Rule data of the shell gate that a pack adds: the names that mean production in this
@@ -97,6 +100,11 @@ export type Merged = {
   gate: GateData; // the rule data of the gate that the packs add, upper pack first
   defaultLevel?: ModelLevel; // the level of the model for a manifest that names none: the lowest pack that gives one
   journalKeepDays?: number; // the term of the archive of the journal: the longest that a pack names
+  // The terms of the queue. A wait and an approval are barriers: the shortest that a pack names
+  // holds. The keeping of ended entries is a record: the longest holds.
+  queueWaitDays?: number;
+  queueApprovalHours?: number;
+  queueKeepDays?: number;
   connectorEnv: Record<string, string[]>; // read connector -> its environment variables, from the organization pack
 };
 
@@ -112,7 +120,7 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 // Variables that decide what a script runs and where: a pack does not set them.
 const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP'];
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'defaults'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults'] as const;
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -307,6 +315,15 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   if (journal !== null) {
     const keep = limit(errors, journal.keep_days, 'journal.keep_days');
     settings.journal = keep === undefined ? {} : { keep_days: keep };
+  }
+  const queue = section(errors, value.queue, 'queue', ['wait_days', 'approval_hours', 'keep_days']);
+  if (queue !== null) {
+    const terms: { wait_days?: number; approval_hours?: number; keep_days?: number } = {};
+    for (const key of ['wait_days', 'approval_hours', 'keep_days'] as const) {
+      const term = limit(errors, queue[key], `queue.${key}`);
+      if (term !== undefined) terms[key] = term;
+    }
+    settings.queue = terms;
   }
   const gate = section(errors, value.gate, 'gate', [...GATE_LISTS, 'forms']);
   if (gate !== null) settings.gate = gateData(errors, gate);
@@ -592,6 +609,12 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   if (s.defaults?.level !== undefined) m.defaultLevel = s.defaults.level;
   const keep = s.journal?.keep_days;
   if (keep !== undefined && (m.journalKeepDays === undefined || keep > m.journalKeepDays)) m.journalKeepDays = keep;
+  const wait = s.queue?.wait_days;
+  if (wait !== undefined && (m.queueWaitDays === undefined || wait < m.queueWaitDays)) m.queueWaitDays = wait;
+  const approval = s.queue?.approval_hours;
+  if (approval !== undefined && (m.queueApprovalHours === undefined || approval < m.queueApprovalHours)) m.queueApprovalHours = approval;
+  const kept = s.queue?.keep_days;
+  if (kept !== undefined && (m.queueKeepDays === undefined || kept > m.queueKeepDays)) m.queueKeepDays = kept;
   const veto = s.memory?.veto_days;
   if (veto !== undefined && (m.vetoDays === undefined || veto > m.vetoDays)) m.vetoDays = veto;
   narrow('readConnectors', s.connectors?.read);
