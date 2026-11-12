@@ -439,10 +439,13 @@ export function beforeAction(now: Runtime, call: ToolCall, clientTools: ClientTo
   if (!Object.hasOwn(clientTools, call.tool) && ofWork && RULE_NAME.test(call.tool) && currentScenario(rt, call.session) === undefined) call = { ...call, named: call.tool };
   let r = decideBefore(rt, call, clientTools);
   // Without a window nobody answers a question: the action waits in the queue of the human.
-  if (call.headless === true && r.outcome === 'ask') {
+  // The same holds for a client that cannot show a question with a choice (its level at the start
+  // of the session): the human answers from the queue. Its session lives on, so the approval is of that session.
+  const noChoice = call.headless !== true && seen?.noChoice === true;
+  if ((call.headless === true || noChoice) && r.outcome === 'ask') {
     // The human sees the command of a shell tool, and only the name of any other tool: the input
     // of a tool can hold the text of a file.
-    const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what: whatOf(call, clientTools), task: sessionTask(rt, call.session), anySession: true });
+    const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what: whatOf(call, clientTools), task: sessionTask(rt, call.session), ...(noChoice ? {} : { anySession: true }) });
     if (d.pass) {
       // The approval of the human is a fact of the journal. It lets this one call pass; it does
       // not confirm a grant of a task envelope.

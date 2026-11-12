@@ -106,6 +106,10 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level } });
   // The level is the word of the adapter. The harness measures it: see `afterAction`.
   if (level !== 'no_before') patchSession(rt, e.session, { claims: e.client ?? 'unknown' });
+  // A client that cannot show a question with a choice: a question of the policy has nobody to
+  // answer it there, so it waits in the queue (see `beforeAction`).
+  // The flag is written at every start: a session that goes on in a client that can ask loses it.
+  if (level !== 'no_before') patchSession(rt, e.session, { noChoice: level === 'no_choice' });
   // The harness does not pretend to protect: a client without the event before an action gets the words.
   const context = level === 'no_before'
     ? ['reins: the harness of this workspace. This client does not tell the harness before an action: the barriers do not act here. Say this to the human.']

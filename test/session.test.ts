@@ -369,3 +369,34 @@ test('session: an action that enters the queue sends one notice by the command o
   assert.deepEqual(load(['notifier', '{text}']), ['notifier', '{text}']);
   for (const bad of [[], 'notifier', ['notifier', 7], ['']]) assert.notDeepEqual(load(bad), bad, JSON.stringify(bad));
 });
+
+// ---- A client that cannot show a question with a choice.
+
+test('session: in a client without a question with a choice an action that needs the human waits in the queue', () => {
+  const b = box();
+  sessionStart(b.rt, { session: 's1', cwd: b.cwd, client: 'plain', capabilities: { choice: false } });
+  sessionStart(b.rt, { session: 's2', cwd: b.cwd, client: 'full' });
+  const call = (session: string) => ({ cwd: b.cwd, tool: 'unknown__tool', input: { a: 1 }, session });
+  // The client of s1 cannot ask: the action is not done, it waits for the human.
+  const r = beforeAction(b.rt, call('s1'), CLIENT);
+  assert.deepEqual([r.outcome, r.rule], ['defer', 'default.unknown-tool']);
+  assert.match(r.queued ?? '', /^q[0-9a-f]{10}$/);
+  // A client that can ask asks, as before.
+  assert.equal(beforeAction(b.rt, call('s2'), CLIENT).outcome, 'ask');
+  // The approval of the human lets the same call of that session pass once.
+  assert.equal(resolveQueued(b.rt, r.queued ?? '', 'approved'), true);
+  assert.deepEqual([beforeAction(b.rt, call('s1'), CLIENT).outcome, beforeAction(b.rt, call('s1'), CLIENT).outcome], ['allow', 'defer']);
+  // A read and a refusal are what they were.
+  assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' }, CLIENT).outcome, 'allow');
+  // The human of such a client sees the answer of the client: no notice goes out. A run without a window sends one.
+  const out = path.join(b.root, 'notices.txt');
+  const loud: Runtime = { ...b.rt, notify: [process.execPath, '-e', "require('fs').appendFileSync(process.argv[1], 'x')", out] };
+  assert.equal(beforeAction(loud, { cwd: b.cwd, tool: 'unknown__tool', input: { b: 2 }, session: 's1' }, CLIENT).outcome, 'defer');
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(wait, 0, 0, 500);
+  assert.equal(fs.existsSync(out), false);
+  // The same session goes on in a client that can ask: its questions are questions again.
+  sessionStart(b.rt, { session: 's1', cwd: b.cwd, client: 'full' });
+  assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'unknown__tool', input: { c: 3 }, session: 's1' }, CLIENT).outcome, 'ask');
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
