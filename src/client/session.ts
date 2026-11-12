@@ -14,6 +14,8 @@ import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { applyDue, listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
 import { noteMerge } from '../core/merged.ts';
+import { listQueue } from '../core/queue.ts';
+import { notify } from '../core/notify.ts';
 import { writeWeek } from '../craft/weekly.ts';
 import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
@@ -160,9 +162,16 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push('Proposals of the harness for the human (say them to the human; `reins craft accept|reject <id>` resolves one):');
     for (const p of proposals.slice(0, 10)) context.push(`- ${proposalLine(p)}`);
   }
+  // The actions that wait for the human in the queue of this project. A start without a window names none: nobody reads it there.
+  const waits = e.headless === true ? [] : listQueue(rt).filter((q) => q.state === 'waiting' && q.project === rt.project);
+  if (waits.length > 0) {
+    context.push(`Actions that wait in the queue of the human (${waits.length}; say them to the human; \`reins queue approve|reject <id>\` resolves one):`);
+    for (const q of waits.slice(0, 5)) context.push(`- ${q.id}: ${q.tool} (${q.rule}${q.until !== undefined ? `, until ${q.until}` : ''})`);
+  }
   // The summary of the week is a file and a notice: once in seven days the harness writes it and says where it is.
   // A client without a window has no human who reads the notice: the summary waits for a session with one.
   const week = process.env.REINS_HEADLESS === '1' ? null : writeWeek(rt);
+  if (week !== null) notify(rt, `reins: the summary of the week is written: ${week}`);
   if (week !== null) context.push(`The harness wrote the summary of the week: ${week}. Say this to the human; \`reins week\` prints it.`);
   return { context };
 }

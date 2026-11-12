@@ -15,6 +15,9 @@ import { afterAction, beforeAction } from '../src/client/before.ts';
 import { agentStopped, humanRequest, sessionEnd, sessionStart } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
 import { mergeView } from '../src/core/merged.ts';
+import { resolveQueued } from '../src/core/queue.ts';
+import { loadRuntime } from '../src/client/config.ts';
+import { weekText } from '../src/craft/weekly.ts';
 
 const HOOK = fileURLToPath(new URL('../clients/claude-code/hooks/hook.ts', import.meta.url));
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'session-'));
@@ -305,4 +308,64 @@ test('session: the human reads which level gave each value of the merge', () => 
   assert.equal(view.values.maxTokens?.value, b.rt.merged.context.maxTokens);
   assert.equal(view.values.maxTokens?.level, b.rt.merged.origin.maxTokens);
   assert.ok(Object.values(view.values).some((v) => v.level === 'organization'));
+});
+
+// ---- The queue of the human is named: at the start of a session, in the summary, by a notice.
+
+test('session: the start of a session names the actions that wait in the queue of this project', () => {
+  const b = box();
+  const call = { cwd: b.cwd, tool: 'unknown__tool', input: { a: 1 }, session: 's1', headless: true };
+  const r = beforeAction(b.rt, call, CLIENT);
+  assert.equal(r.outcome, 'defer');
+  const text = sessionStart(b.rt, { session: 's2', cwd: b.cwd }).context.join('\n');
+  assert.match(text, /wait in the queue of the human/);
+  assert.match(text, new RegExp(`- ${r.queued}: unknown__tool \\(default\\.unknown-tool`));
+  assert.match(text, /reins queue approve\|reject <id>/);
+  // Another project does not see it; a start without a window names nothing: nobody reads it there.
+  assert.doesNotMatch(sessionStart({ ...b.rt, project: 'p9z9z9z9z' }, { session: 's3', cwd: b.cwd }).context.join('\n'), /wait in the queue/);
+  assert.doesNotMatch(sessionStart(b.rt, { session: 's4', cwd: b.cwd, headless: true }).context.join('\n'), /wait in the queue/);
+  // The summary of the week names it among the decisions of the human.
+  const week = weekText(b.rt);
+  assert.match(week.split('## Applied by itself')[0] ?? '', new RegExp(`${r.queued}.*reins queue approve ${r.queued}`));
+  // An entry that the human answered is not named any more.
+  assert.equal(resolveQueued(b.rt, r.queued ?? '', 'rejected'), true);
+  assert.doesNotMatch(sessionStart(b.rt, { session: 's5', cwd: b.cwd }).context.join('\n'), /wait in the queue/);
+});
+
+test('session: an action that enters the queue sends one notice by the command of the config', () => {
+  const b = box();
+  const out = path.join(b.root, 'notices.txt');
+  const rt: Runtime = { ...b.rt, notify: [process.execPath, '-e', "require('fs').appendFileSync(process.argv[1], process.argv[2] + '\\n')", out, '{text}'] };
+  const call = { cwd: b.cwd, tool: 'unknown__tool', input: { secret: 'the text of the action' }, session: 's1', headless: true };
+  const r = beforeAction(rt, call, CLIENT);
+  beforeAction(rt, call, CLIENT);
+  // The notice runs apart from the harness: the test waits for its file.
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 50 && !fs.existsSync(out); i += 1) Atomics.wait(wait, 0, 0, 100);
+  Atomics.wait(wait, 0, 0, 300);
+  const lines = fs.readFileSync(out, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 1, 'the same action that waits sends no second notice');
+  assert.match(lines[0] ?? '', new RegExp(`${r.queued}.*default\\.unknown-tool`));
+  assert.doesNotMatch(lines[0] ?? '', /the text of the action/);
+  // A command that fails, or no command, never stops the action from waiting.
+  const broken = box();
+  assert.equal(beforeAction({ ...broken.rt, notify: ['/no/such/command', '{text}'] }, { ...call, cwd: broken.cwd }, CLIENT).outcome, 'defer');
+  assert.equal(beforeAction(broken.rt, { ...call, cwd: broken.cwd, input: { b: 2 } }, CLIENT).outcome, 'defer');
+  // The command comes from the config of the machine: a list of words.
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  const load = (notify: unknown): unknown => {
+    fs.writeFileSync(b.config, JSON.stringify({ ...config, notify }));
+    const before = process.env.REINS_CONFIG;
+    process.env.REINS_CONFIG = b.config;
+    try {
+      return loadRuntime(b.cwd).notify;
+    } catch (e) {
+      return e instanceof Error ? e.message : 'error';
+    } finally {
+      if (before === undefined) delete process.env.REINS_CONFIG;
+      else process.env.REINS_CONFIG = before;
+    }
+  };
+  assert.deepEqual(load(['notifier', '{text}']), ['notifier', '{text}']);
+  for (const bad of [[], 'notifier', ['notifier', 7], ['']]) assert.notDeepEqual(load(bad), bad, JSON.stringify(bad));
 });

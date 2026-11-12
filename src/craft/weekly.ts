@@ -11,6 +11,7 @@ import { EIGHT, eight } from '../journal/metrics.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listRecords } from '../memory/store.ts';
 import { listProposals, proposalLine } from './craft.ts';
+import { listQueue } from '../core/queue.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 const NAME = /^week-(\d{4}-\d{2}-\d{2})\.md$/;
@@ -27,7 +28,10 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   const proposals = listProposals(rt);
   const open = proposals.filter((p) => p.state === 'open');
   lines.push('', '## Needs a decision of the human', '');
-  if (open.length === 0) lines.push('Nothing.');
+  // The actions that wait in the queue: the summary is of the machine, so of all its projects.
+  const waits = listQueue(rt, now).filter((q) => q.state === 'waiting');
+  if (open.length === 0 && waits.length === 0) lines.push('Nothing.');
+  for (const q of waits) lines.push(`- queue ${q.id} (project ${q.project}, ${q.rule}): ${one(q.what, 160)}. \`reins queue approve ${q.id}\` or \`reins queue reject ${q.id}\``);
   for (const p of open) lines.push(`- ${proposalLine(p)}${p.change !== undefined ? `; the ready change: ${p.change.kind}` : ''}. \`reins craft accept ${p.id}\` or \`reins craft reject ${p.id}\``);
   // What applied itself after its veto window, and the command that takes it back.
   const auto = proposals.filter((p) => p.auto === true && p.resolved !== undefined && now - Date.parse(p.resolved) < 35 * DAY);

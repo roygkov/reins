@@ -2,6 +2,7 @@
 // waits for the human. The human approves it or rejects it; an approval lets the same call pass once.
 // Specification: docs/spec/harness-core, page 3.
 
+import { notify } from './notify.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -125,6 +126,9 @@ export function deferCall(rt: Runtime, call: { session?: string; tool: string; i
   };
   write(rt, q);
   row(rt, 'policy.action_deferred', q, { queued: q.id, rule: q.rule });
+  // A client without a window: the human is not there, so a notice says that a decision waits.
+  // Once for an action. In a session with a window the client itself says that the action waits.
+  if (more.anySession === true) notify(rt, `reins: an action waits for your decision: ${q.id} (${q.rule}). \`reins queue\` shows it.`);
   return { pass: false, id: q.id };
 }
 
