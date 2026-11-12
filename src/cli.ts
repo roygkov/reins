@@ -11,6 +11,7 @@
 //   reins tick run                       the same, and starts the client of the machine for each task
 //   reins run <scenario> [name=value]    opens a task and starts the client of the machine for it
 //   reins fire <event> [name=value]      opens the tasks of the scenarios that wait for this event
+//   reins fire run <event> [name=value]  the same, and starts the client of the machine for every task
 //   reins queue [approve|reject <id>]    the actions that a rule deferred; the human answers
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
@@ -156,6 +157,19 @@ const broken = (rt: Runtime): { level: string; errors: unknown[] }[] =>
 // The done checks that this client can bring to an end: the core runs the citation check, the human approves.
 const RUNNABLE: readonly string[] = ['citations', 'human', 'command', 'artifact', 'external'];
 
+// The tasks that a trigger opened, each with a run of the client of the machine, one after
+// another. A system that started the command reads the exit code: a task that did not end as
+// verified is not a success.
+function runOpened<T extends { task: string; state: string }>(rt: Runtime, list: T[]): { opened: unknown[]; failed?: true } {
+  const opened = list.map((t) => {
+    const ran = runTask(rt, t.task);
+    const task = loadTask(rt, t.task);
+    return { ...t, ...ran, state: task?.state ?? t.state, ...(task?.label !== undefined ? { label: task.label } : {}), ...(task?.waiting !== undefined ? { waiting: task.waiting } : {}) };
+  });
+  const failed = opened.some((t) => t.ran !== true || !((t.state === 'closed' || t.state === 'publishing') && t.label !== 'not_verified'));
+  return { opened, ...(failed ? { failed: true as const } : {}) };
+}
+
 function open(rt: Runtime, name: string, pairs: string[]): Out {
   const types = new Map((rt.merged.scenarios.find((s) => s.name === name)?.manifest.trigger.inputs ?? []).map((i) => [i.name, i.type]));
   const inputs: Inputs = {};
@@ -282,14 +296,7 @@ function main(args: string[]): Out {
     if (process.env.REINS_HEADLESS === '1') throw new Stop('nested_run');
     const rt = runtime();
     const r = tick(rt);
-    const opened = r.opened.map((t) => {
-      const ran = runTask(rt, t.task);
-      const task = loadTask(rt, t.task);
-      return { ...t, ...ran, state: task?.state ?? t.state, ...(task?.label !== undefined ? { label: task.label } : {}), ...(task?.waiting !== undefined ? { waiting: task.waiting } : {}) };
-    });
-    // A timer of the system reads the exit code: a task that did not end as verified is not a success.
-    const failed = opened.some((t) => t.ran !== true || !((t.state === 'closed' || t.state === 'publishing') && t.label !== 'not_verified'));
-    return { ok: true, opened, skipped: r.skipped, ...(failed ? { failed: true } : {}) };
+    return { ok: true, ...runOpened(rt, r.opened), skipped: r.skipped };
   }
   // One scenario without a window: the task opens, and the client of the machine works on it.
   if (command === 'run' && first !== undefined) {
@@ -303,13 +310,25 @@ function main(args: string[]): Out {
     return { ...opened, ...(task !== null ? { state: task.state, ...(task.label !== undefined ? { label: task.label } : {}), ...(task.waiting !== undefined ? { waiting: task.waiting } : {}) } : {}), ...ran };
   }
   if (command === 'fire' && first !== undefined) {
+    // An event with a client: `fire run <event> [name=value]`. Every task that the event opens
+    // gets a run of the client of the machine, one after another. `fire run` with no event after
+    // it is the event with the name "run".
+    const withClient = first === 'run' && rest[0] !== undefined && !rest[0].includes('=');
+    const event = withClient ? (rest[0] as string) : first;
+    const pairs = withClient ? rest.slice(1) : rest;
+    if (withClient && process.env.REINS_HEADLESS === '1') throw new Stop('nested_run');
     const inputs: Record<string, string> = {};
-    for (const pair of rest) {
+    for (const pair of pairs) {
       const at = pair.indexOf('=');
       if (at < 1) throw new Stop('usage');
       inputs[pair.slice(0, at)] = pair.slice(at + 1);
     }
-    return { ok: true, ...fire(runtime(), first, inputs) };
+    const rt = runtime();
+    const r = fire(rt, event, inputs);
+    if (!withClient) return { ok: true, ...r };
+    // A scenario that waits for the event and did not take its inputs is not a success either.
+    const ran = runOpened(rt, r.opened);
+    return { ok: true, ...ran, skipped: r.skipped, refused: r.refused, ...(r.refused.length > 0 ? { failed: true } : {}) };
   }
   if (command === 'craft') {
     const rt = runtime();
@@ -527,7 +546,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

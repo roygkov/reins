@@ -115,12 +115,38 @@ test('run: the schedule starts the client for the tasks that it opens', () => {
   assert.equal(b.run(['tick']).json.opened[0].ran, undefined, 'a plain tick starts nothing');
 });
 
+test('run: an event starts the client for the tasks that it opens', () => {
+  const b = box('', { trigger: { kind: 'event', value: 'change-opened' } });
+  const r = b.run(['fire', 'run', 'change-opened']);
+  assert.deepEqual(r.json.opened.map((t: any) => [t.scenario, t.ran, t.exit]), [['draft-message', true, 0]]);
+  assert.equal(calls(b).length, 1);
+  // The client ended and the task still executes: not a success for the system that saw the event.
+  assert.deepEqual([r.json.failed, r.code], [true, 2]);
+  // A plain event starts nothing; an event that no scenario waits for opens nothing.
+  assert.equal(b.run(['fire', 'change-opened']).json.opened[0].ran, undefined);
+  assert.deepEqual(b.run(['fire', 'run', 'other-event']).json.opened, []);
+  assert.equal(calls(b).length, 1);
+  // A client without a window starts no client, and no task is opened for it.
+  const nested = b.run(['fire', 'run', 'change-opened'], { REINS_HEADLESS: '1' });
+  assert.equal(nested.json.error, 'nested_run');
+  assert.equal(b.run(['tasks']).json.tasks.length, 2);
+  // The word "run" with no event after it is the event with that name: its task opens, no client starts.
+  const named = box('', { trigger: { kind: 'event', value: 'run' } });
+  const plain = named.run(['fire', 'run']);
+  assert.deepEqual([plain.json.opened.length, plain.json.opened[0]?.ran], [1, undefined]);
+  assert.equal(fs.existsSync(named.log), false);
+  // Inputs that a waiting scenario does not take: nothing opens, and that is not a success.
+  const typed = box('', { trigger: { kind: 'event', value: 'change-opened', inputs: [{ name: 'change_id', type: 'id' }] } });
+  const refused = typed.run(['fire', 'run', 'change-opened']);
+  assert.deepEqual([refused.json.opened.length, refused.json.refused.length, refused.json.failed, refused.code], [0, 1, true, 2]);
+});
+
 test('run: a bad runner in the config is a bad config, and the agent asks before it starts a client', () => {
   const b = box('');
   fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner: 'claude -p' }));
   assert.equal(b.run(['scenarios']).json.error, 'bad_config');
   const rt = { merged: loadPacks({}), stateDir: path.join(b.root, 'state'), journal: openJournal(path.join(b.root, 'state')), project: 'p1a2b3c4' };
-  for (const command of ['reins run draft-message', 'reins tick run']) {
+  for (const command of ['reins run draft-message', 'reins tick run', 'reins fire run change-opened']) {
     const r = beforeAction(rt, { cwd: b.cwd, tool: 'shell', input: { command } }, { shell: { kind: 'shell', command: 'command' } });
     assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
   }
