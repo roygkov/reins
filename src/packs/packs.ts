@@ -17,10 +17,10 @@ export type PackLevel = (typeof PACK_LEVELS)[number];
 export type PackErrorCode =
   | 'missing' | 'bad_json' | 'too_large' | 'not_object' | 'not_array' | 'not_integer' | 'not_positive'
   | 'unknown_field' | 'version_unsupported' | 'level_mismatch' | 'bad_name' | 'not_in_list' | 'not_allowed'
-  | 'duplicate' | 'widens' | 'upper_not_connected';
+  | 'duplicate' | 'widens' | 'upper_not_connected' | 'secret';
 export type PackError = Fault<PackErrorCode>;
 
-export type RejectCode = ManifestErrorCode | 'bad_json' | 'too_large' | 'package_mismatch' | 'not_a_file';
+export type RejectCode = ManifestErrorCode | 'bad_json' | 'too_large' | 'package_mismatch' | 'not_a_file' | 'secret';
 export type Rejected = { level: PackLevel; file: string; errors: Fault<RejectCode>[] };
 
 // `instructions`: the text for the model, from the file `<manifest name>.md` beside the manifest.
@@ -627,6 +627,100 @@ function manifestFiles(dir: string): string[] {
     .sort();
 }
 
+// A pack is data that people share: it holds no secret (harness-packs, page 3). The forms are
+// the ones that cannot be anything else: a token of a known service, a bearer token, a private key.
+// A name like `token = ...` is not such a form: a script reads its secret from the environment.
+const SECRET_FORMS: readonly RegExp[] = [
+  /glpat-[A-Za-z0-9_-]{10,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /Bearer\s+[A-Za-z0-9._~+/-]{20,}=*/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
+  /\bgh[pousr]_[A-Za-z0-9]{30,}/,
+  /\bsk-ant-[A-Za-z0-9_-]{20,}/,
+];
+const SECRET_KEY = /^(password|passwd|secret|token|api[_-]?key|private[_-]?key)$/i;
+export function holdsSecret(text: string): boolean {
+  return SECRET_FORMS.some((form) => form.test(text));
+}
+// A value of the settings under a name of a secret is a secret, whatever its form.
+function namesSecret(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(namesSecret);
+  if (!isObj(value)) return false;
+  return Object.entries(value).some(([key, v]) => (SECRET_KEY.test(key) && typeof v === 'string' && v !== '') || namesSecret(v));
+}
+const MAX_SCAN_BYTES = 1 << 20;
+// null: the file cannot be read to its end (too large, or no right to read): nothing says that it holds no secret.
+function fileHoldsSecret(file: string): boolean | null {
+  try {
+    if (fs.statSync(file).size > MAX_SCAN_BYTES) return null;
+    return holdsSecret(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// Code of a pack lives in its scripts of collect and check, and in the tests of these scripts.
+// A file anywhere else that the system can run, that starts as a script or that has the name of
+// a program is not data: the pack is refused. Every file of the pack is read for a secret; the
+// manifests and their instructions are read when the packs merge, so that one of them is refused alone.
+const CODE_DIRS: readonly string[] = [...SCRIPT_DIRS, 'tests'];
+const CODE_NAME = /\.(sh|bash|zsh|py|js|cjs|mjs|ts|rb|pl|php|go|java|exe|bin)$/i;
+const MAX_PACK_FILES = 2000;
+function packFaults(dir: string): PackError[] {
+  const out: PackError[] = [];
+  let left = MAX_PACK_FILES;
+  const walk = (rel: string, inCode: boolean): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(path.join(dir, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries.sort((x, y) => (x.name < y.name ? -1 : 1))) {
+      if (entry.name.startsWith('.') || left < 0) continue;
+      left -= 1;
+      // A pack too large to read to its end is not passed on the part that was read.
+      if (left < 0) {
+        out.push({ code: 'too_large', path: '.' });
+        return;
+      }
+      const child = rel === '' ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!(rel === '' && entry.name === 'manifests')) walk(child, inCode || (rel === '' && CODE_DIRS.includes(entry.name)));
+        else walk(child, false);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const file = path.join(dir, child);
+      const manifest = rel === 'manifests' && /\.(json|md)$/.test(entry.name);
+      if (child !== 'pack.json' && child !== 'pack.md' && !manifest) {
+        const secret = fileHoldsSecret(file);
+        if (secret !== false) out.push({ code: secret === null ? 'too_large' : 'secret', path: child });
+      }
+      if (inCode) continue;
+      let code = CODE_NAME.test(entry.name);
+      try {
+        if (!code && (fs.statSync(file).mode & 0o111) !== 0) code = true;
+        if (!code) {
+          const fd = fs.openSync(file, 'r');
+          try {
+            const head = Buffer.alloc(2);
+            code = fs.readSync(fd, head, 0, 2, 0) === 2 && head.toString('latin1') === '#!';
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      } catch {
+        code = true; // a file that cannot be looked at is not known to be data
+      }
+      if (code) out.push({ code: 'not_allowed', path: child });
+    }
+  };
+  walk('', false);
+  return out;
+}
+
 export function loadPack(dir: string, level: PackLevel): LoadedPack {
   const pack: LoadedPack = { level, dir, settings: null, scripts: [], scriptFiles: {}, manifestFiles: [], errors: [] };
   const read = readJson(path.join(dir, 'pack.json'));
@@ -636,6 +730,7 @@ export function loadPack(dir: string, level: PackLevel): LoadedPack {
   }
   const checked = validateSettings(read.value, level);
   pack.errors.push(...checked.errors);
+  if (namesSecret(read.value) || holdsSecret(JSON.stringify(read.value))) pack.errors.push({ code: 'secret', path: 'pack.json' });
   pack.settings = checked.settings;
   if (pack.settings !== null) {
     pack.scripts = scriptRefs(dir, pack.errors, pack.scriptFiles);
@@ -648,6 +743,8 @@ export function loadPack(dir: string, level: PackLevel): LoadedPack {
     } catch {
       // no note: the pack says nothing more
     }
+    if (pack.note !== undefined && holdsSecret(pack.note)) pack.errors.push({ code: 'secret', path: 'pack.md' });
+    pack.errors.push(...packFaults(dir));
     if (pack.errors.length > 0) pack.settings = null;
   }
   return pack;
@@ -808,6 +905,7 @@ export function mergePacks(loaded: LoadedPack[]): Merged {
         continue;
       }
       const errors: Fault<RejectCode>[] = validateManifest(read.value, closed);
+      if (namesSecret(read.value) || holdsSecret(JSON.stringify(read.value))) errors.push({ code: 'secret', path: '$' });
       const value = read.value as Manifest;
       if (errors.length === 0 && value.package !== pack.level) errors.push({ code: 'package_mismatch', path: 'package' });
       if (errors.length === 0 && seen.has(value.name)) errors.push({ code: 'duplicate', path: 'name' });
@@ -818,6 +916,10 @@ export function mergePacks(loaded: LoadedPack[]): Merged {
       const words = readInstructions(file);
       if ('error' in words) {
         m.rejected.push({ level: pack.level, file: label, errors: [{ code: words.error, path: 'instructions' }] });
+        continue;
+      }
+      if (words.text !== undefined && holdsSecret(words.text)) {
+        m.rejected.push({ level: pack.level, file: label, errors: [{ code: 'secret', path: 'instructions' }] });
         continue;
       }
       seen.add(value.name);

@@ -74,3 +74,62 @@ test('packs: the example packs of the repository connect their scenario', () => 
   assert.deepEqual(m.rejected, []);
   assert.deepEqual(m.scenarios.map((s) => `${s.name}@${s.level}`), ['change-review@project']);
 });
+
+// ---- A pack holds no secret and no code outside its scripts.
+
+let boxes = 0;
+function three(more: Files = {}, mode?: Record<string, number>): Merged {
+  boxes += 1;
+  const root = path.join(SB, `guard-${boxes}`);
+  write(root, { ...(bases.get('three') ?? {}), ...more });
+  for (const [rel, bits] of Object.entries(mode ?? {})) fs.chmodSync(path.join(root, rel), bits);
+  return loadPacks({ organization: path.join(root, 'organization'), project: path.join(root, 'project'), person: path.join(root, 'person') });
+}
+const faults = (m: Merged, level: string): string[] => (m.packs.find((p) => p.level === level)?.errors ?? []).map((e) => `${e.code} ${e.path}`);
+// Forms of secrets, put together here so that no scan reads this file as one that holds a secret.
+const KEY = ['glpat', 'AbCdEfGhIjKlMnOpQrSt'].join('-');
+const BEARER = ['Bearer', 'abcdefghijklmnopqrstuvwxyz012345'].join(' ');
+const PEM = ['-----BEGIN RSA', 'PRIVATE KEY-----'].join(' ');
+
+test('packs: a pack with a secret does not connect', () => {
+  assert.deepEqual(three().packs.map((p) => p.connected), [true, true, true]);
+  // In the note, in a script, in the settings: the pack is refused, and the levels below it too.
+  const note = three({ 'person/pack.md': `Use the token ${KEY} for the tracker.` });
+  assert.deepEqual(faults(note, 'person'), ['secret pack.md']);
+  assert.equal(note.packs.find((p) => p.level === 'person')?.connected, false);
+  assert.deepEqual(faults(three({ 'project/collect/change.sh': `#!/bin/sh\ncurl -H "Authorization: ${BEARER}" x\n` }), 'project'), ['secret collect/change.sh']);
+  assert.deepEqual(faults(three({ 'project/check/keys.sh': `#!/bin/sh\n# ${PEM}\n` }), 'project'), ['secret check/keys.sh']);
+  const org = structuredClone(bases.get('three')?.['organization/pack.json']) as Record<string, unknown>;
+  assert.deepEqual(faults(three({ 'organization/pack.json': { ...org, name: KEY } }), 'organization').filter((e) => e.startsWith('secret')), ['secret pack.json']);
+  // Every file of the pack is read: a test of a script, a data file, a helper beside the scripts.
+  for (const rel of ['tests/test_collect.py', 'README.md', 'data/list.json', 'collect/Helper.py']) assert.deepEqual(faults(three({ [`person/${rel}`]: `x = "${KEY}"\n` }), 'person'), [`secret ${rel}`]);
+  // A file too large to read is not known to hold no secret.
+  assert.deepEqual(faults(three({ 'person/data/big.txt': 'x'.repeat((1 << 20) + 1) }), 'person'), ['too_large data/big.txt']);
+  // A script that reads a secret from the environment holds none.
+  assert.deepEqual(faults(three({ 'project/collect/change.sh': '#!/bin/sh\ntoken="$TRACKER_TOKEN"\npassword=$(cat "$HOME/.netrc")\n' }), 'project'), []);
+});
+
+test('packs: a manifest or its instruction with a secret is refused', () => {
+  const m = three({ 'project/manifests/change-review.md': `Call the tracker with ${KEY}.` });
+  assert.deepEqual(m.rejected.map((r) => [r.file, r.errors.map((e) => `${e.code} ${e.path}`)]), [['project/manifests/change-review.json', ['secret instructions']]]);
+  assert.equal(m.scenarios.some((x) => x.name === 'change-review'), false);
+  const review = structuredClone(manifests.get('review')) as Record<string, unknown>;
+  const inJson = three({ 'project/manifests/change-review.json': { ...review, description: `token ${KEY}` } });
+  assert.deepEqual(inJson.rejected.map((r) => r.errors.map((e) => `${e.code} ${e.path}`)), [['secret $']]);
+});
+
+test('packs: code outside the scripts of a pack refuses the pack', () => {
+  assert.deepEqual(faults(three({ 'person/helper.py': 'print(1)\n' }), 'person'), ['not_allowed helper.py']);
+  assert.deepEqual(faults(three({ 'project/manifests/run.sh': '#!/bin/sh\n' }), 'project'), ['not_allowed manifests/run.sh']);
+  assert.deepEqual(faults(three({ 'project/lib/deep/tool.js': 'x\n' }), 'project'), ['not_allowed lib/deep/tool.js']);
+  // A file that the system can run, and a file that starts as a script.
+  assert.deepEqual(faults(three({ 'person/notes.txt': 'plain\n' }, { 'person/notes.txt': 0o755 }), 'person'), ['not_allowed notes.txt']);
+  assert.deepEqual(faults(three({ 'person/notes.txt': '#!/usr/bin/env python3\n' }), 'person'), ['not_allowed notes.txt']);
+  // A pack with more files than the harness reads is refused, not passed on the part that was read.
+  const many: Files = {};
+  for (let i = 0; i < 2001; i += 1) many[`person/aaa/f${i}.txt`] = '';
+  assert.deepEqual(faults(three({ ...many, 'person/zzz/run.sh': 'x\n' }), 'person'), ['too_large .']);
+  // Data, the scripts themselves, the tests of the scripts and hidden names are not such code.
+  const fine = three({ 'person/README.md': 'text\n', 'person/data/list.json': '[]', 'person/tests/test_collect.py': 'x\n', 'person/.cache/x.py': 'x\n', 'person/collect/extra.py': 'x\n' });
+  assert.deepEqual(faults(fine, 'person'), []);
+});
