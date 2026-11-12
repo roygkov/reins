@@ -65,7 +65,8 @@ function writeHandoff(rt: Runtime, session: string | undefined): void {
   const decisions = readJournalSince(rt.stateDir, Date.now() - 7 * 24 * 60 * 60 * 1000).filter((r) => r.session === name && (r.kind === 'policy.decision' || r.kind === 'policy.protected_attempt'));
   const handoff: Handoff = {
     ended: new Date().toISOString(), requests,
-    questions: decisions.filter((r) => r.data?.outcome === 'ask').length,
+    // A question that no human saw is no question to the human.
+    questions: decisions.filter((r) => r.data?.outcome === 'ask' && r.data.unshown !== 1).length,
     refusals: decisions.filter((r) => r.data?.outcome === 'deny').length,
     open: openTasks(rt).filter((t) => t.kind === 'scenario').map((t) => `${t.id} (${t.scenario ?? ''}, ${t.state})`),
   };

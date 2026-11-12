@@ -71,6 +71,9 @@ test('week: the eight numbers of the specification are counted from the rows of 
     row(3, 'policy.decision', { task: 't2', data: { outcome: 'ask', action_kind: 'write', env: 'local' } }),
     row(3, 'policy.decision', { task: 't2', data: { outcome: 'allow', action_kind: 'read', env: 'local' } }),
     row(3, 'policy.protected_attempt', { task: 't2', data: { rule: 'protect.packs', outcome: 'ask' } }),
+    // A question that no human saw (a mode of the client without questions) is no question to the human.
+    row(3, 'policy.decision', { task: 't2', data: { outcome: 'ask', action_kind: 'write', env: 'local', unshown: 1 } }),
+    row(3, 'policy.protected_attempt', { task: 't2', data: { rule: 'protect.packs', outcome: 'ask', unshown: 1 } }),
     row(3, 'policy.protected_attempt', { task: 't2', data: { rule: 'protect.state', outcome: 'deny' } }),
     row(3, 'task.human_decision', { task: 't2', data: { decision: 'answered' } }),
     row(3, 'task.human_decision', { task: 't1', data: { decision: 'confirm' } }),

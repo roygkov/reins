@@ -319,7 +319,9 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   const task = sessionTask(rt, call.session);
   const by = subOf(rt, call, task);
   const sub = by === undefined ? {} : { executor: 'sub' as const, ...by };
-  for (const row of rows) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
+  // A question that no human saw says so: it is not counted among the questions to the human.
+  const marked = call.unshown !== true ? rows : rows.map((row) => ((row.kind === 'policy.decision' || row.kind === 'policy.protected_attempt') && row.data?.outcome === 'ask' ? { ...row, data: { ...row.data, unshown: 1 } } : row));
+  for (const row of marked) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 
 // A question waits under the call that asked it. The identifier of the call, when the client gives
@@ -384,7 +386,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   if (action.via === 'tool' && action.kind === 'write') {
     const key = grantKey(action.name, action.target, action.env.name);
     const id = taskFor(rt, key, call.session);
-    const decision = id === undefined ? null : decideAction(rt, id, action, layers, subOf(rt, call, id));
+    const decision = id === undefined ? null : decideAction(rt, id, action, layers, subOf(rt, call, id), call.unshown === true);
     if (id !== undefined && decision !== null) {
       // The question for the whole task: the answer of the human comes back as "the tool ran".
       if (decision.outcome === 'ask' && decision.envelope === 'confirm') {

@@ -404,12 +404,15 @@ export function openTasks(rt: Runtime): Task[] {
 
 // The policy decision for one action of a task; null when the task is unknown or its lock is busy.
 // A caller that gets null has no envelope: it decides the action as an action outside a task.
-export function decideAction(rt: Runtime, id: string, action: Action, layers: LayerDecision[], sub?: { role: string; parent: string }): Decision | null {
+// `unshown`: the client shows no question to the human in its mode now. The row of a question says
+// so: a question that no human saw is not counted among the questions to the human.
+export function decideAction(rt: Runtime, id: string, action: Action, layers: LayerDecision[], sub?: { role: string; parent: string }, unshown = false): Decision | null {
   if (!TASK_ID.test(id)) return null;
   const r = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return null;
     const d = decideFor(task, action, layers);
+    if (unshown) for (const row of d.rows) if (row.kind === 'policy.decision' && row.data?.outcome === 'ask') row.data = { ...row.data, unshown: 1 };
     commit(rt, { task: d.task, rows: d.rows }, sub);
     return d.decision;
   });

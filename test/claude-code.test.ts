@@ -345,6 +345,29 @@ test('claude-code: in a mode without permission questions no human refused anyth
   run(HOOK, b, ['stop'], hookEvent(b, 'Stop', { permission_mode: 'dontAsk' }));
   assert.deepEqual(decisions(b), []);
   assert.deepEqual(fs.readdirSync(path.join(b.state, 'pending')), [], 'the question is gone all the same');
+  // The journal says that no human saw the question: the share of "yes" does not count it.
+  const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+  assert.deepEqual(rows.filter((r) => r.kind === 'policy.decision' && r.data.outcome === 'ask').map((r) => r.data.unshown), [1]);
+  // In a mode with questions the row has no such mark.
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', { change: '9', body: 'z' })), 'ask');
+  const after = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+  assert.deepEqual(after.filter((r) => r.kind === 'policy.decision' && r.data.outcome === 'ask').map((r) => r.data.unshown), [1, undefined]);
+});
+
+test('claude-code: the one question of a task carries the same mark in a mode without questions', () => {
+  const b = box();
+  run(CLI, b, ['open', 'change-review', 'change_id=7'], '');
+  const quiet = JSON.stringify({ session_id: 'abc', cwd: b.cwd, hook_event_name: 'PreToolUse', permission_mode: 'dontAsk', tool_name: 'mcp__tracker__add_comment', tool_input: { change: '7', body: 'x' } });
+  // The envelope of the task names this write: the core asks once for the whole task.
+  assert.equal(decision(run(HOOK, b, ['pre'], quiet)), 'ask');
+  const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+  const asks = rows.filter((r) => r.kind === 'policy.decision' && r.data.outcome === 'ask');
+  assert.deepEqual(asks.map((r) => [r.scenario, r.data.unshown]), [['change-review', 1]]);
+  // The end of the session does not count it among the questions to the human.
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit', { permission_mode: 'dontAsk' }));
+  run(HOOK, b, ['session-end'], hookEvent(b, 'SessionEnd', { permission_mode: 'dontAsk' }));
+  const handoff = fs.readdirSync(path.join(b.state, 'handoff')).map((f) => JSON.parse(fs.readFileSync(path.join(b.state, 'handoff', f), 'utf8')));
+  assert.deepEqual(handoff.map((h) => h.questions), [0]);
 });
 
 test('claude-code: the end of the session ends the questions of its subordinates too', () => {

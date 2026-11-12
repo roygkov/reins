@@ -110,8 +110,10 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
       case 'task.started': started += 1; break;
       case 'task.returned': returned += 1; break;
       case 'task.skipped': skipped += 1; break;
-      case 'policy.decision': if (data.outcome === 'ask') asks += 1; break;
-      case 'policy.protected_attempt': if (data.outcome === 'ask') asks += 1; break;
+      // A question to the human: one that the client showed. In a mode of the client without
+      // questions no human can say "yes", so the question is not counted.
+      case 'policy.decision': if (data.outcome === 'ask' && data.unshown !== 1) asks += 1; break;
+      case 'policy.protected_attempt': if (data.outcome === 'ask' && data.unshown !== 1) asks += 1; break;
       // The "yes" of the human: an answer to a question about one action, or the one approval of a task.
       case 'task.human_decision': if (data.decision === 'answered' || data.decision === 'confirm') yes += 1; break;
       case 'executor.cost':

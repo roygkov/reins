@@ -41,7 +41,8 @@ function count(rows: JournalRow[]): Counts {
   for (const row of rows) {
     if (row.kind === 'policy.decision') {
       c.decisions += 1;
-      question = row.data?.outcome === 'ask';
+      // A question that no human saw (a mode of the client without questions) is no load on the human.
+      question = row.data?.outcome === 'ask' && row.data.unshown !== 1;
     } else if (row.kind === 'policy.basis') {
       const rule = row.data?.rule;
       if (question && typeof rule === 'string') add(c.asked, rule);
