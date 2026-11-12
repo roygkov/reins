@@ -133,3 +133,17 @@ test('packs: code outside the scripts of a pack refuses the pack', () => {
   const fine = three({ 'person/README.md': 'text\n', 'person/data/list.json': '[]', 'person/tests/test_collect.py': 'x\n', 'person/.cache/x.py': 'x\n', 'person/collect/extra.py': 'x\n' });
   assert.deepEqual(faults(fine, 'person'), []);
 });
+
+test('packs: the limit of reads of a task is the lowest one of the levels', () => {
+  const org = structuredClone(bases.get('three')?.['organization/pack.json']) as { limits?: Record<string, unknown> };
+  const person = structuredClone(bases.get('three')?.['person/pack.json']) as { limits?: Record<string, unknown> };
+  const merged = (o: number | undefined, p: number | undefined) => three({
+    'organization/pack.json': { ...org, limits: { ...org.limits, ...(o !== undefined ? { reads: o } : {}) } },
+    'person/pack.json': { ...person, limits: { ...person.limits, ...(p !== undefined ? { reads: p } : {}) } },
+  });
+  assert.equal(merged(50, 10).context.maxReads, 10);
+  assert.equal(merged(10, 50).context.maxReads, 10);
+  assert.equal(merged(50, undefined).context.maxReads, 50);
+  assert.equal(merged(undefined, undefined).context.maxReads, undefined);
+  assert.deepEqual(merged(50, 10).packs.map((p) => p.errors), [[], [], []]);
+});

@@ -58,10 +58,11 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       if (typeof value.executor === 'string' && value.executor !== '') call.sub = value.executor;
       if (value.headless === true) call.headless = true;
       if (head.event === 'after') {
-        afterAction(rt, call, tools, value.asked !== false, value.failed === true);
+        const done = afterAction(rt, call, tools, value.asked !== false, value.failed === true);
         // What the model spent since the event before, when the client knows it.
         if (typeof value.tokens === 'number') noteCost(rt, { ...session, tokens: value.tokens });
-        return {};
+        // The source of the output: the client tells the agent that the output is data of that source.
+        return done.source !== undefined ? { source: done.source } : {};
       }
       const r = beforeAction(rt, call, tools);
       const out: EventReply = { outcome: r.outcome, rule: r.rule };

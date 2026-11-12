@@ -31,6 +31,7 @@ const CLIENT: ClientTools = {
 // The tools of the connectors: the organization pack describes them.
 const TOOLS = {
   'tracker__get_*': { kind: 'read' },
+  'wiki__get_*': { kind: 'read', connector: 'tracker' },
   'tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' },
   'tracker__*': { kind: 'write', action: 'comment', target: 'any/{id}', env: 'work' },
   'live__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'live' },
@@ -468,4 +469,45 @@ test('before: a change of a pack during a task does not reach the task', () => {
   assert.ok('task' in stopped);
   assert.equal(as('s1', 'tracker__get_item'), 'ask default.unknown-tool');
   assert.equal(as('s1', 'shell', { command: 'echo old-word' }), 'allow default.shell');
+});
+
+// ---- A read through a connector: the limit of a task, and the source of the output.
+
+test('before: the reads of a task through connectors have a limit of the packs; past it the human decides', () => {
+  const b = box();
+  const rt: Runtime = { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, maxReads: 2 } } };
+  const read = (tool: string, session = 's1') => {
+    const r = beforeAction(rt, { ...call(b, tool, { id: '1', path: 'src/a.ts' }), session }, CLIENT);
+    return `${r.outcome} ${r.rule}`;
+  };
+  const opened = openScenario(rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  assert.deepEqual([read('wiki__get_page'), read('wiki__get_page')], ['allow default.read', 'allow default.read']);
+  // A read of the client itself and a read that names no connector are not counted.
+  assert.deepEqual([read('read_file'), read('tracker__get_item')], ['allow default.read', 'allow default.read']);
+  assert.deepEqual([read('wiki__get_page'), read('wiki__get_page')], ['ask default.read-limit', 'ask default.read-limit']);
+  assert.equal(loadTask(rt, opened.task.id)?.reads, 2);
+  // The limit is of one task: another session has its own count.
+  assert.equal(read('wiki__get_page', 's2'), 'allow default.read');
+  // Without the limit nothing is counted.
+  const free = box();
+  for (let i = 0; i < 5; i += 1) assert.equal(beforeAction(free.rt, { ...call(free, 'wiki__get_page', {}), session: 's1' }, CLIENT).outcome, 'allow');
+  for (const row of readJournal(rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+test('before: after a read through a connector the client learns the source of the output', () => {
+  const b = box();
+  const after = (tool: string, failed = false) => afterAction(b.rt, { ...call(b, tool, { id: '1' }), session: 's1' }, CLIENT, true, failed).source;
+  assert.equal(after('wiki__get_page'), 'tracker');
+  assert.equal(after('tracker__get_item'), undefined, 'a read that names no connector');
+  assert.equal(after('read_file'), undefined);
+  assert.equal(after('tracker__add_comment'), undefined, 'a write');
+  assert.equal(after('wiki__get_page', true), undefined, 'a tool that failed gave no output of the source');
+});
+
+test('before: the limit of reads is a positive number of a pack', () => {
+  const settings = (reads: unknown) => validateSettings({ pack: 1, level: 'organization', name: 'acme', limits: { reads } }, 'organization');
+  assert.deepEqual(settings(50).errors, []);
+  assert.equal(settings(50).settings?.limits?.reads, 50);
+  assert.deepEqual(settings(0).errors.map((e) => `${e.code} ${e.path}`), ['not_positive limits.reads']);
 });

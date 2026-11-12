@@ -39,6 +39,7 @@ export type Task = {
   work?: string; // the fingerprint of the work that the accepted result holds for
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more
+  reads?: number; // the reads through connectors that the task made
   checked?: number; // the time of the accepted answer
   check?: string; // the fingerprint of the check that gave it
   soak?: number; // the first PASS came: the second answer is due at this time

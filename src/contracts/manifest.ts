@@ -62,6 +62,7 @@ export type PackContext = {
   memoryTypes?: string[];
   maxLevel?: Level;
   maxTokens?: number;
+  maxReads?: number; // the reads of one task through connectors
   maxWriteLimit?: number;
   maxExecutors?: number;
 };

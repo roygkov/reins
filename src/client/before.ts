@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
-import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
+import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, mutateTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
@@ -530,6 +530,18 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
     return { outcome: 'deny', rule: 'contract.scope', layer: 'core', envelope: 'none' };
   }
   let decision = decide({ action, layers });
+  // A read through a connector costs the system that answers it (harness-connector, page 4): the
+  // packs bound the reads of one task. Past the limit the human decides each read.
+  const maxReads = rt.merged.context.maxReads;
+  if (maxReads !== undefined && read.connector !== undefined && action.kind === 'read' && decision.outcome === 'allow') {
+    // The task of the scenario that the session holds, else the free task of the session.
+    const id = contract !== null && contract.state !== 'closed' && contract.state !== 'skipped' ? contract.id : sessionTask(rt, call.session);
+    // The look and the count are one step under the lock of the task: hooks of parallel calls are
+    // separate processes. A read that could not be counted (a busy lock) is not known to be inside the limit.
+    const counted = mutateTask(rt, id, (task) => ((task.reads ?? 0) >= maxReads ? null : { ...task, reads: (task.reads ?? 0) + 1 }));
+    // A pause of the human removes this question as every other one.
+    if (counted === null && pausedUntil(rt) === null) decision = { ...decision, outcome: 'ask', basis: { layer: 'core', rule: 'default.read-limit' } };
+  }
   // A write that another human sees, outside the envelope of a task: no check of the harness saw
   // its text. The question has its own rule, so the client can say this to the human.
   if (decision.basis.rule === 'default.write' && action.outward === true) decision = { ...decision, basis: { ...decision.basis, rule: 'default.outward-write' } };
@@ -578,7 +590,18 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // `asked`: false when the client did not show the question to the human (a mode of the client
 // that skips permission questions). Then the run of the tool is no approval.
 // `failed`: the tool started and ended with an error (not broken off by the human).
-export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean } {
+// `source`: the connector that the output of the call came from. What a connector returns is data
+// of an outer source, never instructions: the client says so to the agent (harness-connector, pages 4 and 6).
+export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean; source?: string } {
+  const settled = settle(rt, call, clientTools, asked, failed);
+  if (failed || Object.hasOwn(clientTools, call.tool)) return settled;
+  // The table of the tools that decided the call: the one of the task that the session holds.
+  const rule = packRule(frozenRuntime(rt, currentScenario(rt, call.session)).merged.tools, call.tool);
+  const reads = rule !== undefined && rule.connector !== undefined && (rule.kind === 'read' || readsNow(rule.read_when, call.input));
+  return reads && rule.connector !== undefined ? { ...settled, source: rule.connector } : settled;
+}
+
+function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: boolean, failed: boolean): { confirmed: boolean } {
   // A tool that failed is a fact for the craft: the name of the tool, never the text of the error.
   // The tools of the client itself fail all the time (a command with an exit code, a file that is
   // not there): that is the work, not a fault of a tool.
