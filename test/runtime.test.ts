@@ -503,3 +503,37 @@ test('runtime: the end of a preparation waits for a busy lock and is not lost', 
   assert.equal(fs.existsSync(path.join(tasks, `${opened.task.id}.lock`)), false, 'the lock was held and then released');
   assert.ok(opened.collected !== null);
 });
+
+test('journal: rows that could not be written are counted on the disk, and the next row that is written says how many were lost', () => {
+  const dir = path.join(SB, 'lost-rows');
+  // The state directory cannot be written: a file stands where the journal file should be made.
+  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.join(dir, 'journal.jsonl'));
+  const broken = openJournal(dir);
+  assert.equal(broken.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, false);
+  assert.equal(broken.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, false);
+  // Another process, later: the disk works again. Its first row is followed by the fact of the loss.
+  fs.rmdirSync(path.join(dir, 'journal.jsonl'));
+  const healed = openJournal(dir);
+  assert.equal(healed.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, true);
+  const rows = readJournal(healed.file);
+  assert.deepEqual(rows.map((r) => [r.kind, r.data?.where, r.data?.lost]), [['harness.failure', 'journal', 2], ['memory.read', undefined, undefined]]);
+  for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+  // The loss is said once.
+  healed.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } });
+  openJournal(dir).write({ kind: 'memory.read', project: 'p1', data: { n: 1 } });
+  assert.equal(readJournal(healed.file).filter((r) => r.kind === 'harness.failure').length, 1);
+  // The state directory itself cannot be written: the count goes to the spare place of the user.
+  const blocked = path.join(SB, 'lost-blocked');
+  const spare = path.join(SB, 'lost-spare');
+  fs.writeFileSync(blocked, 'a file where the state directory should be');
+  const none = openJournal(blocked, undefined, { lostDir: spare });
+  assert.equal(none.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, false);
+  assert.equal(none.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, false);
+  assert.deepEqual(fs.readdirSync(spare).map((name) => fs.readFileSync(path.join(spare, name), 'utf8')), ['2']);
+  fs.rmSync(blocked);
+  const back = openJournal(blocked, undefined, { lostDir: spare });
+  assert.equal(back.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, true);
+  assert.deepEqual(readJournal(back.file).map((r) => [r.kind, r.data?.lost]), [['harness.failure', 2], ['memory.read', undefined]]);
+  assert.deepEqual(fs.readdirSync(spare), []);
+});

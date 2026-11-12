@@ -3,7 +3,9 @@
 // A write error never stops the work.
 // Specification: docs/spec/harness-journal, pages 1 and 4.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { JOURNAL_VERSION, validateRow, type JournalError, type JournalRow } from '../contracts/journal.ts';
 import { isObj } from '../contracts/shape.ts';
@@ -19,7 +21,7 @@ const archiveDir = (dir: string): string => path.join(dir, 'journal-archive');
 
 // The journal grows to a size limit; then the file moves to the archive and a new file starts.
 // The name of an archive file is the time of the move: the names sort in the order of time.
-export function openJournal(dir: string, clock: () => Date = () => new Date(), opts: { maxBytes?: number } = {}): Journal {
+export function openJournal(dir: string, clock: () => Date = () => new Date(), opts: { maxBytes?: number; lostDir?: string } = {}): Journal {
   const file = path.join(dir, 'journal.jsonl');
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   const rotate = (): void => {
@@ -31,13 +33,68 @@ export function openJournal(dir: string, clock: () => Date = () => new Date(), o
       // no file yet, or another process moved it: the row is written all the same
     }
   };
+  // A row that could not be written is lost, but the loss is a fact: a count on the disk, beside
+  // the journal when that place can be written, else in a directory of this user (never in the
+  // shared temporary directory, where another user could put a file of that name first).
+  // The next row that is written, by this process or by another, is preceded by the fact.
+  const spare = opts.lostDir ?? path.join(os.homedir(), '.cache', 'reins');
+  const lostFiles = [path.join(dir, 'journal.lost'), path.join(spare, `journal-lost-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 12)}`)];
+  const readLost = (name: string): number => {
+    try {
+      const n = Number(fs.readFileSync(name, 'utf8').trim());
+      return Number.isInteger(n) && n > 0 ? n : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const noteLost = (n: number): void => {
+    for (const name of lostFiles) {
+      try {
+        fs.mkdirSync(path.dirname(name), { recursive: true });
+        fs.writeFileSync(name, String(readLost(name) + n));
+        return;
+      } catch {
+        // this place cannot be written either: the next one
+      }
+    }
+  };
+  let looked = false;
+  const sayLost = (project: string): void => {
+    if (looked) return;
+    looked = true;
+    // The count is taken by a move: of two processes that look at one time, one gets it.
+    let lost = 0;
+    for (const name of lostFiles) {
+      const mine = `${name}.${process.pid}`;
+      try {
+        fs.renameSync(name, mine);
+        lost += readLost(mine);
+        fs.rmSync(mine, { force: true });
+      } catch {
+        // no count in this place, or another process took it
+      }
+    }
+    if (lost === 0) return;
+    try {
+      fs.appendFileSync(file, `${JSON.stringify({ ts: clock().toISOString(), v: JOURNAL_VERSION, kind: 'harness.failure', project, data: { where: 'journal', lost } })}\n`);
+    } catch (e) {
+      // The fact did not reach the journal: the count goes back to the disk.
+      noteLost(lost);
+      throw e;
+    }
+  };
   const append = (row: object): boolean => {
     try {
       fs.mkdirSync(dir, { recursive: true });
       rotate();
+      const project = (row as { project?: unknown }).project;
+      sayLost(typeof project === 'string' && TOKEN.test(project) ? project : 'unknown');
       fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
       return true;
     } catch {
+      // The next row that this process writes looks for the count again.
+      looked = false;
+      noteLost(1);
       return false;
     }
   };
