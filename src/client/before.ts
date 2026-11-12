@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
-import { applyEvent, confirm, decideAction, loadTask, verifyWork, type Runtime } from '../core/runtime.ts';
+import { applyEvent, confirm, decideAction, loadTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
@@ -139,6 +139,46 @@ function protectedBy(rt: Runtime, file: string): { outcome: 'deny' | 'ask'; rule
   return null;
 }
 
+type RedGuards = ReturnType<typeof redGuards>;
+const CHECK_GUARD = { outcome: 'ask', rule: 'protect.check' } as const;
+const GUARD_WALK = 5000;
+// After a red answer of a check its tests and settings are not the work of the agent: a change of
+// such a file asks the human. A directory is such a target too when the files lie under it: its
+// removal removes the tests.
+function checkGuard(guards: RedGuards, file: string): boolean {
+  if (guards.length === 0) return false;
+  const target = real(file);
+  for (const guard of guards) {
+    // A place above the work holds the whole work.
+    if (inside(guard.root, target)) {
+      if (target !== guard.root) return true;
+    } else if (!inside(target, guard.root)) continue;
+    const rel = path.relative(guard.root, target).split(path.sep).join('/');
+    if (rel === '' || guard.patterns.some((p) => p.test(rel)) || guard.dirs.some((d) => d !== '' && (d === rel || d.startsWith(`${rel}/`)))) return true;
+    // The files under a directory, by their names on the disk. A directory too large to read is a question.
+    let left = GUARD_WALK;
+    const holds = (dir: string, at: string): boolean => {
+      let names: fs.Dirent[];
+      try {
+        names = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return false;
+      }
+      for (const entry of names) {
+        if (entry.name === '.git') continue;
+        left -= 1;
+        if (left < 0) return true;
+        const next = `${at}/${entry.name}`;
+        if (guard.patterns.some((p) => p.test(next))) return true;
+        if (entry.isDirectory() && holds(path.join(dir, entry.name), next)) return true;
+      }
+      return false;
+    };
+    if (holds(target, rel)) return true;
+  }
+  return false;
+}
+
 // The spellings of a path that a shell command can use: the path, its real path, and both
 // relative to the home directory (`~/`, `$HOME/`, `${HOME}/`).
 function spellings(p: string): string[] {
@@ -174,6 +214,7 @@ function namedInCommand(rt: Runtime, command: string): string | null {
 // that the command only names gets a question when it lies in the state or in the memory.
 function placesGuard(rt: Runtime, command: string, cwd: string): { outcome: 'deny' | 'ask'; rule: string } | null {
   let found: { outcome: 'deny' | 'ask'; rule: string } | null = null;
+  let red: RedGuards | undefined;
   for (const place of touchedPlaces(command, cwd, os.homedir(), true)) {
     // A removal of a directory removes what lies under it: the state, the memory, the config, a pack.
     if (place.tree) {
@@ -193,7 +234,10 @@ function placesGuard(rt: Runtime, command: string, cwd: string): { outcome: 'den
       else if (under(rt.configFile)) found ??= { outcome: 'ask', rule: 'protect.config' };
     }
     const guard = protectedBy(rt, place.path);
-    if (guard === null) continue;
+    if (guard === null) {
+      if ((place.write || place.tree || place.into) && checkGuard((red ??= redGuards(rt)), place.path)) found ??= CHECK_GUARD;
+      continue;
+    }
     if (place.write && guard.outcome === 'deny') return guard;
     if (place.write || guard.rule === 'protect.state' || guard.rule === 'protect.memory') found ??= { outcome: 'ask', rule: guard.rule };
   }
@@ -230,7 +274,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     if (own.kind === 'local') {
       const file = call.input[own.path];
       if (typeof file !== 'string' || file === '') return { action: UNKNOWN, layers: [] };
-      const guard = protectedBy(rt, path.resolve(call.cwd, file));
+      const guard = protectedBy(rt, path.resolve(call.cwd, file)) ?? (checkGuard(redGuards(rt), path.resolve(call.cwd, file)) ? CHECK_GUARD : null);
       if (guard !== null) return { guard };
       return { action: { via: 'tool', kind: 'local', name: 'change', target: '', env: LOCAL_ENV }, layers: [] };
     }

@@ -39,6 +39,7 @@ export type Task = {
   work?: string; // the fingerprint of the work that the accepted result holds for
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more
+  red?: boolean; // the last answer of the check was not PASS: the files of the check are protected
   widened?: boolean; // the human let a contract task go on past its contract
 };
 
@@ -207,12 +208,16 @@ export function step(task: Task, event: TaskEvent): Step {
     case 'check': {
       if (task.state !== 'checking' || done === undefined) return refuse(task);
       const detail = event.detail ?? {};
-      if (event.result === 'PASS') return accept(event.work === undefined ? task : { ...task, work: event.work }, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
+      if (event.result === 'PASS') {
+        const { red: _, ...green } = task;
+        return accept(event.work === undefined ? green : { ...green, work: event.work }, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
+      }
       // No answer means "not ready". The silence of a check is never a success.
       const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { ...detail, check_kind: done.kind } };
-      if (task.returns < done.retries) return back(task, [answer], 'check_fail', true);
+      // A check that did not accept the work must not be made weaker instead of the work made better.
+      if (task.returns < done.retries) return back({ ...task, red: true }, [answer], 'check_fail', true);
       return {
-        task: { ...task, state: 'waiting_human', waiting: 'check' },
+        task: { ...task, red: true, state: 'waiting_human', waiting: 'check' },
         rows: [answer, { kind: 'check.retries_exceeded', data: { n: task.returns } }, { kind: 'task.waiting_human', data: { reason: 'check' } }],
       };
     }

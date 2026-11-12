@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
+import { validateManifest } from '../src/contracts/manifest.ts';
 import { applyEvent, loadTask, openScenario, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
 import { runCollect, sandboxProfile } from '../src/core/collect.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
@@ -326,4 +327,77 @@ test('ready: a collect script that changes the work and then fails leaves the fa
   const b = box({ collect: '#!/bin/sh\ncat >/dev/null\necho changed >> $WORK/a.txt\nexit 3\n' });
   openScenario(b.rt, 'change-review', { change_id: '7' }, {});
   assert.ok(readJournal(b.rt.journal.file).some((x) => x.kind === 'harness.failure' && x.data?.reason === 'changed_work'));
+});
+
+// ---- After a red answer the files of the check are protected.
+
+const GUARDED = { kind: 'command', check: 'tests', retries: 2, source: 'worktree', guards: ['test/**', '*.config.json', '**/*.rules.json'] };
+const RED = "#!/bin/sh\ncat >/dev/null\nif [ -e $WORK/green ]; then printf '%s' '{\"outputs\":{\"result\":\"PASS\"}}'; else printf '%s' '{\"outputs\":{\"result\":\"FAIL\"}}'; fi\n";
+const EDIT: ClientTools = { read_file: { kind: 'read' }, write_file: { kind: 'local', path: 'path' }, shell: { kind: 'shell', command: 'command' } };
+
+test('ready: after a red answer a change of the files of the check asks the human', () => {
+  const b = box({ done: GUARDED, check: RED });
+  fs.mkdirSync(path.join(b.cwd, 'test/deep'), { recursive: true });
+  const edit = (file: string) => beforeAction(b.rt, { cwd: b.cwd, tool: 'write_file', input: { path: file }, session: 's1' }, EDIT);
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  // Before an answer of the check the tests are the work of the agent.
+  assert.equal(edit('test/a.test.ts').outcome, 'allow');
+  const r = submitReport(b.rt, id, REPORT);
+  assert.ok('step' in r);
+  assert.equal(r.step.task.state, 'executing', JSON.stringify(r));
+  assert.equal(loadTask(b.rt, id)?.red, true);
+  for (const file of ['test/a.test.ts', 'test/deep/b.test.ts', path.join(b.cwd, 'test/a.test.ts'), 'jest.config.json', './test/../test/x']) {
+    const reply = edit(file);
+    assert.deepEqual([reply.outcome, reply.rule], ['ask', 'protect.check'], file);
+  }
+  // The work itself stays free, and so does a file of the same name in another place.
+  assert.equal(edit('a.txt').outcome, 'allow');
+  assert.equal(edit('src/jest.config.json').outcome, 'allow');
+  assert.equal(edit('src/test/a.ts').outcome, 'allow');
+  assert.equal(edit(path.join(b.root, 'other/test/a.test.ts')).outcome, 'allow');
+  // A command of the shell that writes there asks too; a read does not.
+  const shell = (command: string) => beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command }, session: 's1' }, EDIT);
+  assert.deepEqual([shell('echo x > test/a.test.ts').outcome, shell('echo x > test/a.test.ts').rule], ['ask', 'protect.check']);
+  assert.equal(shell('cat test/a.test.ts').outcome, 'allow');
+  // The directory of the tests is a target too: its removal removes the tests.
+  assert.deepEqual([shell('rm -r test/deep').rule, shell('mv test old').rule], ['protect.check', 'protect.check']);
+  // So is the work as a whole, and a directory that holds a file of a pattern with `*`. A directory
+  // above the work of this box holds the state of the harness too: the stronger rule answers.
+  assert.deepEqual([shell('rm -r ..').rule, shell(`rm -r ${b.cwd}`).rule], ['protect.state', 'protect.check']);
+  fs.mkdirSync(path.join(b.cwd, 'conf/x'), { recursive: true });
+  fs.writeFileSync(path.join(b.cwd, 'conf/x/a.rules.json'), '{}');
+  fs.mkdirSync(path.join(b.cwd, 'plain'), { recursive: true });
+  fs.writeFileSync(path.join(b.cwd, 'plain/a.txt'), '');
+  assert.equal(shell('rm -r conf').rule, 'protect.check');
+  assert.equal(shell('rm -r plain').outcome, 'allow');
+  const rows = readJournal(b.rt.journal.file);
+  assert.ok(rows.some((x) => x.kind === 'policy.protected_attempt' && x.data?.rule === 'protect.check' && x.data?.outcome === 'ask'));
+  for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+  // A green answer ends the protection.
+  fs.writeFileSync(path.join(b.cwd, 'green'), '');
+  const again = submitReport(b.rt, id, REPORT);
+  assert.ok('step' in again);
+  assert.equal(again.step.task.state, 'publishing', JSON.stringify(again));
+  assert.equal(loadTask(b.rt, id)?.red, undefined);
+  assert.equal(edit('test/a.test.ts').outcome, 'allow');
+});
+
+test('ready: a task without the list of the files of its check protects nothing after a red answer', () => {
+  const b = box({ done: { kind: 'command', check: 'tests', retries: 2, source: 'worktree' }, check: RED });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  submitReport(b.rt, opened.task.id, REPORT);
+  assert.equal(loadTask(b.rt, opened.task.id)?.red, true);
+  assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'write_file', input: { path: 'test/a.test.ts' }, session: 's1' }, EDIT).outcome, 'allow');
+});
+
+test('ready: the list of the files of a check is a list of patterns inside the work', () => {
+  const errors = (done: Record<string, unknown>) => validateManifest({ ...manifests.get('review'), done }).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: ['test/**', 'a/*.json', 'pom.xml'] }), []);
+  assert.deepEqual(errors({ kind: 'citations', source: 'worktree', retries: 1, guards: ['test/**'] }), ['not_allowed done.guards']);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: ['/etc/x', '../x', 'a/../b', '', 7, 'a\\b'] }), [0, 1, 2, 3, 4, 5].map((i) => `bad_name done.guards[${i}]`));
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: 'test' }), ['not_array done.guards']);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, guards: Array.from({ length: 21 }, (_, i) => `d${i}/**`) }), ['not_in_range done.guards']);
 });

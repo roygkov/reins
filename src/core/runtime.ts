@@ -9,7 +9,7 @@ import path from 'node:path';
 import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
-import { LEVELS, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
+import { LEVELS, guardPattern, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
 import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
 import { patchSession } from './sessions.ts';
@@ -307,6 +307,28 @@ function sourceRoot(rt: Runtime, task: Task): string | null {
   const name = task.manifest?.done.source;
   const root = name === undefined ? undefined : readCollected(rt, task.id)?.[name];
   return typeof root === 'string' && root !== '' ? root : null;
+}
+
+// The files of the checks that gave a red answer: the work of each such task and the patterns of
+// its manifest. Until a green answer a change of these files is a decision of the human.
+export function redGuards(rt: Runtime): { root: string; patterns: RegExp[]; dirs: string[] }[] {
+  const out: { root: string; patterns: RegExp[]; dirs: string[] }[] = [];
+  for (const task of openTasks(rt)) {
+    const guards = task.manifest?.done.guards;
+    if (task.red !== true || guards === undefined || guards.length === 0) continue;
+    const root = sourceRoot(rt, task) ?? rt.workDir;
+    if (root === undefined || !path.isAbsolute(root)) continue;
+    let dir = root;
+    try {
+      dir = fs.realpathSync(root);
+    } catch {
+      // the path as the collect step named it
+    }
+    // The part of a pattern before its first `*` is a fixed path: a directory above it holds the files too.
+    const dirs = guards.map((g) => { const parts = g.split('/'); const at = parts.findIndex((p) => p.includes('*')); return (at === -1 ? parts : parts.slice(0, at)).join('/'); });
+    out.push({ root: dir, patterns: guards.map(guardPattern), dirs });
+  }
+  return out;
 }
 
 // An accepted result holds for the work that the check saw. False: the work changed after the

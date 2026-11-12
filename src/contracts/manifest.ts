@@ -44,7 +44,7 @@ export type Manifest = {
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string };
+  done: { kind: DoneKind; check?: string; retries: number; source?: string; changed?: string; guards?: string[] };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -304,8 +304,20 @@ function permissions(r: Report, value: unknown, pack: PackContext, inputs: Set<s
   });
 }
 
+const MAX_GUARDS = 20;
+// A pattern of the files of a check: a path inside the work, with `/` between its parts. `*` is
+// any text inside one part, `**` is any text. It never leaves the work.
+function isGuard(value: unknown): value is string {
+  if (typeof value !== 'string' || value === '' || value.length > 200 || /[\\\0\n]/.test(value)) return false;
+  return value.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
+export function guardPattern(guard: string): RegExp {
+  const source = guard.split('**').map((piece) => piece.split('*').map((text) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*');
+  return new RegExp(`^${source}$`, 's');
+}
+
 function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[]): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed'], ['kind', 'retries']);
+  const d = fields(r, value, 'done', ['kind', 'check', 'retries', 'source', 'changed', 'guards'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
@@ -324,6 +336,15 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
   }
   // Without a source the check can never answer: such a manifest is refused when it is connected.
   if (kind === 'citations' && d.source === undefined) r.add('missing', 'done.source');
+  // The files that the check script runs or reads as its rules: the tests and their settings.
+  if (d.guards !== undefined) {
+    if (kind !== null && !needsCheck) r.add('not_allowed', 'done.guards');
+    else {
+      const guards = list(r, d.guards, 'done.guards') ?? [];
+      if (guards.length > MAX_GUARDS) r.add('not_in_range', 'done.guards');
+      else guards.forEach((g, i) => { if (!isGuard(g)) r.add('bad_name', `done.guards[${i}]`); });
+    }
+  }
   if (d.retries !== undefined) {
     if (!isInt(d.retries)) r.add('not_integer', 'done.retries');
     else if (d.retries < 0 || d.retries > MAX_RETRIES) r.add('not_in_range', 'done.retries');
