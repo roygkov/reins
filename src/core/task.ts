@@ -70,7 +70,8 @@ export type TaskEvent =
   | { type: 'finish' } // the publication is over: nothing more will be written
   | { type: 'expire' };
 
-export type RowDraft = { kind: EventKind; data?: Record<string, string | number | boolean> };
+// `fp`: the fingerprint of the state of the work that the row is about.
+export type RowDraft = { kind: EventKind; data?: Record<string, string | number | boolean>; fp?: string };
 export type Step = { task: Task; rows: RowDraft[]; error?: 'bad_event' };
 
 export type InputErrorCode = 'missing' | 'unknown' | 'bad_type';
@@ -223,13 +224,13 @@ export function step(task: Task, event: TaskEvent): Step {
       if (event.result === 'PASS') {
         const { red: _, soak, checked: _c, check: _k, ...green } = task;
         const at = event.at ?? 0;
-        const pass: RowDraft = { kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } };
+        const pass: RowDraft = { kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind }, ...(event.work !== undefined ? { fp: event.work } : {}) };
         // The soak: the first PASS is not the result. The check answers again after the term.
         if (done.soak_minutes !== undefined && soak === undefined) return { task: { ...green, soak: at + done.soak_minutes * 60_000, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, rows: [{ ...pass, data: { ...pass.data, soak: done.soak_minutes } }] };
-        return accept({ ...green, checked: at, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, labelOf(done.kind), [{ kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind } }]);
+        return accept({ ...green, checked: at, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, labelOf(done.kind), [pass]);
       }
       // No answer means "not ready". The silence of a check is never a success.
-      const answer: RowDraft = event.result === 'FAIL' ? { kind: 'check.answered', data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer', data: { ...detail, check_kind: done.kind } };
+      const answer: RowDraft = { ...(event.result === 'FAIL' ? { kind: 'check.answered' as const, data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer' as const, data: { ...detail, check_kind: done.kind } }), ...(event.work !== undefined ? { fp: event.work } : {}) };
       // A check that did not accept the work must not be made weaker instead of the work made better.
       const { soak: _s, check: _k, work: _w, ...rest } = task;
       if (task.returns < done.retries) return back({ ...rest, red: true }, [answer], 'check_fail', true);

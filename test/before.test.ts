@@ -613,3 +613,14 @@ test('before: a task of a scenario that reads through a connector outside its ma
   assert.equal(loadTask(un, second.task.id)?.extraReads, undefined);
   for (const rt of [b.rt, wide.rt, unseen.rt]) for (const row of readJournal(rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
 });
+
+test('before: the basis of a decision that a pack gave names the level of the pack', () => {
+  const b = box();
+  const rule = { id: 'org.no-word', outcome: 'deny' as const, command: 'forbidden-word', level: 'organization' as const };
+  const rt: Runtime = { ...b.rt, merged: { ...b.rt.merged, rules: [rule] } };
+  assert.equal(beforeAction(rt, call(b, 'shell', { command: 'echo forbidden-word' }), CLIENT).rule, 'org.no-word');
+  beforeAction(rt, call(b, 'shell', { command: 'ls' }), CLIENT);
+  const bases = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.basis');
+  assert.deepEqual(bases.map((r) => [r.data?.rule, r.pack]), [['org.no-word', 'organization'], ['default.shell', undefined]]);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});

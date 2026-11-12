@@ -155,6 +155,10 @@ function record(rt: Runtime, task: Task, rows: RowDraft[], sub?: { role: string;
       row.scenario_v = task.version ?? 1;
     }
     if (r.data !== undefined && Object.keys(r.data).length > 0) row.data = r.data;
+    if (r.fp !== undefined) row.fp = r.fp;
+    // The basis of a decision that a pack gave names the level of that pack.
+    const layer = r.kind === 'policy.basis' ? r.data?.layer : undefined;
+    if (layer === 'organization' || layer === 'project' || layer === 'person') row.pack = layer;
     rt.journal.write(row);
   }
 }
@@ -757,7 +761,7 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
       if (task === null) return { error: 'unknown_task' };
       // The same wait: the same count of returns and the same report that the check read.
       if (task.state !== 'checking' || task.returns !== before.returns || task.soak !== before.soak || readReport(rt, id) !== text) return { error: 'not_checking' };
-      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null ? { work } : {}) })), answer };
+      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null && answer.reason !== 'work_changed' ? { work } : {}) })), answer };
     });
     if (r !== 'busy') return r;
   }

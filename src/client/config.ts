@@ -121,3 +121,18 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   if (config.runnerParallel !== undefined) rt.runnerParallel = config.runnerParallel;
   return rt;
 }
+
+// The runtime of the adapter of a client: every row that it writes to the journal names the
+// client. A command of the harness itself (`reins ...`) names none.
+export function clientRuntime(rt: Runtime, client: string): Runtime {
+  const inner = rt.journal;
+  return {
+    ...rt,
+    journal: {
+      file: inner.file,
+      get failures() { return inner.failures; },
+      set failures(n: number) { inner.failures = n; },
+      write: (row) => inner.write(row.client === undefined ? { ...row, client } : row),
+    },
+  };
+}

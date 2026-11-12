@@ -83,6 +83,8 @@ test('ready: an accepted result keeps the fingerprint of the work, and the work 
   const b = box();
   const id = accepted(b);
   assert.match(loadTask(b.rt, id)?.work ?? '', /^[0-9a-f]{32}$/);
+  // The answer of the check in the journal carries the fingerprint of the work that it is about.
+  assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.answered')?.fp, loadTask(b.rt, id)?.work);
   assert.equal(verifyWork(b.rt, id), true);
   assert.equal(comment(b).task, id, 'the envelope of the publication answers');
   const r = applyEvent(b.rt, id, { type: 'finish' }, 'agent');
@@ -730,4 +732,13 @@ test('ready: a result that goes into a system needs a write of the manifest', ()
   assert.deepEqual(errors({ format: 'list', max_items: 10, to: 'system' }, true), []);
   assert.deepEqual(errors({ format: 'list', max_items: 10, to: 'system' }, false), ['missing permissions.write']);
   assert.deepEqual(errors({ format: 'list', max_items: 10, to: 'human' }, false), []);
+});
+
+test('ready: an answer about a work that changed during the check carries no fingerprint of a work', () => {
+  const b = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: "#!/bin/sh\ncat >/dev/null\necho changed >> $WORK/a.txt\nprintf '%s' '{\"outputs\":{\"result\":\"PASS\"}}'\n" });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  submitReport(b.rt, opened.task.id, REPORT);
+  const row = readJournal(b.rt.journal.file).find((x) => x.kind === 'check.no_answer');
+  assert.deepEqual([row?.data?.reason, row?.fp], ['work_changed', undefined]);
 });

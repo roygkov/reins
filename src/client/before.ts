@@ -397,7 +397,12 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   // The decision about a tool of a connector names the tool: the craft finds chains of tools that repeat.
   const tool = call.named;
   const named = tool === undefined ? marked : marked.map((row) => (row.kind === 'policy.decision' ? { ...row, data: { ...row.data, tool } } : row));
-  for (const row of named) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
+  // The basis of a decision that a pack gave names the level of that pack.
+  const pack = (row: Pick<RowInput, 'kind' | 'data'>): { pack?: 'organization' | 'project' | 'person' } => {
+    const layer = row.kind === 'policy.basis' ? row.data?.layer : undefined;
+    return layer === 'organization' || layer === 'project' || layer === 'person' ? { pack: layer } : {};
+  };
+  for (const row of named) rt.journal.write({ ...row, ...pack(row), ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 
 // A question waits under the call that asked it. The identifier of the call, when the client gives

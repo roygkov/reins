@@ -148,6 +148,9 @@ test('budget: the clients report what the model spent', () => {
   stdio({ event: 'request' });
   const opened = JSON.parse(spawnSync(process.execPath, [CLI, 'open', 'change-review', 'change_id=7'], { env: b.env, cwd: b.cwd, encoding: 'utf8' }).stdout);
   stdio({ event: 'after', tool: 'read_file', input: {}, tokens: 250 });
+  // Every row that the adapter of the second client writes names that client.
+  const ofStdio = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost');
+  assert.ok(ofStdio.length > 0 && ofStdio.every((r) => r.client === 'stdio'), JSON.stringify(ofStdio.find((r) => r.client !== 'stdio')));
   assert.equal(loadTask(b.rt, opened.task)?.cost?.tokens, 250);
   // The first client reads the transcript of the session: only the lines that are new.
   const transcript = path.join(b.root, 'transcript.jsonl');

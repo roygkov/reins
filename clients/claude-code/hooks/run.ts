@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import { afterAction, beforeAction, type ClientTools, type Reply, type ToolCall } from '../../../src/client/before.ts';
-import { loadRuntime } from '../../../src/client/config.ts';
+import { clientRuntime, loadRuntime } from '../../../src/client/config.ts';
 import { noteCost } from '../../../src/client/cost.ts';
 import { withSession } from '../../../src/core/sessions.ts';
 import { executorReported, executorStarted } from '../../../src/client/executors.ts';
@@ -67,7 +67,7 @@ function readEvent(): ToolCall | null {
 
 function runtime(cwd?: string): Runtime | null {
   try {
-    return { ...loadRuntime(cwd), harnessDirs: [HARNESS_ROOT], clientPaths: CLIENT_PATHS };
+    return clientRuntime({ ...loadRuntime(cwd), harnessDirs: [HARNESS_ROOT], clientPaths: CLIENT_PATHS }, 'claude_code');
   } catch {
     return null;
   }

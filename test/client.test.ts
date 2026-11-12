@@ -162,6 +162,9 @@ test('client: the Claude Code adapter passes the compaction, the subordinate and
   assert.equal(hook('pre-compact', { hook_event_name: 'PreCompact' }), '');
   hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'mcp__x__y', tool_input: {}, agent_id: 'a1', agent_type: 'reviewer' });
   assert.ok(readJournal(b.rt.journal.file).some((r) => r.kind === 'policy.decision' && r.executor === 'sub' && r.role === 'reviewer'));
+  // Every row that the adapter of a client writes names the client.
+  const written = readJournal(b.rt.journal.file).filter((r) => r.session === 'live' || r.kind.startsWith('harness.'));
+  assert.ok(written.length > 0 && written.every((r) => r.client === 'claude_code'), JSON.stringify(written.find((r) => r.client !== 'claude_code')));
   const out = JSON.parse(hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'mcp__x__z', tool_input: {} }, { REINS_HEADLESS: '1' })).hookSpecificOutput;
   assert.equal(out.permissionDecision, 'deny');
   assert.match(out.permissionDecisionReason, /reins queue approve q[0-9a-f]{10}/);

@@ -8,7 +8,7 @@
 
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { loadRuntime } from '../../src/client/config.ts';
+import { clientRuntime, loadRuntime } from '../../src/client/config.ts';
 import type { ClientTools } from '../../src/client/before.ts';
 import { handleEvent, readEvent, UNREADABLE, type EventReply } from '../../src/client/events.ts';
 
@@ -25,7 +25,7 @@ function run(): EventReply {
   if (head === null) return UNREADABLE;
   try {
     const tools = JSON.parse(fs.readFileSync(new URL('./tools.json', import.meta.url), 'utf8')) as ClientTools;
-    const rt = { ...loadRuntime(head.cwd), harnessDirs: [HARNESS_ROOT] };
+    const rt = clientRuntime({ ...loadRuntime(head.cwd), harnessDirs: [HARNESS_ROOT] }, 'stdio');
     return handleEvent(rt, value, tools, 'stdio');
   } catch {
     // Only the event before an action is a barrier: its failure is a question.
