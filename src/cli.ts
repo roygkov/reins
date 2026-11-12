@@ -9,6 +9,7 @@
 //   reins tasks                          the tasks that are not closed
 //   reins tick                           opens the tasks of the scenarios whose schedule came
 //   reins tick run                       the same, and starts the client of the machine for each task
+//   reins timer [minutes]                the text of a timer of the system that runs `tick run`
 //   reins run <scenario> [name=value]    opens a task and starts the client of the machine for it
 //   reins fire <event> [name=value]      opens the tasks of the scenarios that wait for this event
 //   reins fire run <event> [name=value]  the same, and starts the client of the machine for every task
@@ -18,6 +19,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ConfigError, loadRuntime } from './client/config.ts';
 import { runTask } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
@@ -30,6 +32,7 @@ import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
 import { sweep } from './core/sweep.ts';
+import { timerText } from './client/timer.ts';
 import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
@@ -287,6 +290,13 @@ function main(args: string[]): Out {
     if (enabled !== 'on') throw new Stop(enabled);
     return { ok: true, scenario: first };
   }
+  // The text of a timer of the system for `tick run`. Nothing is written and nothing starts.
+  if (command === 'timer' && rest.length === 0) {
+    if (first !== undefined && !(/^[1-9][0-9]{0,3}$/.test(first) && Number(first) <= 1440)) throw new Stop('usage');
+    const env: Record<string, string> = { PATH: process.env.PATH ?? '' };
+    if (process.env.REINS_CONFIG !== undefined) env.REINS_CONFIG = path.resolve(process.env.REINS_CONFIG);
+    return { ok: true, ...timerText(first === undefined ? 5 : Number(first), fileURLToPath(import.meta.url), process.cwd(), env) };
+  }
   // Triggers without a human. A timer of the system runs `tick`; a system that saw an event runs `fire`.
   if (command === 'tick' && first === undefined) return { ok: true, ...tick(runtime()) };
   // The schedule with a client: every task that it opens and that needs the model gets a run of
@@ -295,8 +305,41 @@ function main(args: string[]): Out {
     // A client without a window starts no client: nothing is opened, the time of the schedule stays.
     if (process.env.REINS_HEADLESS === '1') throw new Stop('nested_run');
     const rt = runtime();
-    const r = tick(rt);
-    return { ok: true, ...runOpened(rt, r.opened), skipped: r.skipped };
+    // One run of the schedule at a time: a timer that fires while a run still works (cron does)
+    // must not start a second client beside the first. The lock holds the number of its process:
+    // a lock of a process that is gone is taken over.
+    const lock = path.join(rt.stateDir, 'tick-run.lock');
+    fs.mkdirSync(rt.stateDir, { recursive: true });
+    const take = (): boolean => {
+      try {
+        fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (!take()) {
+      let alive = true;
+      try {
+        process.kill(Number(fs.readFileSync(lock, 'utf8')), 0);
+      } catch (e) {
+        // No such process, or a lock that cannot be read: the holder is gone. A process of another user counts as alive.
+        alive = (e as NodeJS.ErrnoException).code === 'EPERM';
+      }
+      if (alive) return { ok: true, busy: true, opened: [], skipped: [] };
+      fs.rmSync(lock, { force: true });
+      if (!take()) return { ok: true, busy: true, opened: [], skipped: [] };
+    }
+    try {
+      const r = tick(rt);
+      return { ok: true, ...runOpened(rt, r.opened), skipped: r.skipped };
+    } finally {
+      try {
+        if (fs.readFileSync(lock, 'utf8') === String(process.pid)) fs.rmSync(lock, { force: true });
+      } catch {
+        // the lock is gone already
+      }
+    }
   }
   // One scenario without a window: the task opens, and the client of the machine works on it.
   if (command === 'run' && first !== undefined) {
@@ -546,7 +589,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

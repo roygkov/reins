@@ -141,6 +141,44 @@ test('run: an event starts the client for the tasks that it opens', () => {
   assert.deepEqual([refused.json.opened.length, refused.json.refused.length, refused.json.failed, refused.code], [0, 1, true, 2]);
 });
 
+test('run: the harness has no process of its own: `reins timer` gives the human the text of a timer of the system', () => {
+  const b = box('');
+  const r = b.run(['timer', '10']);
+  assert.deepEqual([r.json.ok, r.json.minutes, r.code], [true, 10, 0]);
+  const command: string[] = r.json.command;
+  assert.deepEqual(command.slice(-2), ['tick', 'run']);
+  assert.equal(command[0], process.execPath);
+  assert.equal(command[1], CLI);
+  // launchd: the command word for word, the period in seconds, the directory and the config of this call.
+  const plist: string = r.json.launchd.text;
+  assert.match(r.json.launchd.file, /Library\/LaunchAgents\/io\.reins\.tick\.plist$/);
+  for (const word of command) assert.ok(plist.includes(`<string>${word}</string>`), word);
+  assert.match(plist, /<key>StartInterval<\/key>\s*<integer>600<\/integer>/);
+  assert.ok(plist.includes(`<key>WorkingDirectory</key>\n  <string>${b.cwd}</string>`));
+  assert.ok(plist.includes(`<key>REINS_CONFIG</key>\n    <string>${b.config}</string>`));
+  // systemd and cron say the same.
+  assert.match(r.json.systemd.timer, /OnUnitActiveSec=10min/);
+  assert.ok(r.json.systemd.service.includes(`WorkingDirectory=${b.cwd}`));
+  assert.ok(r.json.cron.startsWith('*/10 * * * * '));
+  // The command writes nothing and starts nothing.
+  assert.equal(fs.existsSync(b.log), false);
+  assert.equal(fs.existsSync(path.join(b.root, 'Library')), false);
+  // The period: whole minutes, a day at most; five by default; a period that cron cannot say has no cron line.
+  assert.equal(b.run(['timer']).json.minutes, 5);
+  assert.equal(b.run(['timer', '0']).json.error, 'usage');
+  assert.equal(b.run(['timer', '1441']).json.error, 'usage');
+  assert.equal(b.run(['timer', '90']).json.cron, undefined);
+  assert.equal(b.run(['timer', '45']).json.cron, undefined, 'a period that does not divide the hour');
+  assert.equal(b.run(['timer', '300']).json.cron, undefined, 'hours that do not divide the day');
+  assert.ok(b.run(['timer', '120']).json.cron.startsWith('0 */2 * * * '));
+  assert.ok(b.run(['timer', '60']).json.cron.startsWith('0 * * * * '));
+  // A percent sign in a path: cron and systemd read it in their own way.
+  const odd = b.run(['timer'], { PATH: '/opt/50%/bin' });
+  assert.ok(odd.json.cron.includes('PATH=/opt/50\\%/bin '));
+  assert.ok(odd.json.systemd.service.includes('Environment=PATH=/opt/50%%/bin'));
+  assert.ok(odd.json.launchd.text.includes('<string>/opt/50%/bin</string>'));
+});
+
 test('run: a bad runner in the config is a bad config, and the agent asks before it starts a client', () => {
   const b = box('');
   fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner: 'claude -p' }));
@@ -258,6 +296,12 @@ test('run: the schedule without a window opens nothing, and a task that did not 
   fs.writeFileSync(state, due);
   assert.equal(b.run(['tick', 'run'], { REINS_HEADLESS: '1' }).json.error, 'nested_run');
   assert.equal(fs.readFileSync(state, 'utf8'), due, 'the time of the schedule stays');
+  // One run of the schedule at a time: a lock of a process that lives stops a second run, a lock of a process that is gone does not.
+  const lock = path.join(b.root, 'state', 'tick-run.lock');
+  fs.writeFileSync(lock, String(process.pid));
+  assert.deepEqual([b.run(['tick', 'run']).json.busy, fs.readFileSync(state, 'utf8')], [true, due]);
+  fs.writeFileSync(lock, '999999');
   const r = b.run(['tick', 'run']);
   assert.deepEqual([r.json.failed, r.code], [true, 2], 'the client ended, the task still executes');
+  assert.equal(fs.existsSync(lock), false);
 });
