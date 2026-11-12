@@ -121,6 +121,29 @@ test('craft: the packs set the thresholds, the count of proposals in a week, and
   assert.deepEqual(loadPacks(b.packs).craft, { min_questions: 3, min_checks: 6, unused_days: 60, keep: ['change-review', 'draft-message'] });
 });
 
+test('craft: a scenario whose tasks often ask for the higher level of the model is a pattern, and its effect is measured', () => {
+  const b = box();
+  const of = (kind: string, scenario: string, more: Record<string, unknown> = {}) => ({ kind, scenario, scenario_v: 1, ...more });
+  // Four tasks of one scenario, three raised the level; another scenario raised once in four.
+  rows(b, NOW - DAY, [...times(4, [of('task.started', 'change-review')]), ...times(3, [of('executor.level_raised', 'change-review', { level: 'strong' })])]);
+  rows(b, NOW - DAY, [...times(4, [of('task.started', 'draft-message')]), of('executor.level_raised', 'draft-message', { level: 'strong' })]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file)), [{ pattern: 'level_too_low', key: 'change-review', n: 3 }]);
+  // A raise of a task that started before these rows is not counted: its start is not in the share.
+  const early = readJournal(b.rt.journal.file).map((r) => (r.kind === 'executor.level_raised' ? { ...r, task: 't111111111111' } : r));
+  assert.deepEqual(detect(early), []);
+  // The packs: the threshold, and the scenario that the craft leaves alone.
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_raises: 4 }), []);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { keep: ['change-review'] }), []);
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.n, p.change]), [['level_too_low', 'change-review', 3, undefined]]);
+  for (const row of readJournal(b.rt.journal.file).filter((r) => r.kind.startsWith('craft.'))) assert.deepEqual(validateRow(row), []);
+  // The human raised the level in the manifest and accepted: a week later the tasks raise less.
+  assert.equal(resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW), true);
+  assert.deepEqual(measure(b.rt, NOW + 3 * DAY), [], 'too early');
+  rows(b, NOW + 2 * DAY, [...times(4, [of('task.started', 'change-review')]), of('executor.level_raised', 'change-review', { level: 'strong' })]);
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['level_too_low', 'better']]);
+});
+
 // ---- A proposal with a ready change.
 
 test('craft: a repeated contract becomes a proposal with the manifest, and the acceptance puts it into the person pack', () => {

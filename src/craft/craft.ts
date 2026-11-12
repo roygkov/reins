@@ -13,7 +13,7 @@ import { loadTask } from '../core/runtime.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listRecords, retireRecord } from '../memory/store.ts';
 
-export type Pattern = { pattern: 'repeated_question' | 'check_fails_often' | 'repeated_contract' | 'record_unused'; key: string; n: number };
+export type Pattern = { pattern: 'repeated_question' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale' };
@@ -26,6 +26,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const MIN_QUESTIONS = 5; // the same rule asked this often: describe the tool or name the write in a scenario
 const MIN_CHECKS = 4; // a scenario with this many checks ...
 const FAIL_SHARE = 0.5; // ... and this share of FAIL: its instructions do not lead to a ready report
+const MIN_RAISES = 3; // a scenario with this many raises of the level of the model ...
+const RAISE_SHARE = 0.5; // ... in this share of its tasks: the level of its manifest is too low
 const MIN_CONTRACTS = 3; // contracts with one name: the work repeats, it can be a scenario
 const UNUSED_DAYS = 30; // a memory record that no report cited for this long
 const PERIOD_MS = 14 * DAY;
@@ -33,13 +35,15 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number> };
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map() };
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
+  // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
+  const startedTasks = new Set<string>();
   for (const row of rows) {
     if (row.kind === 'policy.decision') {
       c.decisions += 1;
@@ -56,8 +60,14 @@ function count(rows: JournalRow[]): Counts {
       if (row.data?.result === 'FAIL') k.fail += 1;
       c.checks.set(row.scenario, k);
     } else if (row.kind === 'task.contract_approved') add(c.contracts, row.scenario);
-    else if (row.kind === 'task.started') add(c.started, row.scenario);
+    else if (row.kind === 'task.started') {
+      add(c.started, row.scenario);
+      if (row.task !== undefined) startedTasks.add(row.task);
+    }
     else if (row.kind === 'task.returned') add(c.returned, row.scenario);
+    else if (row.kind === 'executor.level_raised') {
+      if (row.task !== undefined && startedTasks.has(row.task)) add(c.raised, row.scenario);
+    }
   }
   return c;
 }
@@ -73,6 +83,13 @@ export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
     if (k.all >= (set.min_checks ?? MIN_CHECKS) && k.fail / k.all >= FAIL_SHARE) out.push({ pattern: 'check_fails_often', key, n: k.fail });
   }
   for (const [key, n] of c.contracts) if (n >= (set.min_contracts ?? MIN_CONTRACTS)) out.push({ pattern: 'repeated_contract', key, n });
+  // The agent asked for the higher level in most tasks of a scenario: the level of the manifest
+  // is too low for the work. A task raises once, so the count of raises is a count of tasks.
+  for (const [key, n] of c.raised) {
+    if ((set.keep ?? []).includes(key)) continue;
+    const started = c.started.get(key) ?? 0;
+    if (n >= (set.min_raises ?? MIN_RAISES) && started > 0 && n / started >= RAISE_SHARE) out.push({ pattern: 'level_too_low', key, n });
+  }
   return out;
 }
 
@@ -233,6 +250,12 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
     // The size of the sample of a measure is a number of the code: a pack does not set how an effect is judged.
     if (a < MIN_CONTRACTS || b === 0) return 'not_measured';
     return compare((after.returned.get(p.key) ?? 0) / a, (before.returned.get(p.key) ?? 0) / b);
+  }
+  if (p.pattern === 'level_too_low') {
+    const a = after.started.get(p.key) ?? 0;
+    const b = before.started.get(p.key) ?? 0;
+    if (a < MIN_RAISES || b === 0) return 'not_measured';
+    return compare((after.raised.get(p.key) ?? 0) / a, (before.raised.get(p.key) ?? 0) / b);
   }
   return 'not_measured';
 }

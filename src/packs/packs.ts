@@ -128,7 +128,7 @@ const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL'
 
 const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults', 'scenarios', 'craft'] as const;
 // The numbers of the craft that a pack can set, and the scenarios that the craft leaves alone.
-export const CRAFT_NUMBERS = ['min_questions', 'min_checks', 'min_contracts', 'unused_days', 'per_week'] as const;
+export const CRAFT_NUMBERS = ['min_questions', 'min_checks', 'min_contracts', 'min_raises', 'unused_days', 'per_week'] as const;
 export type CraftSettings = { [K in (typeof CRAFT_NUMBERS)[number]]?: number } & { keep?: string[] };
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
