@@ -573,3 +573,43 @@ test('before: a write of a tool whose input names a production marker is a produ
   assert.deepEqual(write({ change: '7', cluster: 'prod-eu' }, { ...b.rt, gateConfig: { markers: [] } }), ['ask', 'default.write', 'confirm']);
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
 });
+
+// ---- The reads of a scenario are the reads that its manifest names.
+
+test('before: a task of a scenario that reads through a connector outside its manifest asks the human', () => {
+  const b = box();
+  const narrow: Runtime = { ...b.rt, merged: { ...b.rt.merged, scenarios: b.rt.merged.scenarios.map((s) => (s.name === 'change-review' ? { ...s, manifest: { ...s.manifest, permissions: { ...s.manifest.permissions, read: ['code-host'] } } } : s)) } };
+  const read = (tool: string, session: string, rt: Runtime = narrow) => {
+    const r = beforeAction(rt, { ...call(b, tool, { id: '1', path: 'src/a.ts' }), session }, CLIENT);
+    return `${r.outcome} ${r.rule}`;
+  };
+  const opened = openScenario(narrow, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  // The manifest names "code-host"; the tool reads through "tracker".
+  assert.equal(read('wiki__get_page', 's1'), 'ask scenario.read-scope');
+  // A read of the client itself and a read that names no connector are not a matter of the manifest.
+  assert.deepEqual([read('read_file', 's1'), read('tracker__get_item', 's1')], ['allow default.read', 'allow default.read']);
+  // A session without the task reads as before; the task does not stop, as a contract does.
+  assert.equal(read('wiki__get_page', 's2'), 'allow default.read');
+  assert.equal(loadTask(narrow, opened.task.id)?.state, 'executing');
+  // A manifest that names the connector lets the read pass.
+  const wide = box();
+  const ok = openScenario(wide.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(ok.ok);
+  const passed = beforeAction(wide.rt, { ...call(wide, 'wiki__get_page', {}), session: 's1' }, CLIENT);
+  assert.deepEqual([passed.outcome, passed.rule], ['allow', 'default.read']);
+  // The "yes" of the human holds for the task and the connector: the next read of that kind does not ask.
+  afterAction(narrow, { ...call(b, 'wiki__get_page', { id: '1', path: 'src/a.ts' }), session: 's1' }, CLIENT);
+  assert.deepEqual(loadTask(narrow, opened.task.id)?.extraReads, ['tracker']);
+  assert.equal(read('wiki__get_page', 's1'), 'allow default.read');
+  // A question that the human did not see (a mode of the client without questions) is no "yes".
+  const unseen = box();
+  const un: Runtime = { ...unseen.rt, merged: { ...unseen.rt.merged, scenarios: narrow.merged.scenarios } };
+  const second = openScenario(un, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(second.ok);
+  const again = { ...call(unseen, 'wiki__get_page', {}), session: 's1' };
+  assert.equal(beforeAction(un, again, CLIENT).rule, 'scenario.read-scope');
+  afterAction(un, again, CLIENT, false);
+  assert.equal(loadTask(un, second.task.id)?.extraReads, undefined);
+  for (const rt of [b.rt, wide.rt, unseen.rt]) for (const row of readJournal(rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});

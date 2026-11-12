@@ -41,6 +41,7 @@ export type Task = {
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more
   reads?: number; // the reads through connectors that the task made
+  extraReads?: string[]; // the read connectors outside the manifest that the human let this task use
   changes?: number; // the changes that a free task made
   offered?: boolean; // the free task got its offer of a contract
   checked?: number; // the time of the accepted answer

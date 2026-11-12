@@ -556,6 +556,14 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   let decision = decide({ action, layers });
   // A read through a connector costs the system that answers it (harness-connector, page 4): the
   // packs bound the reads of one task. Past the limit the human decides each read.
+  // The reads of a scenario are the reads that its manifest names (`permissions.read`). A read of
+  // its task through another connector is outside what the pack described: the human decides,
+  // once for the task and the connector (the answer is kept in `afterAction`).
+  // The task goes on: a manifest of a pack is not a contract that one human approved for one task.
+  if (read.connector !== undefined && action.kind === 'read' && decision.outcome === 'allow' && contract !== null && contract.kind === 'scenario' && contract.session === call.session
+    && (contract.state === 'executing' || contract.state === 'publishing') && !(contract.manifest?.permissions.read ?? []).includes(read.connector) && !(contract.extraReads ?? []).includes(read.connector) && pausedUntil(rt) === null) {
+    decision = { ...decision, outcome: 'ask', basis: { layer: 'core', rule: 'scenario.read-scope' } };
+  }
   const maxReads = rt.merged.context.maxReads;
   if (maxReads !== undefined && read.connector !== undefined && action.kind === 'read' && decision.outcome === 'allow') {
     // The task of the scenario that the session holds, else the free task of the session.
@@ -696,6 +704,13 @@ function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: bo
   if (typeof task !== 'string' || typeof key !== 'string') {
     // A question about this one action: the human said "yes". The fact goes to the journal, with the rule that asked.
     const rule = (pending as { rule?: unknown }).rule;
+    // The human let the task of a scenario read through a connector outside its manifest: the
+    // answer holds for this task and this connector, so the next read of the same kind does not ask.
+    if (rule === 'scenario.read-scope') {
+      const held = currentScenario(rt, call.session);
+      const connector = packRule(frozenRuntime(rt, held).merged.tools, call.tool)?.connector;
+      if (held !== undefined && connector !== undefined) mutateTask(rt, held, (task) => ((task.extraReads ?? []).includes(connector) ? null : { ...task, extraReads: [...(task.extraReads ?? []), connector] }));
+    }
     record(rt, call, [{ kind: 'task.human_decision', data: { decision: 'answered', ...(typeof rule === 'string' && RULE_NAME.test(rule) ? { rule } : {}) } }]);
     return { confirmed: false };
   }
