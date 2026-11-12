@@ -351,10 +351,15 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   // The word before an action came: the first one of a session is noted, for the measure in `afterAction`.
   const seen = readSession(rt, call.session);
   if (seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true) patchSession(rt, call.session, { before: true });
-  // The name of a tool goes to the journal only for a tool of a connector: the tools of the client
-  // itself (read, edit, shell) are in every task and say nothing about the work.
+  // The name of a tool goes to the journal only for a tool of a work system: one that the pack
+  // ties to a connector or to a write, or one that no pack describes yet (the human is asked about
+  // it, and the name says about which). The tools of the client itself (read, edit, shell) and the
+  // tools of its interface, which the pack describes as plain reads, are in every task and say
+  // nothing about the work.
   // A session that works on a scenario repeats the tools of the scenario by design: no name there.
-  if (!Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool) && currentScenario(rt, call.session) === undefined) call = { ...call, named: call.tool };
+  const described = packRule(rt.merged.tools, call.tool);
+  const ofWork = described === undefined || described.kind === 'write' || described.connector !== undefined;
+  if (!Object.hasOwn(clientTools, call.tool) && ofWork && RULE_NAME.test(call.tool) && currentScenario(rt, call.session) === undefined) call = { ...call, named: call.tool };
   let r = decideBefore(rt, call, clientTools);
   // Without a window nobody answers a question: the action waits in the queue of the human.
   if (call.headless === true && r.outcome === 'ask') {

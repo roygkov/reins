@@ -147,8 +147,16 @@ test('session: the decision about a tool of a connector names the tool, the deci
   beforeAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' }, CLIENT);
   beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__get_change', input: {}, session: 's1' }, CLIENT);
   beforeAction(b.rt, { cwd: b.cwd, tool: 'a tool with spaces', input: {}, session: 's1' }, CLIENT);
+  // A tool that the pack describes as a plain read is a tool of the interface of the client: no name.
+  // A read that the pack ties to a connector is a tool of a work system.
+  b.rt.merged.tools = { app__update_plan: { kind: 'read' }, 'app__*': { kind: 'read' }, tracker__list_changes: { kind: 'read', connector: 'tracker' }, tracker__add_comment: { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' } };
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'app__update_plan', input: {}, session: 's1' }, CLIENT);
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'app__show_pane', input: {}, session: 's1' }, CLIENT);
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__list_changes', input: {}, session: 's1' }, CLIENT);
+  // A write is a tool of a work system, with a connector or without one.
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__add_comment', input: { change: '7' }, session: 's1' }, CLIENT);
   const tools = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').map((r) => r.data?.tool);
-  assert.deepEqual(tools, [undefined, 'tracker__get_change', undefined]);
+  assert.deepEqual(tools, [undefined, 'tracker__get_change', undefined, undefined, undefined, 'tracker__list_changes', 'tracker__add_comment']);
   // A session that works on a scenario walks the tools of the scenario by design: its decisions name no tool.
   const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
   assert.ok(opened.ok);
