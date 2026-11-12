@@ -2,7 +2,7 @@
 // schedule does the same for the tasks that it opens.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -143,6 +143,85 @@ test('run: a client that runs past its time limit is stopped', () => {
   fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_timeout_s: 1 }));
   const r = b.run(['run', 'draft-message']);
   assert.deepEqual([r.json.ran, r.json.error, r.code], [false, 'timeout', 2]);
+});
+
+test('run: the time limit stops the processes that the client started, too', () => {
+  const b = box('');
+  const pidFile = path.join(b.root, 'child.pid');
+  // The client starts a process of its own and waits: both run past the limit.
+  const script = JSON.parse(fs.readFileSync(b.config, 'utf8')).runner[1];
+  fs.appendFileSync(script, `const child = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));\nsetTimeout(() => {}, 60000);\n`);
+  fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_timeout_s: 2 }));
+  const r = b.run(['run', 'draft-message']);
+  assert.deepEqual([r.json.ran, r.json.error, r.code], [false, 'timeout', 2]);
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  let alive = true;
+  for (let i = 0; i < 50 && alive; i += 1) {
+    try {
+      process.kill(pid, 0);
+      spawnSync('sleep', ['0.1']);
+    } catch {
+      alive = false;
+    }
+  }
+  if (alive) process.kill(pid, 'SIGKILL');
+  assert.equal(alive, false, 'the process of the client is gone');
+});
+
+test('run: a client that ends by itself leaves no process behind, and a very long limit is no limit of zero', () => {
+  const b = box('');
+  const pidFile = path.join(b.root, 'child.pid');
+  const script = JSON.parse(fs.readFileSync(b.config, 'utf8')).runner[1];
+  fs.appendFileSync(script, `const child = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });\nchild.unref();\nfs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));\n`);
+  fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_timeout_s: 9_000_000 }));
+  const r = b.run(['run', 'draft-message']);
+  assert.deepEqual([r.json.ran, r.json.exit], [true, 0]);
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  let alive = true;
+  for (let i = 0; i < 50 && alive; i += 1) {
+    try {
+      process.kill(pid, 0);
+      spawnSync('sleep', ['0.1']);
+    } catch {
+      alive = false;
+    }
+  }
+  if (alive) process.kill(pid, 'SIGKILL');
+  assert.equal(alive, false, 'the process of the client is gone');
+});
+
+test('run: the client does not stay behind a harness that was stopped or that died', () => {
+  const GROUP = fileURLToPath(new URL('../src/client/group.cjs', import.meta.url));
+  const gone = (pid: number): boolean => {
+    for (let i = 0; i < 80; i += 1) {
+      try {
+        process.kill(pid, 0);
+        spawnSync('sleep', ['0.1']);
+      } catch {
+        return true;
+      }
+    }
+    process.kill(pid, 'SIGKILL');
+    return false;
+  };
+  const started = (file: string): number => {
+    for (let i = 0; i < 80 && !fs.existsSync(file); i += 1) spawnSync('sleep', ['0.1']);
+    return Number(fs.readFileSync(file, 'utf8'));
+  };
+  const b = box('');
+  const client = (file: string): string => JSON.stringify({ command: process.execPath, args: ['-e', `require('fs').writeFileSync(${JSON.stringify(file)}, String(process.pid)); setTimeout(() => {}, 60000);`], timeoutMs: 60000 });
+  // A signal to the program between: it stops the group of the client.
+  const one = path.join(b.root, 'one.pid');
+  const between = spawn(process.execPath, [GROUP, client(one)], { stdio: 'ignore' });
+  const first = started(one);
+  between.kill('SIGTERM');
+  assert.equal(gone(first), true, 'the client is gone after a signal');
+  // The harness dies with no signal to the program between: the program sees another parent.
+  const two = path.join(b.root, 'two.pid');
+  const harness = spawn(process.execPath, ['-e', `require('child_process').spawn(process.execPath, [${JSON.stringify(GROUP)}, ${JSON.stringify(client(two))}], { stdio: 'ignore' }); setTimeout(() => {}, 60000);`], { stdio: 'ignore' });
+  const second = started(two);
+  harness.kill('SIGKILL');
+  assert.equal(gone(second), true, 'the client is gone after the death of the harness');
 });
 
 test('run: the schedule without a window opens nothing, and a task that did not end as verified is not a success', () => {

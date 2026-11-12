@@ -6,12 +6,15 @@
 // Specification: docs/spec/harness-client, page 5.
 
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { loadTask, type Runtime } from '../core/runtime.ts';
 import { MODEL_NAME } from '../packs/packs.ts';
 
 export type RunReply = { ran: boolean; exit?: number; error?: 'no_runner' | 'nested_run' | 'no_model' | 'timeout' | 'start_failed' };
 
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+// The program that runs the client as the leader of a group of processes: the time limit stops the group.
+const GROUP = fileURLToPath(new URL('./group.cjs', import.meta.url));
 
 // The words for the client: where the task is and how to work on it. Nothing of the task itself:
 // the client reads the input of the task from the harness.
@@ -37,13 +40,28 @@ export function runTask(rt: Runtime, id: string): RunReply {
   const [command, ...args] = runner.map((part) => part.replaceAll('{task}', id).replaceAll('{prompt}', runPrompt(id)).replaceAll('{model}', model));
   if (command === undefined) return { ran: false, error: 'no_runner' };
   // The command runs directly, without a shell: the words of the prompt never become a command line.
-  const r = spawnSync(command, args, {
+  // The client runs in its own group of processes: at the time limit the whole group stops, so a
+  // process that the client started does not stay. A process that left the group on purpose is
+  // out of reach.
+  // A timer of the runtime takes no more than this (about 24 days): a longer limit would end the run at once.
+  const timeoutMs = Math.min(rt.runnerTimeoutMs ?? DEFAULT_TIMEOUT_MS, 2_000_000_000);
+  const r = spawnSync(process.execPath, [GROUP, JSON.stringify({ command, args, timeoutMs })], {
     cwd: rt.workDir ?? process.cwd(),
     env: { ...process.env, REINS_HEADLESS: '1' },
-    stdio: 'ignore',
-    timeout: rt.runnerTimeoutMs ?? DEFAULT_TIMEOUT_MS,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf8',
+    // The program between stops the group itself; this limit holds only when it does not.
+    timeout: timeoutMs + 10_000,
     killSignal: 'SIGKILL',
   });
   if (r.error !== undefined) return { ran: false, error: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : 'start_failed' };
-  return { ran: true, exit: r.status ?? 1 };
+  let reply: { exit?: unknown; error?: unknown } = {};
+  try {
+    reply = JSON.parse(r.stdout.split('\n')[0] ?? '');
+  } catch {
+    // no answer: the program between did not run to its end
+  }
+  if (reply.error === 'timeout') return { ran: false, error: 'timeout' };
+  if (typeof reply.exit !== 'number') return { ran: false, error: 'start_failed' };
+  return { ran: true, exit: reply.exit };
 }
