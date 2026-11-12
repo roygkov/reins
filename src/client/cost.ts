@@ -3,7 +3,7 @@
 // limit of its manifest, else the limit of the packs. A free task has no limit.
 // Specification: docs/spec/harness-core, page 4, rule 4; page 5, rule 4.
 
-import { applyEvent, loadTask, mutateTask, type Runtime } from '../core/runtime.ts';
+import { applyEvent, frozenRuntime, loadTask, mutateTask, type Runtime } from '../core/runtime.ts';
 import { currentScenario } from '../core/sessions.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
@@ -15,7 +15,7 @@ export type CostReply = { task?: string; tokens?: number; over?: boolean };
 export function tokenLimit(rt: Runtime, id: string): number | undefined {
   const task = loadTask(rt, id);
   if (task === null || task.manifest === undefined) return undefined;
-  return task.budget ?? task.manifest.model.token_limit ?? rt.merged.context.maxTokens;
+  return task.budget ?? task.manifest.model.token_limit ?? frozenRuntime(rt, task.id).merged.context.maxTokens;
 }
 
 export function noteCost(rt: Runtime, e: CostEvent): CostReply {

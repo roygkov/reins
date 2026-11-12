@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decide, grantKey, plainValue, type Action, type Decision, type EnvelopeEffect, type Layer, type LayerDecision, type Outcome } from '../contracts/policy.ts';
-import { applyEvent, confirm, decideAction, loadTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
+import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
@@ -393,7 +393,9 @@ function reply(d: Decision, more: { task?: string; grant?: string } = {}): Reply
   return r;
 }
 
-export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
+export function beforeAction(now: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
+  // The task of a scenario that the session holds decides with the packs that it started with.
+  const rt = frozenRuntime(now, currentScenario(now, call.session));
   // The word before an action came: the first one of a session is noted, for the measure in `afterAction`.
   const seen = readSession(rt, call.session);
   if (seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true) patchSession(rt, call.session, { before: true });

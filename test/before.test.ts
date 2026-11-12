@@ -7,7 +7,8 @@ import path from 'node:path';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { applyEvent, openScenario, submitReport, loadTask, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, frozenRuntime, openScenario, submitReport, loadTask, type Runtime } from '../src/core/runtime.ts';
+import { tokenLimit } from '../src/client/cost.ts';
 import { afterAction, beforeAction, type ClientTools, type ToolCall } from '../src/client/before.ts';
 import { findRoot, loadConfig } from '../src/gate/index.ts';
 import { grantsOf } from '../src/core/task.ts';
@@ -431,4 +432,40 @@ test('before: a write that another human sees, outside the envelope of a task, a
   const plain = beforeAction(b.rt, { ...call(b, 'tracker__add_comment', { change: '7' }), session: 's1' }, CLIENT);
   assert.deepEqual([plain.outcome, plain.rule], ['ask', 'default.write']);
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+// ---- A task works with the merge of the packs that it started with.
+
+test('before: a change of a pack during a task does not reach the task', () => {
+  const b = box();
+  const old = { id: 'org.old', outcome: 'deny' as const, command: 'old-word', level: 'organization' as const };
+  const added = { id: 'org.new', outcome: 'deny' as const, command: 'new-word', level: 'organization' as const };
+  const start: Runtime = { ...b.rt, merged: { ...b.rt.merged, rules: [old], gate: { ...b.rt.merged.gate, markers: ['kept-marker'] } } };
+  const opened = openScenario(start, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  // The packs changed: the table of the tools is empty, the old rule is gone, a new rule refuses, the limit is lower.
+  const changed: Runtime = { ...b.rt, merged: { ...b.rt.merged, tools: {}, rules: [added], gate: { ...b.rt.merged.gate, markers: ['new-marker'] }, context: { ...b.rt.merged.context, envs: [], maxTokens: 1 } } };
+  const as = (session: string, tool: string, input: Record<string, unknown> = { id: '1', change: '7' }) => {
+    const r = beforeAction(changed, { ...call(b, tool, input), session }, CLIENT);
+    return `${r.outcome} ${r.rule}`;
+  };
+  // The session of the task decides with the table that the task started with.
+  assert.equal(as('s1', 'tracker__get_item'), 'allow default.read');
+  // A session without the task works with the packs as they are now.
+  assert.equal(as('s2', 'tracker__get_item'), 'ask default.unknown-tool');
+  // A rule that the task started with stays for it; a rule that came later acts at once: a barrier only grows.
+  assert.equal(as('s1', 'shell', { command: 'echo old-word' }), 'deny org.old');
+  assert.equal(as('s1', 'shell', { command: 'echo new-word' }), 'deny org.new');
+  assert.equal(as('s2', 'shell', { command: 'echo old-word' }), 'allow default.shell');
+  const seen = frozenRuntime(changed, opened.task.id).merged;
+  assert.deepEqual(seen.gate.markers, ['kept-marker', 'new-marker']);
+  assert.deepEqual(seen.context.envs, b.rt.merged.context.envs);
+  // The limit of tokens of the packs is the one of the start.
+  assert.equal(tokenLimit(changed, opened.task.id), b.rt.merged.context.maxTokens);
+  assert.notEqual(b.rt.merged.context.maxTokens, 1);
+  // The end of the task ends its merge.
+  const stopped = applyEvent(changed, opened.task.id, { type: 'human', decision: 'stop' }, 'human');
+  assert.ok('task' in stopped);
+  assert.equal(as('s1', 'tracker__get_item'), 'ask default.unknown-tool');
+  assert.equal(as('s1', 'shell', { command: 'echo old-word' }), 'allow default.shell');
 });

@@ -174,6 +174,46 @@ function defaultLevel(rt: Runtime): Level {
   return max !== undefined && LEVELS.indexOf(level) > LEVELS.indexOf(max) ? max : level;
 }
 
+// A change of a pack during a task does not reach the task (harness-packs, page 4): the task works
+// with the merge that it started with. What the policy reads of the merge is kept beside the task:
+// the table of the tools, the rules, the data of the gate, and the context with the environments
+// and the limits. One thing does reach the task at once: a barrier that became stricter. A rule of
+// a pack only asks, defers or refuses, and the data of the gate only adds dangerous places, so the
+// task sees the kept ones and the new ones together. The directories of the packs and the scripts
+// are read as they are now: the protection of the packs and the version of a check look at the disk.
+const FROZEN = ['tools', 'rules', 'gate', 'context'] as const;
+function freeze(rt: Runtime, id: string): void {
+  writeAtomic(taskFile(rt, id, '.packs'), Object.fromEntries(FROZEN.map((key) => [key, rt.merged[key]])));
+}
+const both = <T>(kept: readonly T[], now: readonly T[]): T[] => {
+  const seen = new Set(kept.map((x) => JSON.stringify(x)));
+  return [...kept, ...now.filter((x) => !seen.has(JSON.stringify(x)))];
+};
+// The runtime as an open task of a scenario sees it. Any other task, and a task without the kept
+// merge, sees the packs as they are now.
+export function frozenRuntime(rt: Runtime, id: string | undefined): Runtime {
+  if (id === undefined || !TASK_ID.test(id)) return rt;
+  const task = loadTask(rt, id);
+  if (task === null || task.state === 'closed' || task.state === 'skipped') return rt;
+  const kept = readObject(taskFile(rt, id, '.packs'));
+  if (kept === null || !isObj(kept.tools) || !Array.isArray(kept.rules) || !isObj(kept.gate) || !isObj(kept.context)) return rt;
+  const gate: Record<string, unknown> = { ...rt.merged.gate };
+  for (const [key, list] of Object.entries(kept.gate)) {
+    const now = (rt.merged.gate as Record<string, unknown>)[key];
+    gate[key] = Array.isArray(list) ? both(list, Array.isArray(now) ? now : []) : list;
+  }
+  return {
+    ...rt,
+    merged: {
+      ...rt.merged,
+      tools: kept.tools as Runtime['merged']['tools'],
+      context: kept.context as Runtime['merged']['context'],
+      rules: both(kept.rules as Runtime['merged']['rules'], rt.merged.rules),
+      gate: gate as Runtime['merged']['gate'],
+    },
+  };
+}
+
 // Opens a task of a scenario by its name. The trigger is refused before any task exists when
 // the scenario is unknown or disabled or the inputs do not fit.
 export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { session?: string } = {}): Opened {
@@ -190,6 +230,7 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   made.task.level ??= defaultLevel(rt);
   hold(rt, made.task, opts.session);
   commit(rt, { task: made.task, rows: made.rows });
+  freeze(rt, made.task.id);
   noteUse(rt, name);
   return { ok: true, ...prepareTask(rt, made.task) };
 }
@@ -401,6 +442,7 @@ export function approveContract(rt: Runtime, id: string): { task: Task; collecte
   });
   if (typeof approved === 'string') return { error: approved };
   if (approved.session !== undefined) patchSession(rt, approved.session, { scenario: approved.id });
+  freeze(rt, approved.id);
   return prepareTask(rt, approved);
 }
 
@@ -467,7 +509,7 @@ export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Or
     if (s.error === undefined && event.type === 'human' && event.decision === 'return') {
       // The human lets a stopped task go on: one more budget of the size of its limit, or the
       // work past the contract.
-      const limit = task.manifest?.model.token_limit ?? rt.merged.context.maxTokens;
+      const limit = task.manifest?.model.token_limit ?? frozenRuntime(rt, id).merged.context.maxTokens;
       if (task.waiting === 'limit' && limit !== undefined) s.task.budget = Math.max(task.budget ?? limit, task.cost?.tokens ?? 0) + limit; // on top of what the task spent while it waited
       if (task.waiting === 'scope') s.task.widened = true;
     }
