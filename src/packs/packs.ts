@@ -33,7 +33,9 @@ export type Scenario = { name: string; level: PackLevel; file: string; manifest:
 // named field of its input is a text that matches the pattern as a whole. The pattern is the
 // business of the pack: the core only matches.
 export type ReadWhen = { field: string; pattern: string };
-export type ToolRule = { kind: 'read' } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen };
+// `connector`: the read connector that the tool reads through. A contract that does not name it does not cover the read.
+// A write tool names it for the calls that `read_when` reads as a read.
+export type ToolRule = { kind: 'read'; connector?: string } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen; connector?: string };
 // The pattern of a pack runs before every call of the tool: a short value bounds the time of a slow pattern.
 // The name of a model of a client: starts with a letter or a digit, no spaces.
 export const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$/;
@@ -314,7 +316,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     // Only the organization says what a tool does: a lower level could turn a write into a read.
     if (level !== 'organization') errors.push({ code: 'not_allowed', path: 'tools' });
     else if (!isObj(value.tools)) errors.push({ code: 'not_object', path: 'tools' });
-    else settings.tools = toolRules(errors, value.tools, settings.connectors?.write ?? [], settings.envs?.known ?? []);
+    else settings.tools = toolRules(errors, value.tools, settings.connectors?.write ?? [], settings.envs?.known ?? [], settings.connectors?.read ?? []);
   }
   const models = section(errors, value.models, 'models', LEVELS);
   if (models !== null) {
@@ -448,7 +450,7 @@ const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,118}\*?$/;
 // A field of the input of a tool is named as the tool names it: `change`, `issueIdOrKey`.
 const TARGET = /^(?:[A-Za-z0-9_.:\/@%!+-]|\{[A-Za-z_][A-Za-z0-9_]{0,39}\})+$/;
 
-function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], envs: readonly string[]): Record<string, ToolRule> {
+function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], envs: readonly string[], reads: readonly string[]): Record<string, ToolRule> {
   const out: Record<string, ToolRule> = {};
   for (const [name, rule] of Object.entries(tools)) {
     const at = `tools.${name}`;
@@ -464,10 +466,12 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
       errors.push({ code: rule.kind === undefined ? 'missing' : 'not_in_list', path: `${at}.kind` });
       continue;
     }
-    const allowed = rule.kind === 'read' ? ['kind'] : ['kind', 'action', 'target', 'env', 'read_when'];
+    const allowed = rule.kind === 'read' ? ['kind', 'connector'] : ['kind', 'action', 'target', 'env', 'read_when', 'connector'];
     for (const key of Object.keys(rule)) if (!allowed.includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
     if (rule.kind === 'read') {
-      out[name] = { kind: 'read' };
+      const named = rule.connector;
+      if (named !== undefined && !(typeof named === 'string' && reads.includes(named))) errors.push({ code: 'not_in_list', path: `${at}.connector` });
+      out[name] = { kind: 'read', ...(typeof named === 'string' && reads.includes(named) ? { connector: named } : {}) };
       continue;
     }
     const { action, target, env } = rule;
@@ -478,7 +482,11 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
     if (env === undefined) errors.push({ code: 'missing', path: `${at}.env` });
     else if (typeof env !== 'string' || !envs.includes(env)) errors.push({ code: 'not_in_list', path: `${at}.env` });
     const when = readWhen(errors, rule.read_when, `${at}.read_when`);
-    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env, ...(when !== undefined ? { read_when: when } : {}) };
+    // The read connector of a write tool is the connector of its reads: without `read_when` the tool has no read.
+    const via = rule.connector;
+    const viaOk = typeof via === 'string' && reads.includes(via) && when !== undefined;
+    if (via !== undefined && !viaOk) errors.push({ code: 'not_in_list', path: `${at}.connector` });
+    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env, ...(when !== undefined ? { read_when: when } : {}), ...(viaOk ? { connector: via } : {}) };
   }
   return out;
 }

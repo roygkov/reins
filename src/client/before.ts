@@ -217,7 +217,8 @@ function gateConfig(rt: Runtime, cwd: string): GateConfig {
   return out;
 }
 
-type Read = { action: Action; layers: LayerDecision[]; command?: string } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
+// `connector`: the read connector that a read tool names in the table of the pack.
+type Read = { action: Action; layers: LayerDecision[]; command?: string; connector?: string } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
 
 // What the call is, in the words of the policy.
 function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
@@ -250,12 +251,12 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
   }
   const rule = packRule(rt.merged.tools, call.tool);
   if (rule === undefined) return { action: UNKNOWN, layers: [] };
-  if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV }, layers: [] };
+  if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
   const known = (rt.merged.context.envs ?? []).includes(rule.env);
   const production = !known || (rt.merged.context.productionEnvs ?? []).includes(rule.env);
   // A read of a tool that also writes keeps the environment of the tool: a rule of a pack about
   // that environment still sees the call.
-  if (readsNow(rule.read_when, call.input)) return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: { name: rule.env, known, production } }, layers: [] };
+  if (readsNow(rule.read_when, call.input)) return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: { name: rule.env, known, production } }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
   const target = fillTarget(rule.target, call.input);
   if (target === null) return { action: UNKNOWN, layers: [] };
   return { action: { via: 'tool', kind: 'write', name: rule.action, target, env: { name: rule.env, known, production } }, layers: [] };
@@ -405,7 +406,10 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   // contract does not name stops: the human gives a new contract, lets it go on, or ends it.
   const held = currentScenario(rt, call.session);
   const contract = held === undefined ? null : loadTask(rt, held);
-  if (action.kind === 'write' && contract !== null && contract.kind === 'contract' && contract.session === call.session && contract.state === 'executing' && contract.widened !== true) {
+  // The same holds for a read through a connector that the contract does not name: the human
+  // approved the reads of the contract, not of every system.
+  const outside = action.kind === 'write' || (read.connector !== undefined && !(contract?.manifest?.permissions.read ?? []).includes(read.connector));
+  if (outside && contract !== null && contract.kind === 'contract' && contract.session === call.session && contract.state === 'executing' && contract.widened !== true) {
     applyEvent(rt, contract.id, { type: 'scope' }, 'harness');
     record(rt, call, [
       { kind: 'policy.decision', data: { outcome: 'deny', action_kind: action.kind, env: action.env.name } },

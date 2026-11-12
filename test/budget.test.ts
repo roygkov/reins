@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPacks } from '../src/packs/packs.ts';
+import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { eight } from '../src/journal/metrics.ts';
@@ -27,7 +27,15 @@ after(() => fs.rmSync(SB, { recursive: true, force: true }));
 const manifests = new Map(loadCases<{ name: string; manifest: Record<string, any> }>('manifest-bases').map((b) => [b.name, b.manifest]));
 const files = loadCases<{ name: string; files: Record<string, unknown> }>('packs-bases').find((b) => b.name === 'three')?.files ?? {};
 const CLIENT: ClientTools = { read_file: { kind: 'read' } };
-const TOOLS = { 'tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' } };
+const TOOLS = {
+  'tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' },
+  // A read names its connector: a contract that does not name the connector does not cover the read.
+  'tracker__get_change': { kind: 'read', connector: 'tracker' },
+  'host__get_file': { kind: 'read', connector: 'code-host' },
+  'plain__get': { kind: 'read' },
+  // A tool that writes, and that reads when its text is a query: its reads go through a connector too.
+  'db__query': { kind: 'write', action: 'comment', target: 'change/{sql}', env: 'work', read_when: { field: 'sql', pattern: 'select\\b.*' }, connector: 'tracker' },
+};
 const CONTRACT = {
   manifest: 1, name: 'fix-flaky-test', title: 'Fix the flaky test', package: 'person',
   trigger: { kind: 'command' }, model: { level: 'medium', token_limit: 1000 }, permissions: { read: ['code-host'] },
@@ -195,6 +203,45 @@ test('budget: a contract task that needs a write that its contract does not name
   assert.equal(loadTask(b.rt, id)?.state, 'executing');
   assert.ok(readJournal(b.rt.journal.file).some((x) => x.kind === 'task.waiting_human' && x.data?.reason === 'scope'));
   for (const x of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(x), []);
+});
+
+test('budget: a contract task that reads through a connector that its contract does not name stops, too', () => {
+  const b = box();
+  const read = (tool: string, session = 's1') => beforeAction(b.rt, { cwd: b.cwd, tool, input: {}, session }, CLIENT);
+  // No task: a read is a read.
+  assert.equal(read('tracker__get_change').outcome, 'allow');
+  const proposed = proposeContract(b.rt, CONTRACT, { session: 's1' });
+  assert.ok(proposed.ok);
+  const id = proposed.task.id;
+  approveContract(b.rt, id);
+  // The connector of the contract, a read with no connector, a read of the client: all pass.
+  assert.equal(read('host__get_file').outcome, 'allow');
+  assert.equal(read('plain__get').outcome, 'allow');
+  assert.equal(read('read_file').outcome, 'allow');
+  assert.equal(read('tracker__get_change', 's2').outcome, 'allow', 'another session holds no contract');
+  const r = read('tracker__get_change');
+  assert.deepEqual([r.outcome, r.rule, r.task], ['deny', 'contract.scope', undefined]);
+
+  assert.deepEqual([loadTask(b.rt, id)?.state, loadTask(b.rt, id)?.waiting], ['waiting_human', 'scope']);
+  // The human lets the task go on: the read is then a plain read.
+  applyEvent(b.rt, id, { type: 'human', decision: 'return' }, 'human');
+  assert.equal(read('tracker__get_change').outcome, 'allow');
+  // A write tool whose call is a read goes through its connector, too.
+  const again = proposeContract(b.rt, { ...CONTRACT, name: 'second-fix' }, { session: 's4' });
+  assert.ok(again.ok);
+  approveContract(b.rt, again.task.id);
+  const q = beforeAction(b.rt, { cwd: b.cwd, tool: 'db__query', input: { sql: 'select 1' }, session: 's4' }, CLIENT);
+  assert.deepEqual([q.outcome, q.rule], ['deny', 'contract.scope']);
+  for (const x of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(x), []);
+  // A scenario of a pack is not a contract: its reads are not stopped.
+  const other = box();
+  scenario(other);
+  assert.equal(beforeAction(other.rt, { cwd: other.cwd, tool: 'tracker__get_change', input: {}, session: 's1' }, CLIENT).outcome, 'allow');
+  // The pack: the connector of a read is a read connector of the pack.
+  const base = { pack: 1, level: 'organization', name: 'acme', connectors: { read: ['tracker'], write: ['comment'] }, envs: { known: ['work'] } };
+  assert.deepEqual(validateSettings({ ...base, tools: { a__get: { kind: 'read', connector: 'other' }, b__get: { kind: 'read', connector: 7 }, c__get: { kind: 'read', connector: 'tracker' } } }, 'organization').errors.map((e) => `${e.code} ${e.path}`), ['not_in_list tools.a__get.connector', 'not_in_list tools.b__get.connector']);
+  // A write tool names a read connector only with `read_when`: without it the tool has no read.
+  assert.deepEqual(validateSettings({ ...base, tools: { d__put: { kind: 'write', action: 'comment', target: 'x/{id}', env: 'work', connector: 'tracker' } } }, 'organization').errors.map((e) => `${e.code} ${e.path}`), ['not_in_list tools.d__put.connector']);
 });
 
 test('budget: a scenario task is not stopped by a write that its envelope does not name', () => {
