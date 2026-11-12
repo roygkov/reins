@@ -13,7 +13,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { eight } from '../src/journal/metrics.ts';
 import { applyEvent, approveContract, loadTask, openScenario, proposeContract, type Runtime } from '../src/core/runtime.ts';
-import { beforeAction, type ClientTools } from '../src/client/before.ts';
+import { afterAction, beforeAction, type ClientTools } from '../src/client/before.ts';
 import { noteCost } from '../src/client/cost.ts';
 import { executorReported, executorStarted } from '../src/client/executors.ts';
 import { agentStopped, humanRequest } from '../src/client/session.ts';
@@ -33,6 +33,10 @@ const TOOLS = {
   'tracker__get_change': { kind: 'read', connector: 'tracker' },
   'host__get_file': { kind: 'read', connector: 'code-host' },
   'plain__get': { kind: 'read' },
+  // What the connector says about an action: it cannot be undone, another human sees it, it holds secrets.
+  'tracker__purge_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work', irreversible: true },
+  'vault__get_secret': { kind: 'read', sensitive: true },
+  'tracker__say': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work', outward: true },
   // A tool that writes, and that reads when its text is a query: its reads go through a connector too.
   'db__query': { kind: 'write', action: 'comment', target: 'change/{sql}', env: 'work', read_when: { field: 'sql', pattern: 'select\\b.*' }, connector: 'tracker' },
 };
@@ -242,6 +246,50 @@ test('budget: a contract task that reads through a connector that its contract d
   assert.deepEqual(validateSettings({ ...base, tools: { a__get: { kind: 'read', connector: 'other' }, b__get: { kind: 'read', connector: 7 }, c__get: { kind: 'read', connector: 'tracker' } } }, 'organization').errors.map((e) => `${e.code} ${e.path}`), ['not_in_list tools.a__get.connector', 'not_in_list tools.b__get.connector']);
   // A write tool names a read connector only with `read_when`: without it the tool has no read.
   assert.deepEqual(validateSettings({ ...base, tools: { d__put: { kind: 'write', action: 'comment', target: 'x/{id}', env: 'work', connector: 'tracker' } } }, 'organization').errors.map((e) => `${e.code} ${e.path}`), ['not_in_list tools.d__put.connector']);
+});
+
+test('budget: the envelope of a task does not cover a write that cannot be undone, and a read of secrets asks', () => {
+  const b = box();
+  const id = scenario(b);
+  // The manifest names the comment on this change, with one confirmation for the task.
+  const first = comment(b);
+  assert.deepEqual([first.outcome, first.envelope], ['ask', 'confirm']);
+  afterAction(b.rt, { cwd: b.cwd, tool: 'tracker__add_comment', input: { change: '7' }, session: 's1' }, CLIENT);
+  assert.deepEqual([comment(b).outcome, comment(b).envelope], ['allow', 'applied']);
+  // The same action and the same target through a tool that cannot be undone: the human decides each one.
+  const purge = () => beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__purge_comment', input: { change: '7' }, session: 's1' }, CLIENT);
+  assert.deepEqual([purge().outcome, purge().envelope, purge().rule], ['ask', 'irreversible', 'default.write']);
+  // A read of secrets asks, in a task and outside one.
+  const secret = beforeAction(b.rt, { cwd: b.cwd, tool: 'vault__get_secret', input: {}, session: 's1' }, CLIENT);
+  assert.deepEqual([secret.outcome, secret.rule], ['ask', 'default.sensitive-read']);
+  assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'vault__get_secret', input: {}, session: 's9' }, CLIENT).outcome, 'ask');
+  assert.equal(loadTask(b.rt, id)?.state, 'executing');
+  for (const x of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(x), []);
+  // The pack: a mark is `true` or it is not there; a read has no mark of a write.
+  const base = { pack: 1, level: 'organization', name: 'acme', connectors: { read: ['tracker'], write: ['comment'] }, envs: { known: ['work'] } };
+  const errors = (tools: unknown) => validateSettings({ ...base, tools }, 'organization').errors.map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ a__put: { kind: 'write', action: 'comment', target: 'x/{id}', env: 'work', irreversible: true, outward: true }, b__get: { kind: 'read', sensitive: true }, c__query: { kind: 'write', action: 'comment', target: 'x/{sql}', env: 'work', read_when: { field: 'sql', pattern: 'select\\b.*' }, sensitive: true } }), []);
+  // The mark of secrets on a write that never reads says nothing: it is a mistake of the pack.
+  assert.deepEqual(errors({ a__put: { kind: 'write', action: 'comment', target: 'x/{id}', env: 'work', sensitive: true } }), ['not_in_list tools.a__put.sensitive']);
+  assert.deepEqual(errors({ a__put: { kind: 'write', action: 'comment', target: 'x/{id}', env: 'work', irreversible: false }, b__get: { kind: 'read', sensitive: 'yes', irreversible: true } }), ['not_in_list tools.a__put.irreversible', 'not_in_list tools.b__get.sensitive', 'unknown_field tools.b__get.irreversible']);
+});
+
+test('budget: a write that another human sees gets one confirmation for the task, also when the manifest asks for none', () => {
+  const b = box({ permissions: { read: ['code-host', 'tracker'], write: [{ action: 'comment', target: 'change/{change_id}', env: 'work', limit: 3, confirm: 'none' }] } });
+  scenario(b);
+  const say = { cwd: b.cwd, tool: 'tracker__say', input: { change: '7' }, session: 's1' };
+  // A plain comment passes at once: the manifest asks for no confirmation. The first of three.
+  const plain = comment(b);
+  assert.deepEqual([plain.outcome, plain.envelope], ['allow', 'applied']);
+  // The tool that another human sees: one question for the task.
+  const first = beforeAction(b.rt, say, CLIENT);
+  assert.deepEqual([first.outcome, first.envelope, first.scope], ['ask', 'confirm', 'task']);
+  // The tool ran: the human said "yes". The confirmation is kept, and the run is the second of three.
+  assert.deepEqual(afterAction(b.rt, say, CLIENT), { confirmed: true });
+  const second = beforeAction(b.rt, say, CLIENT);
+  assert.deepEqual([second.outcome, second.envelope], ['allow', 'applied'], 'no second question; the third of three');
+  const over = beforeAction(b.rt, say, CLIENT);
+  assert.deepEqual([over.outcome, over.envelope], ['ask', 'limit'], 'the limit of the grant counts the confirmed tool too');
 });
 
 test('budget: a scenario task is not stopped by a write that its envelope does not name', () => {

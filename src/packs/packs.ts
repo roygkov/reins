@@ -35,7 +35,9 @@ export type Scenario = { name: string; level: PackLevel; file: string; manifest:
 export type ReadWhen = { field: string; pattern: string };
 // `connector`: the read connector that the tool reads through. A contract that does not name it does not cover the read.
 // A write tool names it for the calls that `read_when` reads as a read.
-export type ToolRule = { kind: 'read'; connector?: string } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen; connector?: string };
+// `sensitive`: the tool returns or takes secrets or personal data. `irreversible`: the write cannot
+// be undone. `outward`: another human sees the result of the write.
+export type ToolRule = { kind: 'read'; connector?: string; sensitive?: true } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen; connector?: string; sensitive?: true; irreversible?: true; outward?: true };
 // The pattern of a pack runs before every call of the tool: a short value bounds the time of a slow pattern.
 // The name of a model of a client: starts with a letter or a digit, no spaces.
 export const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$/;
@@ -503,12 +505,19 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
       errors.push({ code: rule.kind === undefined ? 'missing' : 'not_in_list', path: `${at}.kind` });
       continue;
     }
-    const allowed = rule.kind === 'read' ? ['kind', 'connector'] : ['kind', 'action', 'target', 'env', 'read_when', 'connector'];
+    const allowed = rule.kind === 'read' ? ['kind', 'connector', 'sensitive'] : ['kind', 'action', 'target', 'env', 'read_when', 'connector', 'sensitive', 'irreversible', 'outward'];
+    // A mark is `true` or it is not there: a mark that says `false` would read as a statement that the pack checked.
+    const marks: { sensitive?: true; irreversible?: true; outward?: true } = {};
+    for (const mark of ['sensitive', 'irreversible', 'outward'] as const) {
+      if (rule[mark] === undefined || !allowed.includes(mark)) continue;
+      if (rule[mark] === true) marks[mark] = true;
+      else errors.push({ code: 'not_in_list', path: `${at}.${mark}` });
+    }
     for (const key of Object.keys(rule)) if (!allowed.includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
     if (rule.kind === 'read') {
       const named = rule.connector;
       if (named !== undefined && !(typeof named === 'string' && reads.includes(named))) errors.push({ code: 'not_in_list', path: `${at}.connector` });
-      out[name] = { kind: 'read', ...(typeof named === 'string' && reads.includes(named) ? { connector: named } : {}) };
+      out[name] = { kind: 'read', ...(typeof named === 'string' && reads.includes(named) ? { connector: named } : {}), ...(marks.sensitive === true ? { sensitive: true as const } : {}) };
       continue;
     }
     const { action, target, env } = rule;
@@ -523,7 +532,12 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
     const via = rule.connector;
     const viaOk = typeof via === 'string' && reads.includes(via) && when !== undefined;
     if (via !== undefined && !viaOk) errors.push({ code: 'not_in_list', path: `${at}.connector` });
-    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env, ...(when !== undefined ? { read_when: when } : {}), ...(viaOk ? { connector: via } : {}) };
+    // The mark of secrets acts on a read. A write tool has reads only with `read_when`: without it the mark would say nothing.
+    if (marks.sensitive === true && when === undefined) {
+      errors.push({ code: 'not_in_list', path: `${at}.sensitive` });
+      delete marks.sensitive;
+    }
+    if (typeof action === 'string' && typeof target === 'string' && typeof env === 'string') out[name] = { kind: 'write', action, target, env, ...(when !== undefined ? { read_when: when } : {}), ...(viaOk ? { connector: via } : {}), ...marks };
   }
   return out;
 }

@@ -471,12 +471,12 @@ export function decideAction(rt: Runtime, id: string, action: Action, layers: La
 }
 
 // The one confirmation of a grant of the envelope by the human.
-export function confirm(rt: Runtime, id: string, key: string): boolean {
+export function confirm(rt: Runtime, id: string, key: string, outward = false): boolean {
   if (!TASK_ID.test(id)) return false;
   const r = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return false;
-    const next = confirmGrant(task, key);
+    const next = confirmGrant(task, key, outward);
     if (next === task) return false;
     commit(rt, { task: next, rows: [{ kind: 'task.human_decision', data: { decision: 'confirm' } }] });
     return true;

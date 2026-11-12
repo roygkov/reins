@@ -253,15 +253,16 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
   }
   const rule = packRule(rt.merged.tools, call.tool);
   if (rule === undefined) return { action: UNKNOWN, layers: [] };
-  if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
+  if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV, ...(rule.sensitive === true ? { sensitive: true } : {}) }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
   const known = (rt.merged.context.envs ?? []).includes(rule.env);
   const production = !known || (rt.merged.context.productionEnvs ?? []).includes(rule.env);
   // A read of a tool that also writes keeps the environment of the tool: a rule of a pack about
   // that environment still sees the call.
-  if (readsNow(rule.read_when, call.input)) return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: { name: rule.env, known, production } }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
+  if (readsNow(rule.read_when, call.input)) return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: { name: rule.env, known, production }, ...(rule.sensitive === true ? { sensitive: true } : {}) }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
   const target = fillTarget(rule.target, call.input);
   if (target === null) return { action: UNKNOWN, layers: [] };
-  return { action: { via: 'tool', kind: 'write', name: rule.action, target, env: { name: rule.env, known, production } }, layers: [] };
+  const marks = { ...(rule.irreversible === true ? { irreversible: true } : {}), ...(rule.outward === true ? { outward: true } : {}), ...(rule.sensitive === true ? { sensitive: true } : {}) };
+  return { action: { via: 'tool', kind: 'write', name: rule.action, target, env: { name: rule.env, known, production }, ...marks }, layers: [] };
 }
 
 // The question waits for its answer under the session, the tool and the input of the call: a run
@@ -517,7 +518,7 @@ export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTool
   if (Object.hasOwn(clientTools, call.tool)) return { confirmed: false };
   const read = readCall(rt, call, clientTools);
   if ('guard' in read || read.action.kind !== 'write' || grantKey(read.action.name, read.action.target, read.action.env.name) !== key) return { confirmed: false };
-  if (!confirm(rt, task, key)) return { confirmed: false };
+  if (!confirm(rt, task, key, read.action.outward === true)) return { confirmed: false };
   decideAction(rt, task, read.action, [...read.layers, ...packLayers(rt, call, read.action, read.command)]);
   return { confirmed: true };
 }

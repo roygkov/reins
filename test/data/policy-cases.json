@@ -1059,5 +1059,211 @@
    "rule": "org.typo",
    "envelope": "none"
   }
+ },
+ {
+  "name": "a read of a sensitive thing asks the human",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "read",
+    "target": "",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    },
+    "sensitive": true
+   },
+   "layers": []
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.sensitive-read",
+   "envelope": "none"
+  }
+ },
+ {
+  "name": "the envelope does not cover a read of a sensitive thing",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "read",
+    "name": "read",
+    "target": "",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    },
+    "sensitive": true
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.sensitive-read",
+   "envelope": "not_named"
+  }
+ },
+ {
+  "name": "a write that cannot be undone is the word of the human for each action: the envelope does not act",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    },
+    "irreversible": true
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "irreversible"
+  }
+ },
+ {
+  "name": "a write that cannot be undone asks also after the one confirmation of the task",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    },
+    "irreversible": true
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "once"
+    }
+   ],
+   "task": {
+    "confirmed": [
+     "comment change/7 work"
+    ],
+    "used": {}
+   }
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "action",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "irreversible"
+  }
+ },
+ {
+  "name": "a write that another human sees needs one confirmation for the task, whatever the manifest says",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    },
+    "outward": true
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ]
+  },
+  "expect": {
+   "outcome": "ask",
+   "scope": "task",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "confirm"
+  }
+ },
+ {
+  "name": "a write that another human sees passes after the one confirmation",
+  "input": {
+   "action": {
+    "via": "tool",
+    "kind": "write",
+    "name": "comment",
+    "target": "change/7",
+    "env": {
+     "name": "work",
+     "known": true,
+     "production": false
+    },
+    "outward": true
+   },
+   "layers": [],
+   "envelope": [
+    {
+     "action": "comment",
+     "target": "change/7",
+     "env": "work",
+     "limit": 20,
+     "confirm": "none"
+    }
+   ],
+   "task": {
+    "confirmed": [
+     "comment change/7 work"
+    ],
+    "used": {}
+   }
+  },
+  "expect": {
+   "outcome": "allow",
+   "layer": "core",
+   "rule": "default.write",
+   "envelope": "applied"
+  }
  }
 ]

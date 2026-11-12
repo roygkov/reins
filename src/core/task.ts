@@ -292,10 +292,11 @@ export function decideFor(task: Task, action: Action, layers: LayerDecision[]): 
 }
 
 // The one confirmation of a grant by the human. A grant that the manifest does not name cannot be confirmed.
-export function confirmGrant(task: Task, key: string): Task {
+// `outward`: the action is one that another human sees. It is confirmed once also when the grant asks for no confirmation.
+export function confirmGrant(task: Task, key: string, outward = false): Task {
   // Only an open task takes a confirmation: nothing is written for a task that is closed or not started.
   if (task.state !== 'executing' && task.state !== 'waiting_human' && task.state !== 'publishing') return task;
-  const named = task.envelope.some((g) => grantKey(g.action, g.target, g.env) === key && g.confirm === 'once');
+  const named = task.envelope.some((g) => grantKey(g.action, g.target, g.env) === key && (g.confirm === 'once' || outward));
   if (!named || task.use.confirmed.includes(key)) return task;
   return { ...task, use: { ...task.use, confirmed: [...task.use.confirmed, key] } };
 }

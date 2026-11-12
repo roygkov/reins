@@ -20,6 +20,10 @@ export type Action = {
   name: string;
   target: string;
   env: { name: string; known: boolean; production: boolean };
+  // What the description of the connector says about the action (harness-connector, page 1).
+  irreversible?: boolean; // it cannot be undone: the human decides each one
+  outward?: boolean; // another human sees its result: at least one confirmation for a task
+  sensitive?: boolean; // secrets or personal data, also when it only reads
 };
 
 export type LayerDecision = { layer: Layer; outcome: Outcome; rule: string };
@@ -31,7 +35,7 @@ export type TaskUse = { confirmed: string[]; used: Record<string, number> };
 
 export type DecideInput = { action: Action; layers: LayerDecision[]; envelope?: Grant[]; task?: TaskUse };
 
-export type EnvelopeEffect = 'none' | 'not_needed' | 'not_applicable' | 'production' | 'not_named' | 'limit' | 'confirm' | 'applied';
+export type EnvelopeEffect = 'none' | 'not_needed' | 'not_applicable' | 'production' | 'irreversible' | 'not_named' | 'limit' | 'confirm' | 'applied';
 
 export type Decision = {
   outcome: Outcome;
@@ -68,7 +72,8 @@ export function grantKey(action: string, target: string, env: string): string {
 function byDefault(action: Action): LayerDecision {
   switch (action.kind) {
     case 'read':
-      return { layer: 'core', outcome: 'allow', rule: 'default.read' };
+      // A read that returns secrets or personal data is a risk by itself: the human decides.
+      return action.sensitive === true ? { layer: 'core', outcome: 'ask', rule: 'default.sensitive-read' } : { layer: 'core', outcome: 'allow', rule: 'default.read' };
     case 'local':
       return { layer: 'core', outcome: 'allow', rule: 'default.local' };
     case 'write':
@@ -117,12 +122,15 @@ export function decide(input: DecideInput): Decision {
   if (envelope === undefined) return ask('none');
   // A production write is approved by the human for each action. The envelope does not act on it.
   if (isWrite(action) && isProduction(action)) return ask('production');
+  // A write that cannot be undone is approved by the human for each action, in every environment.
+  if (isWrite(action) && action.irreversible === true) return ask('irreversible');
 
   const grant = envelope.find((g) => g.action === action.name && g.target === action.target && g.env === action.env.name);
   if (grant === undefined) return ask('not_named');
   const key = grantKey(grant.action, grant.target, grant.env);
   if ((task?.used[key] ?? 0) >= grant.limit) return ask('limit');
-  if (grant.confirm === 'once' && !(task?.confirmed ?? []).includes(key)) {
+  // A write that another human sees is confirmed once for a task, also when the manifest asks for no confirmation.
+  if ((grant.confirm === 'once' || action.outward === true) && !(task?.confirmed ?? []).includes(key)) {
     return { outcome: 'ask', scope: 'task', basis, envelope: 'confirm' };
   }
   return { outcome: 'allow', basis, envelope: 'applied' };
