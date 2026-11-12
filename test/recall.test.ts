@@ -212,3 +212,32 @@ test('recall: a search gives only records in use, a limited count of them, and w
   // No word is no search.
   assert.deepEqual(searchRecords(b.rt, ['  '], 20, NOW), { records: [], more: 0 });
 });
+
+test('recall: a search gives short rows, and one command gives a record whole', () => {
+  const b = box();
+  spawnSync('git', ['init', '-q'], { cwd: b.cwd });
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const run = (args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd: b.cwd, env }).stdout);
+  const long = `The gateway ${'drops a request when the pool is full; '.repeat(20)}end.`;
+  run(['memory', 'decide', long, 'because=the pool has ten places and the peak has thirty', 'rejected=a bigger pool', 'path=src/gateway.ts']);
+  const [row] = run(['memory', 'find', 'gateway']).records;
+  // A row says what the record is and where the whole of it is: no reason, no history.
+  assert.deepEqual(Object.keys(row).sort(), ['id', 'paths', 'project', 'text', 'type']);
+  assert.equal(row.text.length, 301);
+  assert.match(row.text, /^The gateway drops a request .*…$/);
+  assert.deepEqual([row.type, row.paths], ['decision', ['src/gateway.ts']]);
+  // The record whole.
+  const shown = run(['memory', 'show', row.id]);
+  assert.deepEqual([shown.ok, shown.record.text, shown.record.because, shown.record.rejected, shown.record.state], [true, long, 'the pool has ten places and the peak has thirty', 'a bigger pool', 'active']);
+  assert.deepEqual(run(['memory', 'show', 'm0000000000']), { ok: false, error: 'unknown_record' });
+  // A record that the agent got is counted as given.
+  assert.deepEqual(readJournal(path.join(b.root, 'state', 'journal.jsonl')).filter((r) => r.kind === 'memory.read').map((r) => r.data), [{ n: 1 }, { n: 1 }]);
+  // A record for every project says so in its row.
+  run(['memory', 'share', row.id]);
+  assert.equal(run(['memory', 'find', 'gateway']).records[0].scope, 'common');
+  // A record that is out of use can still be read, and it is not counted as given.
+  const reads = (): number => readJournal(path.join(b.root, 'state', 'journal.jsonl')).filter((r) => r.kind === 'memory.read').length;
+  const before = reads();
+  run(['memory', 'veto', row.id]);
+  assert.deepEqual([run(['memory', 'show', row.id]).record.state, reads()], ['vetoed', before]);
+});

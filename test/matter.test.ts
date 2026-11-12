@@ -250,7 +250,7 @@ test('state: the start of a session gives the state of the project, whole', () =
   assert.ok(long.ok);
   const cut = stateForStart(b.rt, 300, T0 + 2 * DAY).join('\n');
   assert.equal(Buffer.byteLength(cut) <= 300, true, String(Buffer.byteLength(cut)));
-  assert.match(cut, /я{50,}\n… cut: `reins memory find <word>` gives the rest\.$/);
+  assert.match(cut, new RegExp(`я{50,}\\n… cut: \`reins memory show ${long.record.id}\` gives the rest\\.$`));
   assert.ok(addRecord(b.rt, { type: 'state', text: 'The harness runs the daily work.', paths: [], by: 'human', next: '1. the first real firecheck' }, T0 + 2 * DAY).ok);
   const text = sessionStart(b.rt, { session: 's1', cwd: b.cwd }).context.join('\n');
   assert.match(text, /State of this project/);

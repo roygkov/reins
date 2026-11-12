@@ -511,7 +511,7 @@ export function stateForStart(rt: Runtime, maxBytes: number, now: number = Date.
   rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: 1 } });
   if (Buffer.byteLength(head) + 1 + Buffer.byteLength(body) <= maxBytes) return [head, ...body.split('\n')];
   // The mark of the cut is a part of the size. Whole characters only: the cut is counted in bytes.
-  const mark = '… cut: `reins memory find <word>` gives the rest.';
+  const mark = `… cut: \`reins memory show ${state.id}\` gives the rest.`;
   const room = Math.max(0, maxBytes - Buffer.byteLength(head) - 1 - Buffer.byteLength(mark) - 1);
   let cut = body.slice(0, room);
   while (cut.length > 0 && Buffer.byteLength(cut) > room) cut = cut.slice(0, -1);

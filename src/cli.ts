@@ -334,7 +334,29 @@ function main(args: string[]): Out {
       return broken.length > 0 ? { ok: true, records: listRecords(rt), broken } : { ok: true, records: listRecords(rt) };
     }
     // The records with these words, in every project: the agent reads the memory through the harness.
-    if (first === 'find' && rest.length >= 1) return { ok: true, ...searchRecords(rt, rest) };
+    // A row for a record: what it is and where the whole of it is. `show <id>` gives the record whole.
+    if (first === 'find' && rest.length >= 1) {
+      const found = searchRecords(rt, rest);
+      const short = (text: string): string => (text.length > FIND_TEXT ? `${text.slice(0, FIND_TEXT)}…` : text);
+      return {
+        ok: true,
+        records: found.records.map((r) => ({
+          id: r.id, type: r.type, project: r.project, text: short(r.text),
+          ...(r.paths.length > 0 ? { paths: r.paths } : {}), ...(r.next !== undefined ? { next: short(r.next) } : {}), ...(r.status !== undefined ? { status: r.status } : {}),
+          // A record for every project, and a record that the human marked as wrong, look different.
+          ...(r.scope !== undefined ? { scope: r.scope } : {}), ...(r.wrong !== undefined ? { wrong: r.wrong } : {}),
+        })),
+        more: found.more,
+      };
+    }
+    if (first === 'show' && rest.length === 1) {
+      const record = listRecords(rt).find((r) => r.id === rest[0]);
+      if (record === undefined) throw new Stop('unknown_record');
+      // The human reads a record in any state. The journal counts only a record in use: a record
+      // that is out of use was not given to the agent for the work.
+      if (record.state === 'active') rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: 1 } });
+      return { ok: true, record };
+    }
     if (first === 'veto' && rest.length === 1 && rest[0] !== undefined) {
       if (!vetoRecord(rt, rest[0])) throw new Stop('unknown_record');
       return { ok: true, record: rest[0], state: 'vetoed' };
@@ -486,9 +508,10 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
+const FIND_TEXT = 300; // characters of the text of a record in a row of a search
 const RESULT_MAX = 200_000; // characters of a text report that `result` gives
 let out: Out;
 let stopped = false;
