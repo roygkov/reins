@@ -241,3 +241,38 @@ test('recall: a search gives short rows, and one command gives a record whole', 
   run(['memory', 'veto', row.id]);
   assert.deepEqual([run(['memory', 'show', row.id]).record.state, reads()], ['vetoed', before]);
 });
+
+test('recall: reports that come at one time lose no count of a use', async () => {
+  const b = box();
+  const id = note(b, 'the gateway drops a request when the pool is full');
+  // Each process is one report that cites the record: the counts are one file for all of them.
+  const script = path.join(b.root, 'cite.ts');
+  fs.writeFileSync(script, `
+import { loadPacks } from ${JSON.stringify(fileURLToPath(new URL('../src/packs/packs.ts', import.meta.url)))};
+import { openJournal } from ${JSON.stringify(fileURLToPath(new URL('../src/journal/writer.ts', import.meta.url)))};
+import { countUses } from ${JSON.stringify(fileURLToPath(new URL('../src/memory/store.ts', import.meta.url)))};
+const [packs, stateDir, id] = process.argv.slice(2);
+const dirs = JSON.parse(packs ?? '{}');
+const rt = { merged: loadPacks(dirs), stateDir: stateDir ?? '', journal: openJournal(stateDir ?? ''), project: 'p1a2b3c4' };
+for (let i = 0; i < (process.argv[5] === 'once' ? 1 : 10); i += 1) countUses(rt, 'see ' + id);
+`);
+  const packs = JSON.stringify({ organization: path.join(b.root, 'packs/organization'), project: path.join(b.root, 'packs/project'), person: path.join(b.root, 'packs/person') });
+  const { spawn } = await import('node:child_process');
+  const runs = Array.from({ length: 6 }, () => new Promise<number | null>((resolve) => {
+    spawn(process.execPath, [script, packs, b.rt.stateDir, id], { stdio: 'ignore' }).on('exit', (code) => resolve(code));
+  }));
+  assert.deepEqual(await Promise.all(runs), [0, 0, 0, 0, 0, 0]);
+  assert.equal(listRecords(b.rt).find((r) => r.id === id)?.uses, 60);
+  // A lock that another process holds and does not release: nothing is counted, and nothing says that it was.
+  const lock = path.join(b.rt.stateDir, 'memory-state', 'uses.json.lock');
+  fs.writeFileSync(lock, 'another-owner');
+  const keep = setInterval(() => fs.utimesSync(lock, new Date(), new Date()), 500);
+  const used = (): number => readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.record_used').length;
+  const before = used();
+  const waited = await new Promise<number | null>((resolve) => {
+    spawn(process.execPath, [script, packs, b.rt.stateDir, id, 'once'], { stdio: 'ignore' }).on('exit', (code) => resolve(code));
+  });
+  clearInterval(keep);
+  assert.deepEqual([waited, listRecords(b.rt).find((r) => r.id === id)?.uses, used()], [0, 60, before]);
+  assert.equal(fs.readFileSync(lock, 'utf8'), 'another-owner', 'the lock of another owner is not removed');
+});

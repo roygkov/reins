@@ -611,16 +611,53 @@ export function countUses(rt: Runtime, report: string, now: number = Date.now())
   const known = new Set(stored(rt).filter((r) => r.state !== 'vetoed').map((r) => r.id));
   const ids = cited.filter((id) => known.has(id));
   if (ids.length === 0) return [];
-  const uses = readUses(rt);
-  for (const id of ids) {
-    uses[id] = { n: (uses[id]?.n ?? 0) + 1, last: new Date(now).toISOString() };
-    rt.journal.write({ kind: 'memory.record_used', project: rt.project, data: { record: id } });
-  }
+  // The counts are one file for all the reports: the read, the change and the write run under
+  // one lock, so two reports at one time lose no count. Without the lock nothing is counted: a
+  // count that is not written is better than a count that removes another one.
   fs.mkdirSync(path.dirname(usesFile(rt)), { recursive: true });
-  const tmp = `${usesFile(rt)}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(uses));
-  fs.renameSync(tmp, usesFile(rt));
+  const counted = locked(`${usesFile(rt)}.lock`, () => {
+    const uses = readUses(rt);
+    for (const id of ids) uses[id] = { n: (uses[id]?.n ?? 0) + 1, last: new Date(now).toISOString() };
+    const tmp = `${usesFile(rt)}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(uses));
+    fs.renameSync(tmp, usesFile(rt));
+  });
+  if (!counted) return [];
+  for (const id of ids) rt.journal.write({ kind: 'memory.record_used', project: rt.project, data: { record: id } });
   return ids;
+}
+
+// Runs `work` while this process holds the lock file; false when the lock did not come in three
+// seconds. The lock holds a mark of its owner: a process removes only its own lock. A lock that
+// is older than two seconds has a dead holder (the work under it takes milliseconds) and is removed.
+function locked(lock: string, work: () => void): boolean {
+  const mark = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  let owned = false;
+  for (let attempt = 0; attempt < 300 && !owned; attempt += 1) {
+    try {
+      fs.writeFileSync(lock, mark, { flag: 'wx' });
+      owned = true;
+    } catch {
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > 2000) fs.rmSync(lock, { force: true });
+      } catch {
+        // the lock went away: try again
+      }
+      Atomics.wait(wait, 0, 0, 10);
+    }
+  }
+  if (!owned) return false;
+  try {
+    work();
+  } finally {
+    try {
+      if (fs.readFileSync(lock, 'utf8') === mark) fs.rmSync(lock, { force: true });
+    } catch {
+      // the lock is gone already
+    }
+  }
+  return true;
 }
 
 // Records of another store, one JSON object on a line: type, text, and optionally paths, because,
