@@ -389,7 +389,10 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   }
   const idle = section(errors, value.scenarios, 'scenarios', ['idle_days']);
   if (idle !== null) {
-    const days = limit(errors, idle.idle_days, 'scenarios.idle_days');
+    // The term is one for the machine: the scenarios of the organization and of the person are
+    // shared by all the projects, so a pack of one project must not start or stop their count.
+    if (level === 'project' && idle.idle_days !== undefined) errors.push({ code: 'not_allowed', path: 'scenarios.idle_days' });
+    const days = level === 'project' ? undefined : limit(errors, idle.idle_days, 'scenarios.idle_days');
     settings.scenarios = days === undefined ? {} : { idle_days: days };
   }
   const queue = section(errors, value.queue, 'queue', ['wait_days', 'approval_hours', 'keep_days']);

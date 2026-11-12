@@ -241,6 +241,8 @@ test('week: the pack sets how long a removed record is kept, and the sweep remov
 test('week: a scenario that nobody called for the term of the packs is switched off, and one command brings it back', () => {
   const b = box({ organization: { scenarios: { idle_days: 30 } }, person: { scenarios: { idle_days: 10 } } });
   assert.equal(b.rt.merged.scenarioIdleDays, 30, 'the longest term of the packs');
+  // The term is one for the machine: a pack of a project does not set it.
+  assert.deepEqual(validateSettings({ pack: 1, level: 'project', name: 'repo', scenarios: { idle_days: 5 } }, 'project').errors.map((e) => `${e.code} ${e.path}`), ['not_allowed scenarios.idle_days']);
   // A scenario of a project pack is counted for its project: the project of the command is the directory of the work.
   b.rt.project = `p${crypto.createHash('sha1').update(b.cwd).digest('hex').slice(0, 8)}`;
   const names = b.rt.merged.scenarios.map((s) => s.name);
@@ -323,6 +325,11 @@ test('week: the summary of the week is a file: the numbers, what needs a decisio
   for (const name of ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']) assert.match(text, new RegExp(`^\\| ${name} \\| `, 'm'));
   assert.match(text, /## Needs a decision of the human\n\n- c0123456789: repeated_question of "tool.unknown", seen 7 times\. `reins craft accept c0123456789` or `reins craft reject c0123456789`/);
   assert.match(text, /## Waits for its term\n\nNothing\./);
+  // What applied itself is named once, in its own part.
+  fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c4123456789.json'), JSON.stringify({ id: 'c4123456789', pattern: 'record_unused', key: 'm0123456789', n: 40, created: new Date(real - 9 * DAY).toISOString(), state: 'accepted', resolved: new Date(real - 2 * DAY).toISOString(), applied: true, auto: true, change: { kind: 'memory', record: 'm0123456789', state: 'stale' } }));
+  const withAuto = weekText(b.rt, real);
+  assert.equal(withAuto.split('c4123456789: record_unused').length - 1, 1);
+  assert.match(withAuto, /## Applied by itself\n\n- c4123456789: record_unused of "m0123456789", seen 40 times, applied \d{4}-\d{2}-\d{2}\. `reins memory restore m0123456789` takes it back/);
   assert.match(text, /## Accepted, and the effect\n\n- c1123456789: check_fails_often of "change-review", seen 4 times, accepted \d{4}-\d{2}-\d{2}: better/);
   // A client without a window writes no summary: nobody reads its notice.
   process.env.REINS_HEADLESS = '1';

@@ -42,7 +42,7 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
     const left = r.veto_until === undefined ? 0 : Math.max(0, Math.ceil((Date.parse(r.veto_until) - now) / DAY));
     lines.push(`- ${r.id} (${r.type}, project ${r.project}, ${left} day(s) left): ${one(r.text, 160)}. \`reins memory veto ${r.id}\``);
   }
-  const accepted = proposals.filter((p) => p.state === 'accepted' && p.resolved !== undefined && now - Date.parse(p.resolved) < 35 * DAY);
+  const accepted = proposals.filter((p) => p.state === 'accepted' && p.auto !== true && p.resolved !== undefined && now - Date.parse(p.resolved) < 35 * DAY);
   lines.push('', '## Accepted, and the effect', '');
   if (accepted.length === 0) lines.push('Nothing.');
   for (const p of accepted) lines.push(`- ${proposalLine(p)}, accepted ${(p.resolved ?? '').slice(0, 10)}: ${p.pattern === 'rollback' ? 'an undo' : p.effect === undefined || p.effect === 'not_measured' ? 'not measured' : p.effect}${p.undone !== undefined ? `, undone ${p.undone.slice(0, 10)}` : ''}`);

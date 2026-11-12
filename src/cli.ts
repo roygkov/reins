@@ -50,9 +50,12 @@ class Stop extends Error {
   }
 }
 
+// The code of the harness: the command line lies in its `src`. A script of a pack never writes there.
+const HARNESS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
 function runtime(): Runtime {
   try {
-    return loadRuntime();
+    return { ...loadRuntime(), harnessDirs: [HARNESS_ROOT] };
   } catch (e) {
     if (e instanceof ConfigError) throw new Stop(e.code, { file: e.file });
     throw e;
@@ -322,14 +325,23 @@ function main(args: string[]): Out {
     };
     if (!take()) {
       let alive = true;
+      let held = '';
       try {
-        process.kill(Number(fs.readFileSync(lock, 'utf8')), 0);
+        held = fs.readFileSync(lock, 'utf8');
+        process.kill(Number(held), 0);
       } catch (e) {
         // No such process, or a lock that cannot be read: the holder is gone. A process of another user counts as alive.
         alive = (e as NodeJS.ErrnoException).code === 'EPERM';
       }
       if (alive) return { ok: true, busy: true, opened: [], skipped: [] };
-      fs.rmSync(lock, { force: true });
+      // Another timer can take the place of the dead holder at this same time: the lock is removed only while it still names the dead process.
+      let same = false;
+      try {
+        same = fs.readFileSync(lock, 'utf8') === held;
+      } catch {
+        // the lock went away
+      }
+      if (same) fs.rmSync(lock, { force: true });
       if (!take()) return { ok: true, busy: true, opened: [], skipped: [] };
     }
     try {

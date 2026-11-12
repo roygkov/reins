@@ -99,8 +99,11 @@ function count(rows: JournalRow[]): Counts {
       if (row.task !== undefined && startedTasks.has(row.task)) add(c.raised, row.scenario);
     }
   }
-  // A chain is counted once for a task, however many times the task walks it.
-  for (const list of steps.values()) {
+  // A chain is counted once for a task, however many times the task walks it. A task that has a
+  // row of a scenario is a task of a scenario, whatever its decision rows say.
+  const ofScenario = new Set(rows.filter((row) => row.scenario !== undefined && row.task !== undefined).map((row) => row.task as string));
+  for (const [task, list] of steps) {
+    if (ofScenario.has(task)) continue;
     const seen = new Set<string>();
     for (let i = 0; i + CHAIN <= list.length; i += 1) seen.add(list.slice(i, i + CHAIN).join(' > '));
     for (const key of seen) add(c.chains, key);
@@ -223,7 +226,9 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
     if (before !== undefined && !(before.state === 'rejected' && found.n >= 2 * (before.rejected_n ?? before.n))) continue;
     // The questions and the approvals of one rule are one matter for the human: one proposal about the rule is enough.
     const twin = found.pattern === 'repeated_approval' ? 'repeated_question' : found.pattern === 'repeated_question' ? 'repeated_approval' : undefined;
-    if (twin !== undefined && known.has(`${twin} ${found.key}`)) continue;
+    // A twin that the human rejected stops the rule only until the rule grew twice, as its own rejected proposal would.
+    const other = twin === undefined ? undefined : known.get(`${twin} ${found.key}`);
+    if (other !== undefined && !(other.state === 'rejected' && found.n >= 2 * (other.rejected_n ?? other.n))) continue;
     if (perWeek !== undefined && week >= perWeek) break;
     const change = changeOf(rt, found);
     // The class "with a veto window": a change that one command takes back (a memory record that

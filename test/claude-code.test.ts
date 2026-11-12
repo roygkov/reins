@@ -326,10 +326,13 @@ test('claude-code: a failed tool is written to the journal, a tool that the huma
   const b = box();
   run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
   const failed = () => fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l)).filter((r) => r.kind === 'executor.tool_failed').map((r) => r.data);
+  const input = { change: '7' };
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'mcp__tracker__get_change', tool_input: input, error: 'no such change' }));
+  assert.deepEqual(failed(), [{ tool: 'mcp__tracker__get_change' }]);
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'mcp__tracker__get_change', tool_input: input, error: 'stopped', is_interrupt: true }));
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUse', { tool_name: 'mcp__tracker__get_change', tool_input: input }));
+  // A tool of the client itself that failed is the work, not a fault of a tool.
   run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' }, error: 'no such file' }));
-  assert.deepEqual(failed(), [{ tool: 'Read' }]);
-  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' }, error: 'stopped', is_interrupt: true }));
-  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } }));
   assert.equal(failed().length, 1);
 });
 

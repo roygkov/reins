@@ -86,6 +86,10 @@ test('session: a client that says it tells the harness before an action is measu
   afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's2' }, CLIENT);
   afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's2' }, CLIENT);
   assert.deepEqual(levels().slice(2), [{ client: 'test_client', level: 'no_before', measured: 1 }], 'the fact is written once');
+  // A call that failed may never have started: it is no proof that the client is silent before its actions.
+  sessionStart(b.rt, { session: 's5', cwd: b.cwd, client: 'test_client' });
+  afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's5' }, CLIENT, true, true);
+  assert.equal(agentStopped(b.rt, { session: 's5', cwd: b.cwd }).unguarded, undefined);
   assert.equal(agentStopped(b.rt, { session: 's2', cwd: b.cwd }).unguarded, true, 'the human is told at the stop');
   // Once: the next stop, which finds no open task, says nothing more.
   assert.deepEqual(agentStopped(b.rt, { session: 's2', cwd: b.cwd }), {});
@@ -98,7 +102,7 @@ test('session: a client that says it tells the harness before an action is measu
   humanRequest(b.rt, { session: 's3', cwd: b.cwd });
   afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's3' }, CLIENT);
   assert.equal(agentStopped(b.rt, { session: 's3', cwd: b.cwd }).unguarded, undefined);
-  assert.equal(levels().length, 6);
+  assert.equal(levels().length, 7);
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
 });
 
@@ -169,10 +173,12 @@ test('session: a tool that failed is a fact of the journal: the name of the tool
   const b = box();
   const failures = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.tool_failed');
   const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
-  const call = { cwd: b.cwd, tool: 'read_file', input: { path: '/x' }, session: 's1' };
+  const call = { cwd: b.cwd, tool: 'tracker__get_change', input: { change: '7' }, session: 's1' };
   beforeAction(b.rt, call, CLIENT);
   afterAction(b.rt, call, CLIENT, true, true);
-  assert.deepEqual(failures().map((r) => [r.task, r.data]), [[task, { tool: 'read_file' }]]);
+  assert.deepEqual(failures().map((r) => [r.task, r.data]), [[task, { tool: 'tracker__get_change' }]]);
+  // A tool of the client itself fails as a part of the work (a file that is not there): no row.
+  afterAction(b.rt, { ...call, tool: 'read_file' }, CLIENT, true, true);
   // A tool that ran to its end writes no such row; a name that is no plain name is not written.
   afterAction(b.rt, call, CLIENT);
   afterAction(b.rt, { ...call, tool: 'a tool with spaces' }, CLIENT, true, true);

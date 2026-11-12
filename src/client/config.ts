@@ -82,14 +82,11 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
 // linked work tree is the `.git` of the repository.
 function mainRoot(root: { root: string; gitDir?: string | null; commonDir?: string | null }): string {
   const common = root.commonDir;
-  const dir = typeof common === 'string' && common !== root.gitDir && path.basename(common) === '.git' ? path.dirname(common) : root.root;
-  // git names the repository of a linked work tree by its real path, and the human may reach the
-  // repository through a link: the project is the directory as the system has it, so both ways give one project.
-  try {
-    return fs.realpathSync(dir);
-  } catch {
-    return dir;
-  }
+  // The repository itself keeps the name that it always had: the path as the client gives it. A
+  // project that the human reaches through a link keeps its memory. A linked work tree is named
+  // by its repository as git names it (the real path): for a repository behind a link the two
+  // names differ, and the work tree is then a project of its own.
+  return typeof common === 'string' && common !== root.gitDir && path.basename(common) === '.git' ? path.dirname(common) : root.root;
 }
 
 export function loadRuntime(cwd: string = process.cwd()): Runtime {
@@ -106,7 +103,10 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   // started in. Outside a repository it is the directory itself.
   // A linked work tree of a repository (`git worktree`) is the same project as the repository:
   // its memory, its cases and its state are those of the repository.
-  const project = `p${crypto.createHash('sha1').update(root.isRepo ? mainRoot(root) : cwd).digest('hex').slice(0, 8)}`;
+  // A client that the harness started in a work tree of its own making gets the project of the
+  // run by name: the path of that work tree says nothing about a repository behind a link.
+  const given = process.env.REINS_HEADLESS === '1' ? process.env.REINS_PROJECT : undefined;
+  const project = given !== undefined && /^p[0-9a-f]{8}$/.test(given) ? given : `p${crypto.createHash('sha1').update(root.isRepo ? mainRoot(root) : cwd).digest('hex').slice(0, 8)}`;
   const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file, workDir: cwd };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
   if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;

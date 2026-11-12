@@ -16,7 +16,11 @@ export function locked(lock: string, work: () => void): boolean {
       owned = true;
     } catch {
       try {
-        if (Date.now() - fs.statSync(lock).mtimeMs > 2000) fs.rmSync(lock, { force: true });
+        // Another waiter can take the place of the dead holder at this same time: the lock is
+        // removed only while it still holds the mark that was seen as old. A window of one system
+        // call stays between this read and the removal: it opens only when a holder died.
+        const old = fs.readFileSync(lock, 'utf8');
+        if (Date.now() - fs.statSync(lock).mtimeMs > 2000 && fs.readFileSync(lock, 'utf8') === old) fs.rmSync(lock, { force: true });
       } catch {
         // the lock went away: try again
       }

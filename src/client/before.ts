@@ -481,12 +481,16 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // `failed`: the tool started and ended with an error (not broken off by the human).
 export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean } {
   // A tool that failed is a fact for the craft: the name of the tool, never the text of the error.
-  if (failed && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_failed', data: { tool: call.tool } }]);
+  // The tools of the client itself fail all the time (a command with an exit code, a file that is
+  // not there): that is the work, not a fault of a tool.
+  if (failed && !Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_failed', data: { tool: call.tool } }]);
   // The measure of the level of the client. The adapter said that the client tells the harness
   // before an action; an action ended, and no such word came in this session. The barriers did
   // not act: that is a fact for the journal and for the human, written once for a session.
   const seen = readSession(rt, call.session);
-  if (seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true && seen.unguarded !== true) {
+  // A call that failed may never have started (a bad input, a tool that is not there): the client
+  // had nothing to tell before it, so it is no proof.
+  if (!failed && seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true && seen.unguarded !== true) {
     patchSession(rt, call.session, { unguarded: true });
     rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: seen.claims, level: 'no_before', measured: 1 } });
   }

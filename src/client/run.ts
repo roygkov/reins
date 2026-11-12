@@ -48,17 +48,33 @@ function commandFor(rt: Runtime, id: string): { command: string; args: string[] 
 // A timer of the runtime takes no more than this (about 24 days): a longer limit would end the run at once.
 const limitOf = (rt: Runtime): number => Math.min(rt.runnerTimeoutMs ?? DEFAULT_TIMEOUT_MS, 2_000_000_000);
 
-// The answer of the program between: one JSON line.
-function replyOf(text: string): RunReply {
-  let reply: { exit?: unknown; error?: unknown } = {};
-  try {
-    reply = JSON.parse(text.split('\n')[0] ?? '');
-  } catch {
-    // no answer: the program between did not run to its end
+// The lines of the program between: the group of the client, then the answer.
+function linesOf(text: string): { group?: number; reply?: RunReply } {
+  const out: { group?: number; reply?: RunReply } = {};
+  for (const line of text.split('\n')) {
+    let value: { exit?: unknown; error?: unknown; group?: unknown };
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (value === null || typeof value !== 'object') continue;
+    if (typeof value.group === 'number' && Number.isInteger(value.group) && value.group > 1) out.group = value.group;
+    if (value.error === 'timeout') out.reply = { ran: false, error: 'timeout' };
+    else if (value.error !== undefined) out.reply = { ran: false, error: 'start_failed' };
+    else if (typeof value.exit === 'number') out.reply = { ran: true, exit: value.exit };
   }
-  if (reply.error === 'timeout') return { ran: false, error: 'timeout' };
-  if (typeof reply.exit !== 'number') return { ran: false, error: 'start_failed' };
-  return { ran: true, exit: reply.exit };
+  return out;
+}
+
+// No answer of the program between: it hangs or died. The group of the client is stopped by the harness itself.
+function stopGroup(group: number | undefined): void {
+  if (group === undefined) return;
+  try {
+    process.kill(-group, 'SIGKILL');
+  } catch {
+    // the group is gone already
+  }
 }
 
 export function runTask(rt: Runtime, id: string): RunReply {
@@ -78,8 +94,14 @@ export function runTask(rt: Runtime, id: string): RunReply {
     timeout: timeoutMs + 10_000,
     killSignal: 'SIGKILL',
   });
-  if (r.error !== undefined) return { ran: false, error: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : 'start_failed' };
-  return replyOf(r.stdout);
+  const said = linesOf(typeof r.stdout === 'string' ? r.stdout : '');
+  if (r.error !== undefined) {
+    stopGroup(said.group);
+    return { ran: false, error: (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT' ? 'timeout' : 'start_failed' };
+  }
+  // The program between ended with no answer (the system stopped it): the group of the client must not stay.
+  if (said.reply === undefined) stopGroup(said.group);
+  return said.reply ?? { ran: false, error: 'start_failed' };
 }
 
 // ---- Several tasks at one time. Two clients in one work tree would change the work of each
@@ -108,12 +130,15 @@ export function runTasks(rt: Runtime, ids: string[], parallel: number = rt.runne
   const dirty = head.ok ? git(base, ['status', '--porcelain']) : { ok: false, out: '' };
   if (parallel <= 1 || ids.length <= 1 || !head.ok || !dirty.ok || dirty.out !== '') return ids.map((id) => runTask(rt, id));
   const out = new Map<string, ManyReply>();
+  // A copy at the commit holds no file that git ignores: no installed packages, no build output.
+  // A task whose check is a command (the tests of the work) needs them: it runs in the work itself, after the others.
+  const inWork = ids.filter((id) => loadTask(rt, id)?.manifest?.done.kind === 'command');
   const wait = new Int32Array(new SharedArrayBuffer(4));
   const timeoutMs = limitOf(rt);
   type Running = { id: string; file: string; tree: string; child: ReturnType<typeof spawn>; until: number };
   const running: Running[] = [];
-  const queue = [...ids];
-  const answered = (file: string): boolean => fs.readFileSync(file, 'utf8').includes('\n');
+  const queue = ids.filter((id) => !inWork.includes(id));
+  const answered = (file: string): boolean => linesOf(fs.readFileSync(file, 'utf8')).reply !== undefined;
   const start = (id: string): void => {
     const made = commandFor(rt, id);
     if ('error' in made) {
@@ -130,7 +155,7 @@ export function runTasks(rt: Runtime, ids: string[], parallel: number = rt.runne
     const file = path.join(worktreesDir(rt), `${id}.out`);
     const fd = fs.openSync(file, 'w');
     try {
-      const child = spawn(process.execPath, [GROUP, JSON.stringify({ command: made.command, args: made.args, timeoutMs })], { cwd: tree, env: { ...process.env, REINS_HEADLESS: '1' }, stdio: ['ignore', fd, 'ignore'] });
+      const child = spawn(process.execPath, [GROUP, JSON.stringify({ command: made.command, args: made.args, timeoutMs })], { cwd: tree, env: { ...process.env, REINS_HEADLESS: '1', REINS_PROJECT: rt.project }, stdio: ['ignore', fd, 'ignore'] });
       // A start that failed comes as an event, after the wait: it must not end this process.
       child.on('error', () => {});
       child.unref();
@@ -145,17 +170,18 @@ export function runTasks(rt: Runtime, ids: string[], parallel: number = rt.runne
     }
   };
   const end = (r: Running): void => {
-    const text = fs.readFileSync(r.file, 'utf8');
-    const silent = !text.includes('\n');
-    // No answer in time: the program between hangs or died. It is stopped, and its work tree stays.
+    const said = linesOf(fs.readFileSync(r.file, 'utf8'));
+    const silent = said.reply === undefined;
+    // No answer in time: the program between hangs or died. It and the group of the client are stopped, and the work tree stays.
     if (silent) {
       try {
         r.child.kill('SIGKILL');
       } catch {
         // it is gone already
       }
+      stopGroup(said.group);
     }
-    const reply: ManyReply = silent ? { ran: false, error: 'timeout' } : replyOf(text);
+    const reply: ManyReply = said.reply ?? { ran: false, error: 'timeout' };
     fs.rmSync(r.file, { force: true });
     // A work tree that the client left as it was goes away. One with a change or with a new
     // commit stays: the human finds the work of the task there.
@@ -175,5 +201,6 @@ export function runTasks(rt: Runtime, ids: string[], parallel: number = rt.runne
       end(r);
     }
   }
+  for (const id of inWork) out.set(id, runTask(rt, id));
   return ids.map((id) => out.get(id) ?? { ran: false, error: 'start_failed' });
 }

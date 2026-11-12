@@ -3,8 +3,8 @@
 // its group. When the client ends by itself, what it left in its group stops too: a run without a
 // window is over when its client is over. The harness waits for a run with a blocking call, and a blocking call can stop only
 // the one process that it started; so this small program stands between the two.
-// Input: the first argument is JSON {command, args, timeoutMs}. Output: one JSON line on stdout,
-// {exit} or {error: 'timeout' | 'start_failed'}.
+// Input: the first argument is JSON {command, args, timeoutMs}. Output: JSON lines on stdout:
+// first {group} (the number of the group of the client), then {exit} or {error: 'timeout' | 'start_failed'}.
 'use strict';
 const { spawn } = require('node:child_process');
 
@@ -16,6 +16,8 @@ const say = (out) => {
   process.stdout.write(`${JSON.stringify(out)}\n`);
 };
 const child = spawn(command, args, { stdio: 'ignore', detached: true });
+// The first line names the group of the client: a harness that gets no answer stops the group itself.
+if (child.pid !== undefined) process.stdout.write(`${JSON.stringify({ group: child.pid })}\n`);
 const stopGroup = () => {
   try {
     // A negative number names the group. Where the system has no groups, the client alone is stopped.

@@ -224,6 +224,21 @@ test('sandbox: a check script runs in the sandbox too, and can write only into t
     assert.ok('step' in r && r.answer !== undefined);
     assert.equal(r.answer.result, 'PASS');
     assert.equal(fs.existsSync(probe), false);
+    // The code of the harness itself is no work that a check writes into, also when a collect script names it.
+    // The work here is this repository (outside the temporary directories): with the guard the write fails, without it the file appears.
+    const repoRoot = path.dirname(path.dirname(probe));
+    const writes = `#!/bin/sh\ncat >/dev/null\necho x > "${probe}" 2>/dev/null\nprintf '%s' '{"outputs":{"result":"PASS"}}'\n`;
+    const names = `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [], worktree: repoRoot }, flags: { has_new_commits: true } })}'\n`;
+    for (const guard of [true, false]) {
+      const own = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: writes, collect: names });
+      own.rt.scriptSandbox = true;
+      if (guard) own.rt.harnessDirs = [repoRoot];
+      const task = openScenario(own.rt, 'change-review', { change_id: '7' }, {});
+      assert.ok(task.ok);
+      submitReport(own.rt, task.task.id, 'done');
+      assert.equal(fs.existsSync(probe), !guard, guard ? 'the code of the harness is closed' : 'a plain repository is the work of the check');
+      fs.rmSync(probe, { force: true });
+    }
     // A collect script that names the home directory as the work gives the check no place to write.
     const home = process.env.HOME;
     const wide = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: `#!/bin/sh\ncat >/dev/null\necho x > "${probe}" 2>/dev/null\n[ -e "${probe}" ] && exit 6\nprintf '%s' '{"outputs":{"result":"PASS"}}'\n`, collect: `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [], worktree: path.dirname(path.dirname(probe)) }, flags: { has_new_commits: true } })}'\n` });

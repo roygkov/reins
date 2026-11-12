@@ -1,3 +1,5 @@
 .DS_Store
 node_modules/
 dist/
+# The probes of the sandbox tests: they must lie outside the temporary directories, and the work state of this repository must not see them.
+test/sandbox-*.tmp

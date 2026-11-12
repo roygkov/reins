@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -231,10 +232,22 @@ test('run: with the key of the config the clients of two tasks run at one time, 
   assert.equal(fs.existsSync(path.join(b.cwd, 'made-by-the-task.txt')), false, 'the work of the human is as it was');
   // A linked work tree is the same project as its repository: the memory of the project reaches the client there.
   assert.equal(runtimeOf({ ...b, cwd: kept[0]?.worktree ?? '' }).project, rt.project);
-  // The repository reached through a link is the same project, too.
+  // The repository itself keeps the name that the client gives it: a project that the human reaches through a link keeps its memory.
   const link = path.join(b.root, 'link-to-work');
   fs.symlinkSync(b.cwd, link);
-  assert.equal(runtimeOf({ ...b, cwd: link }).project, rt.project);
+  assert.equal(runtimeOf({ ...b, cwd: link }).project, `p${crypto.createHash('sha1').update(link).digest('hex').slice(0, 8)}`);
+  // A client of a parallel run gets the project of the run by name, whatever the path of its work tree says.
+  process.env.REINS_HEADLESS = '1';
+  process.env.REINS_PROJECT = 'p0a1b2c3d';
+  try {
+    assert.equal(runtimeOf(b).project, 'p0a1b2c3d');
+    process.env.REINS_PROJECT = 'not-a-project';
+    assert.equal(runtimeOf(b).project, rt.project);
+  } finally {
+    delete process.env.REINS_HEADLESS;
+    delete process.env.REINS_PROJECT;
+  }
+  assert.equal(runtimeOf(b).project, rt.project, 'the name is taken only in a run without a window');
   // A change of the human that is not committed: a copy at the commit would not hold it, so the tasks run one by one in the work itself.
   fs.rmSync(path.join(b.root, 'write'));
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'one, not committed\n');
@@ -259,6 +272,16 @@ test('run: the clients run as a pool: the next task starts as soon as one client
   const at = (task: string | undefined, m: string): number => calls(b).find((l) => l.mark === m && l.task === task)?.t ?? 0;
   assert.ok(at(ids[2], 'start') < at(ids[0], 'end'), 'the third task started while the slow first one still ran');
   assert.deepEqual(fs.readdirSync(worktreesDir(rt)), []);
+});
+
+test('run: a task whose check is a command runs in the work itself: a copy at the commit has no installed packages', () => {
+  const b = box('', { done: { kind: 'command', check: 'tests', retries: 0 } });
+  repoIn(b.cwd);
+  fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_parallel: 2 }));
+  const ids = [b.run(['open', 'draft-message']).json.task, b.run(['open', 'draft-message']).json.task];
+  const rt = runtimeOf(b);
+  assert.deepEqual(runTasks(rt, ids).map((r) => [r.ran, r.worktree]), [[true, undefined], [true, undefined]]);
+  assert.deepEqual(calls(b).map((l) => l.cwd), [b.cwd, b.cwd]);
 });
 
 test('run: a work that is no repository has no copy: its tasks run one by one, and the key takes a small number', () => {

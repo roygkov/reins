@@ -287,6 +287,16 @@ function checkedWork(rt: Runtime, task: Task): string[] {
     return [];
   }
   if (dir === '/' || home === dir || home.startsWith(`${dir}/`)) return [];
+  // The code of the harness itself is never a place where a script of a pack writes.
+  for (const own of rt.harnessDirs ?? []) {
+    let real = own;
+    try {
+      real = fs.realpathSync(own);
+    } catch {
+      // the path as the config names it
+    }
+    if (dir === real || dir.startsWith(`${real}/`) || real.startsWith(`${dir}/`)) return [];
+  }
   const own = rt.workDir !== undefined && path.resolve(rt.workDir) === root;
   return own || fs.existsSync(path.join(dir, '.git')) ? [dir] : [];
 }

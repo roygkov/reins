@@ -204,6 +204,15 @@ test('craft: a rule that asked many times and got "yes" every time is a pattern 
   assert.deepEqual(propose(c.rt, NOW - DAY).map((p) => p.pattern), ['repeated_question']);
   rows(c, NOW - DAY, times(5, asked('git.push', 'answered')));
   assert.deepEqual(propose(c.rt, NOW), []);
+  // A proposal about the questions that the human rejected stops the rule only until it grew twice.
+  const d = box();
+  rows(d, NOW - 2 * DAY, times(5, question('git.push')));
+  const first = propose(d.rt, NOW - DAY);
+  resolveProposal(d.rt, first[0]?.id ?? '', 'rejected', NOW - DAY);
+  rows(d, NOW - DAY, times(9, asked('git.push', 'answered')));
+  assert.deepEqual(propose(d.rt, NOW), [], 'nine approvals are less than twice five');
+  rows(d, NOW - DAY, asked('git.push', 'answered'));
+  assert.deepEqual(propose(d.rt, NOW).map((p) => [p.pattern, p.n]), [['repeated_approval', 10]]);
   // The effect is the count of the questions of the rule, as for a repeated question.
   resolveProposal(b.rt, made.find((p) => p.key === 'git.push')?.id ?? '', 'accepted', NOW);
   rows(b, NOW + DAY, asked('git.push', 'answered'));
@@ -238,6 +247,8 @@ test('craft: the same chain of three tools in several free tasks is a candidate 
     ...[...chain].reverse().map((t) => act('t000000000004', t)),
     ...chain.map((t) => act('t000000000005', t, { scenario: 'mr-review', scenario_v: 1 })),
     { kind: 'policy.decision', task: 't000000000006', data: { outcome: 'allow', action_kind: 'read', env: 'local' } },
+    // A task that has a row of a scenario is a task of a scenario, also when its decisions name none.
+    { kind: 'task.started', task: 't000000000007', scenario: 'mr-review', scenario_v: 1 }, ...chain.map((t) => act('t000000000007', t)),
   ]);
   const found = detect(readJournal(b.rt.journal.file));
   assert.deepEqual(found, [{ pattern: 'repeated_chain', key: 'jira__get_issue > gitlab__get_mr > gitlab__get_diff', n: 3 }]);
