@@ -217,10 +217,13 @@ test('client: after the level of the task is raised the subordinate can have the
 test('client: a model that the packs do not name is not shown to be within the level: the subordinate does not start', () => {
   const { b, task } = leveled();
   assert.deepEqual(start(b, 'other'), { outcome: 'deny', rule: 'executor.level', task });
-  // The packs name no model at all: the same.
+  // The packs name no model at all: the levels have no names, and the rule holds nothing.
   const bare = leveled();
   bare.b.rt.merged.models = {};
-  assert.equal(start(bare.b, 'mid').rule, 'executor.level');
+  assert.equal(start(bare.b, 'other').outcome, 'allow');
+  const none = leveled();
+  none.b.rt.merged.models = {};
+  assert.equal(start(none.b, '').outcome, 'allow');
 });
 
 test('client: a subordinate without a named model and a subordinate of the free task are not judged by the level', () => {
@@ -230,6 +233,15 @@ test('client: a subordinate without a named model and a subordinate of the free 
   free.rt.merged.models = { ...NAMES };
   humanRequest(free.rt, { session: 's2', cwd: free.cwd });
   assert.equal(executorStarted(free.rt, { session: 's2', cwd: free.cwd, role: 'reviewer', model: 'big' }).outcome, 'allow');
+});
+
+test('client: a client that cannot name the model of a subordinate says so with an empty name, and the subordinate of a scenario does not start', () => {
+  const { b, task } = leveled();
+  assert.deepEqual(start(b, ''), { outcome: 'deny', rule: 'executor.level', task });
+  // The free task has no level to hold.
+  const free = box();
+  humanRequest(free.rt, { session: 's2', cwd: free.cwd });
+  assert.equal(executorStarted(free.rt, { session: 's2', cwd: free.cwd, role: 'reviewer', model: '' }).outcome, 'allow');
 });
 
 test('client: the stdio event of a subordinate carries the model', () => {
@@ -242,18 +254,26 @@ test('client: the stdio event of a subordinate carries the model', () => {
   assert.equal(stdio(b, { event: 'executor_start', cwd: b.cwd, session: 's1', role: 'reviewer', model: 'mid' }).outcome, 'allow');
 });
 
-test('client: the Claude Code adapter gives the model of an Agent call to the core, but not for a fork', () => {
+test('client: the Claude Code adapter gives the core the model that the subordinate runs on, or says that it cannot name it', () => {
   const b = box();
   const file = path.join(b.root, 'packs/organization/pack.json');
   fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), models: NAMES }));
   assert.ok(openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 'live' }).ok);
-  const agent = (input: Record<string, unknown>): string => {
-    const out = spawnSync(process.execPath, [CLAUDE, 'pre'], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: input }), env: b.env, encoding: 'utf8' }).stdout;
+  const agent = (input: Record<string, unknown>, env: Record<string, string> = {}): string => {
+    const out = spawnSync(process.execPath, [CLAUDE, 'pre'], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: input }), env: { ...b.env, ...env }, encoding: 'utf8' }).stdout;
     return out === '' ? '' : JSON.parse(out).hookSpecificOutput.permissionDecisionReason ?? '';
   };
   assert.match(agent({ subagent_type: 'reviewer', model: 'big', prompt: 'x' }), /executor\.level/);
-  // A fork runs on the model of the session: the name of the call is not judged, the role is.
-  assert.match(agent({ subagent_type: 'fork', model: 'big', prompt: 'x' }), /executor\.role/);
+  // A role that the manifest does not name is refused as a role, with any model.
+  assert.match(agent({ subagent_type: 'fork', model: 'mid', prompt: 'x' }), /executor\.role/);
+  // A call without a model: the definition of the agent or the session decides, the adapter does not see them.
+  assert.match(agent({ subagent_type: 'reviewer', prompt: 'x' }), /executor\.level: the call names no model/);
+  // The client is set to ignore the model of the call: the model of the setting counts.
+  const forced = { CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1', CLAUDE_CODE_SUBAGENT_MODEL: 'big' };
+  assert.match(agent({ subagent_type: 'reviewer', model: 'mid', prompt: 'x' }, forced), /executor\.level: the model "big"/);
+  assert.match(agent({ subagent_type: 'reviewer', model: 'mid', prompt: 'x' }, { CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' }), /executor\.level: the call names no model/);
+  // A value of the setting that the documentation does not name: the adapter names no model.
+  assert.match(agent({ subagent_type: 'reviewer', model: 'mid', prompt: 'x' }, { CLAUDE_CODE_SUBAGENT_MODEL_FORCE: 'yes', CLAUDE_CODE_SUBAGENT_MODEL: 'mid' }), /executor\.level: the call names no model/);
   assert.doesNotMatch(agent({ subagent_type: 'reviewer', model: 'mid', prompt: 'x' }), /executor\./);
 });
 

@@ -65,6 +65,21 @@ function readEvent(): ToolCall | null {
   return call;
 }
 
+// The model that a subordinate runs on, as the client documents it (sub-agents, read 13.11.2026):
+// the model of the call comes first, then the definition of the agent, then the model of the
+// session. The adapter sees only the call. With CLAUDE_CODE_SUBAGENT_MODEL_FORCE the client
+// ignores the call and takes CLAUDE_CODE_SUBAGENT_MODEL. A fork runs on the model of the
+// session. Where the call does not decide, the name is empty: the adapter cannot name the model.
+function subModel(role: string, named: unknown): string {
+  if (role === 'fork') return '';
+  // The documentation names the value `1` only. Any other value that is set: the adapter does
+  // not know which model the client takes, so it names none.
+  const force = process.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE ?? '';
+  if (force === '1') return process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? '';
+  if (force !== '') return '';
+  return typeof named === 'string' ? named : '';
+}
+
 function runtime(cwd?: string): Runtime | null {
   try {
     return clientRuntime({ ...loadRuntime(cwd), harnessDirs: [HARNESS_ROOT], clientPaths: CLIENT_PATHS }, 'claude_code');
@@ -120,13 +135,12 @@ function pre(): void {
     if ((call.tool === 'Agent' || call.tool === 'Task') && r.outcome === 'allow') {
       // Without a type the client starts its general-purpose agent, and names it so when it ends.
       const role = typeof call.input.subagent_type === 'string' ? call.input.subagent_type : 'general-purpose';
-      // A fork runs on the model of the session whatever the call names: the name says nothing.
-      const model = typeof call.input.model === 'string' && role !== 'fork' ? call.input.model : undefined;
-      const started = executorStarted(rt, { cwd: call.cwd, ...(call.session !== undefined ? { session: call.session } : {}), ...(role !== undefined ? { role } : {}), ...(model !== undefined ? { model } : {}) });
+      const model = subModel(role, call.input.model);
+      const started = executorStarted(rt, { cwd: call.cwd, ...(call.session !== undefined ? { session: call.session } : {}), ...(role !== undefined ? { role } : {}), model });
       if (started.outcome === 'deny') {
         // The level is not a place: the agent can start the same executor with a lower model.
         say('deny', started.rule === 'executor.level'
-          ? `reins: executor.level: the model of this subordinate executor is above the level of the task ${started.task} or the packs do not name it; read the level with \`reins input ${started.task}\``
+          ? `reins: executor.level: ${role === 'fork' ? `a fork runs on the model of the session, which the harness does not see: it does not start in the task ${started.task}; start a subordinate executor of a role of the manifest with \`model\` set` : `${model === '' ? 'the call names no model that the client uses' : `the model "${model}" is above the level of the task or the packs do not name it`}; start the subordinate executor with \`model\` set to a name that \`reins input ${started.task}\` gives for the level of the task`}`
           : `reins: ${started.rule}: the task ${started.task} has no place for this subordinate executor`);
         return;
       }

@@ -15,7 +15,8 @@ import type { Task } from '../core/task.ts';
 import { sessionTask } from './session.ts';
 
 // `report`: the text of the report of a subordinate, when the client gives it.
-// `model`: the name of the model that the call asks for the subordinate, when the client gives it.
+// `model`: the name of the model that the subordinate runs on, when the client gives it. An empty
+// name: the client knows that it cannot name the model.
 export type ExecutorEvent = { session?: string; cwd: string; role?: string; size?: number; report?: string; model?: string };
 export type ExecutorReply = { outcome: 'allow' | 'deny'; rule: string; task: string };
 
@@ -34,9 +35,11 @@ function parentOf(rt: Runtime, session: string | undefined): Task | null {
 
 // The model that a call names for a subordinate of a scenario is not above the level of the task.
 // The packs name the model of each level; a name that they do not give is not shown to be within
-// the level. A call that names no model is not judged: the client decides the model, and the
-// harness does not see it.
+// the level, and so is the empty name. An event without the field is not judged: that client
+// gives no model at all.
 function aboveLevel(rt: Runtime, parent: Task, model: string): boolean {
+  // Packs that name no model give the levels no names: there is nothing to hold a name against.
+  if (LEVELS.every((l) => rt.merged.models[l] === undefined)) return false;
   const named = LEVELS.filter((l) => rt.merged.models[l] === model).map((l) => LEVELS.indexOf(l));
   if (named.length === 0) return true;
   // One name can stand for several levels: the lowest one counts.
@@ -59,7 +62,6 @@ export function executorStarted(rt: Runtime, e: ExecutorEvent, now: number = Dat
   // A scenario task that does not execute (it is checked, it waits for the human, it publishes)
   // starts no executor: the session is still in the scenario, so the free task does not answer.
   if (parent.state !== 'executing') return { outcome: 'deny', rule: 'executor.state', task: parent.id };
-  if (parent.manifest !== undefined && e.model !== undefined && aboveLevel(rt, parent, e.model)) return { outcome: 'deny', rule: 'executor.level', task: parent.id };
   const rule = withSession(rt, e.session, (file) => {
     const running = (file.executors ?? []).filter((x) => now - x.at <= STALE_MS);
     if (parent.manifest !== undefined) {
@@ -67,6 +69,7 @@ export function executorStarted(rt: Runtime, e: ExecutorEvent, now: number = Dat
       const place = (parent.manifest.model.executors ?? []).find((x) => x.role === role);
       if (place === undefined) return { next: null, result: 'executor.role' };
       if (running.filter((x) => x.task === parent.id && x.role === role).length >= place.count) return { next: null, result: 'executor.limit' };
+      if (e.model !== undefined && aboveLevel(rt, parent, e.model)) return { next: null, result: 'executor.level' };
     } else {
       const max = rt.merged.context.maxExecutors;
       if (max !== undefined && running.length >= max) return { next: null, result: 'executor.limit' };

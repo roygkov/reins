@@ -249,7 +249,7 @@ test('loop: the Claude Code adapter asks the core before a subordinate starts', 
   const hook = (mode: string, event: Record<string, unknown>) => spawnSync(process.execPath, [HOOK, mode], { input: JSON.stringify({ session_id: 'live', cwd: b.cwd, ...event }), env, encoding: 'utf8' }).stdout;
   hook('prompt', { hook_event_name: 'UserPromptSubmit' });
   spawnSync(process.execPath, [CLI, 'open', 'change-review', 'change_id=7'], { env, cwd: b.cwd, encoding: 'utf8' });
-  assert.equal(hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'reviewer', prompt: 'x' } }), '');
+  assert.equal(hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'reviewer', model: 'mid-2', prompt: 'x' } }), '');
   const denied = JSON.parse(hook('pre', { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { subagent_type: 'coder', prompt: 'x' } }));
   assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(denied.hookSpecificOutput.permissionDecisionReason, /executor\.role/);
