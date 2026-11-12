@@ -29,7 +29,8 @@ import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '..
 // `unshown`: the client shows no question to the human in its mode now: a question of the harness has no answer of a human.
 // `subId`: the identifier of the subordinate executor that makes the call, when the client gives one (`sub` is its role).
 // `callId`: the identifier that the client gives to one call of a tool, the same before and after it.
-export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; headless?: boolean; unshown?: boolean };
+// `named`: the name of the tool for the journal, set by `beforeAction` for a tool that is not the client's own.
+export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; headless?: boolean; unshown?: boolean; named?: string };
 
 // What a question keeps while it waits: whose it is, and whether a human sees it.
 const asker = (call: ToolCall): Record<string, unknown> => ({
@@ -323,7 +324,10 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   const sub = by === undefined ? {} : { executor: 'sub' as const, ...by };
   // A question that no human saw says so: it is not counted among the questions to the human.
   const marked = call.unshown !== true ? rows : rows.map((row) => ((row.kind === 'policy.decision' || row.kind === 'policy.protected_attempt') && row.data?.outcome === 'ask' ? { ...row, data: { ...row.data, unshown: 1 } } : row));
-  for (const row of marked) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
+  // The decision about a tool of a connector names the tool: the craft finds chains of tools that repeat.
+  const tool = call.named;
+  const named = tool === undefined ? marked : marked.map((row) => (row.kind === 'policy.decision' ? { ...row, data: { ...row.data, tool } } : row));
+  for (const row of named) rt.journal.write({ ...row, ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 
 // A question waits under the call that asked it. The identifier of the call, when the client gives
@@ -347,6 +351,10 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   // The word before an action came: the first one of a session is noted, for the measure in `afterAction`.
   const seen = readSession(rt, call.session);
   if (seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true) patchSession(rt, call.session, { before: true });
+  // The name of a tool goes to the journal only for a tool of a connector: the tools of the client
+  // itself (read, edit, shell) are in every task and say nothing about the work.
+  // A session that works on a scenario repeats the tools of the scenario by design: no name there.
+  if (!Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool) && currentScenario(rt, call.session) === undefined) call = { ...call, named: call.tool };
   let r = decideBefore(rt, call, clientTools);
   // Without a window nobody answers a question: the action waits in the queue of the human.
   if (call.headless === true && r.outcome === 'ask') {

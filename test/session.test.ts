@@ -141,6 +141,22 @@ test('session: the answer of the human to a question names the rule that asked',
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
 });
 
+test('session: the decision about a tool of a connector names the tool, the decision about a tool of the client does not', () => {
+  const b = box();
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' }, CLIENT);
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__get_change', input: {}, session: 's1' }, CLIENT);
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'a tool with spaces', input: {}, session: 's1' }, CLIENT);
+  const tools = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').map((r) => r.data?.tool);
+  assert.deepEqual(tools, [undefined, 'tracker__get_change', undefined]);
+  // A session that works on a scenario walks the tools of the scenario by design: its decisions name no tool.
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.ok(opened.ok);
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__get_change', input: {}, session: 's1' }, CLIENT);
+  assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').at(-1)?.data?.tool, undefined);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
 test('session: a tool that failed is a fact of the journal: the name of the tool, no text of the error', () => {
   const b = box();
   const failures = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.tool_failed');

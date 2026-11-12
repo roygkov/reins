@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { JournalRow } from '../contracts/journal.ts';
+import { RULE_NAME, type JournalRow } from '../contracts/journal.ts';
 import type { CraftSettings } from '../packs/packs.ts';
 import { isObj } from '../contracts/shape.ts';
 import type { Runtime } from '../core/runtime.ts';
@@ -16,7 +16,8 @@ import { listRecords, retireRecord } from '../memory/store.ts';
 // `rollback`: an accepted proposal made things worse; the key is the id of that proposal.
 // `repeated_approval`: a rule asked many times and the human said "yes" every time.
 // `tool_fails_often`: one tool ended with an error many times.
-export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
+// `repeated_chain`: the same three tools of connectors, in the same order, in several free tasks.
+export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
@@ -32,6 +33,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const MIN_QUESTIONS = 5; // the same rule asked this often: describe the tool or name the write in a scenario
 const MIN_APPROVALS = 5; // the human said "yes" to one rule this often, and never "no": the question costs more than it guards
 const MIN_TOOL_FAILURES = 5; // one tool failed this often: its description, its connector or the way the agent calls it is wrong
+const MIN_CHAINS = 3; // the same chain of tools in this many free tasks: the work repeats, it can be a scenario
+const CHAIN = 3; // the length of a chain, in tools
 const MIN_CHECKS = 4; // a scenario with this many checks ...
 const FAIL_SHARE = 0.5; // ... and this share of FAIL: its instructions do not lead to a ready report
 const MIN_RAISES = 3; // a scenario with this many raises of the level of the model ...
@@ -43,13 +46,15 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number> };
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map() };
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
+  // The tools of the connectors that each free task called, in order. A task of a scenario repeats by design: it is not counted.
+  const steps = new Map<string, string[]>();
   // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
   const startedTasks = new Set<string>();
   for (const row of rows) {
@@ -57,6 +62,13 @@ function count(rows: JournalRow[]): Counts {
       c.decisions += 1;
       // A question that no human saw (a mode of the client without questions) is no load on the human.
       question = row.data?.outcome === 'ask' && row.data.unshown !== 1;
+      const tool = row.data?.tool;
+      if (typeof tool === 'string' && row.task !== undefined && row.scenario === undefined) {
+        const list = steps.get(row.task) ?? [];
+        // The same tool several times in a row is one step.
+        if (list[list.length - 1] !== tool) list.push(tool);
+        steps.set(row.task, list);
+      }
     } else if (row.kind === 'policy.basis') {
       const rule = row.data?.rule;
       if (question && typeof rule === 'string') add(c.asked, rule);
@@ -87,6 +99,12 @@ function count(rows: JournalRow[]): Counts {
       if (row.task !== undefined && startedTasks.has(row.task)) add(c.raised, row.scenario);
     }
   }
+  // A chain is counted once for a task, however many times the task walks it.
+  for (const list of steps.values()) {
+    const seen = new Set<string>();
+    for (let i = 0; i + CHAIN <= list.length; i += 1) seen.add(list.slice(i, i + CHAIN).join(' > '));
+    for (const key of seen) add(c.chains, key);
+  }
   return c;
 }
 
@@ -109,6 +127,7 @@ export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
   }
   for (const [key, n] of c.contracts) if (n >= (set.min_contracts ?? MIN_CONTRACTS)) out.push({ pattern: 'repeated_contract', key, n });
   for (const [key, n] of c.failed) if (n >= (set.min_tool_failures ?? MIN_TOOL_FAILURES)) out.push({ pattern: 'tool_fails_often', key, n });
+  for (const [key, n] of c.chains) if (n >= (set.min_chains ?? MIN_CHAINS)) out.push({ pattern: 'repeated_chain', key, n });
   // The agent asked for the higher level in most tasks of a scenario: the level of the manifest
   // is too low for the work. A task raises once, so the count of raises is a count of tasks.
   for (const [key, n] of c.raised) {
@@ -229,7 +248,8 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
       continue; // another process made it
     }
     week += 1;
-    rt.journal.write({ kind: 'craft.pattern_found', project: rt.project, data: { pattern: p.pattern, key: p.key, n: p.n } });
+    // The journal takes a plain name. The key of a chain is three names for the human: the journal gets the number of the proposal.
+    rt.journal.write({ kind: 'craft.pattern_found', project: rt.project, data: { pattern: p.pattern, key: RULE_NAME.test(p.key) ? p.key : p.id, n: p.n } });
     rt.journal.write({ kind: 'craft.proposal_created', project: rt.project, data: { proposal: p.id, pattern: p.pattern } });
     made.push(p);
   }

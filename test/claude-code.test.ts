@@ -243,7 +243,7 @@ test('claude-code: a tool that reads and writes is a read when its input says so
   assert.match(ask({ sql: `select ${'a,'.repeat(20000)} 1` }), /default\.write/, 'a text that is too long is not judged');
   // A read of a tool that also writes keeps the environment of the tool.
   const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
-  assert.deepEqual(rows.find((r) => r.kind === 'policy.decision' && r.data.action_kind === 'read')?.data, { outcome: 'allow', action_kind: 'read', env: 'work' });
+  assert.deepEqual(rows.find((r) => r.kind === 'policy.decision' && r.data.action_kind === 'read')?.data, { outcome: 'allow', action_kind: 'read', env: 'work', tool: 'mcp__db__query' });
 });
 
 test('claude-code: a condition of a read is checked when the pack is loaded', () => {

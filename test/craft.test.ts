@@ -225,6 +225,34 @@ test('craft: a tool that fails often is a pattern, and its effect is the count o
   assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['tool_fails_often', 'better']]);
 });
 
+test('craft: the same chain of three tools in several free tasks is a candidate for a scenario', () => {
+  const b = box();
+  const act = (task: string, tool: string, more: Record<string, unknown> = {}) => ({ kind: 'policy.decision', task, data: { outcome: 'allow', action_kind: 'read', env: 'local', tool }, ...more });
+  const chain = ['jira__get_issue', 'gitlab__get_mr', 'gitlab__get_diff'];
+  // Three free tasks walk the same three tools; a repeat of one tool in a row is one step.
+  rows(b, NOW - DAY, [
+    ...chain.map((t) => act('t000000000001', t)),
+    act('t000000000002', 'jira__get_issue'), act('t000000000002', 'jira__get_issue'), ...chain.slice(1).map((t) => act('t000000000002', t)),
+    act('t000000000003', 'slack__read'), ...chain.map((t) => act('t000000000003', t)),
+    // Another order, a task of a scenario and a decision with no tool name are no part of the chain.
+    ...[...chain].reverse().map((t) => act('t000000000004', t)),
+    ...chain.map((t) => act('t000000000005', t, { scenario: 'mr-review', scenario_v: 1 })),
+    { kind: 'policy.decision', task: 't000000000006', data: { outcome: 'allow', action_kind: 'read', env: 'local' } },
+  ]);
+  const found = detect(readJournal(b.rt.journal.file));
+  assert.deepEqual(found, [{ pattern: 'repeated_chain', key: 'jira__get_issue > gitlab__get_mr > gitlab__get_diff', n: 3 }]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_chains: 4 }), []);
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.change]), [['repeated_chain', undefined]]);
+  // The journal takes the find: the key there is the number of the proposal, and nothing failed.
+  assert.deepEqual(readJournal(b.rt.journal.file).filter((r) => r.kind === 'craft.pattern_found').map((r) => r.data), [{ pattern: 'repeated_chain', key: made[0]?.id, n: 3 }]);
+  assert.equal(readJournal(b.rt.journal.file).some((r) => r.kind === 'harness.failure'), false);
+  for (const row of readJournal(b.rt.journal.file).filter((r) => r.kind.startsWith('craft.'))) assert.deepEqual(validateRow(row), []);
+  // The effect of such a proposal is not measured: the human writes a scenario, and the scenario has its own numbers.
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW);
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY), []);
+});
+
 // ---- The class "with a veto window".
 
 test('craft: with a term of the packs a proposal whose change can be taken back applies itself, unless the human rejected it', () => {
