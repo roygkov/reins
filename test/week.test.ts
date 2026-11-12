@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, pruneArchive, readJournal, readJournalSince } from '../src/journal/writer.ts';
 import { validateRow, type JournalRow } from '../src/contracts/journal.ts';
-import { eight, summarize } from '../src/journal/metrics.ts';
+import { eight, summarize, costByScenario } from '../src/journal/metrics.ts';
 import { openScenario, type Runtime } from '../src/core/runtime.ts';
 import { scenarioOff } from '../src/core/idle.ts';
 import { sweep } from '../src/core/sweep.ts';
@@ -374,4 +374,37 @@ test('week: a reader of a period does not open an archive file that is older tha
   fs.utimesSync(old, new Date(NOW - 30 * DAY), new Date(NOW - 30 * DAY));
   assert.equal(readJournalSince(dir, NOW - 14 * DAY).length, 0);
   assert.equal(readJournalSince(dir).length, 1);
+});
+
+// ---- The cost of each scenario.
+
+test('week: the cost of the week is counted for each scenario, with the week before beside it', () => {
+  const cost = (daysAgo: number, task: string, scenario: string | undefined, tokens: number) =>
+    row(daysAgo, 'executor.cost', { task, ...(scenario !== undefined ? { scenario, scenario_v: 1 } : {}), data: { tokens, ms: 10, calls: 1 } });
+  const rows = [
+    cost(1, 't1', 'mr-review', 4000), cost(1, 't1', 'mr-review', 2000), cost(2, 't2', 'mr-review', 6000),
+    cost(3, 't3', 'firecheck', 30000),
+    cost(1, 't9', undefined, 99999), // a free request is no scenario
+    cost(9, 't4', 'mr-review', 20000), cost(10, 't5', 'wrapup', 1000),
+  ];
+  assert.deepEqual(costByScenario(rows, NOW), [
+    { scenario: 'firecheck', tasks: 1, tokens: 30000, per_task: 30000, prev_per_task: null },
+    { scenario: 'mr-review', tasks: 2, tokens: 12000, per_task: 6000, prev_per_task: 20000 },
+  ]);
+  assert.deepEqual(costByScenario([], NOW), []);
+});
+
+test('week: the summary has a table of the cost of each scenario', () => {
+  const b = box();
+  const write = (daysAgo: number, task: string, scenario: string, tokens: number) => {
+    const at = new Date(Date.now() - daysAgo * DAY);
+    openJournal(b.rt.stateDir, () => at).write({ kind: 'executor.cost', project: 'p1', task, scenario, scenario_v: 1, data: { tokens, ms: 10, calls: 1 } });
+  };
+  const empty = weekText(b.rt);
+  assert.match(empty, /## Cost of each scenario\n\nNothing\./);
+  write(1, 't000000000001', 'mr-review', 4000);
+  write(2, 't000000000002', 'mr-review', 6000);
+  write(9, 't000000000003', 'mr-review', 20000);
+  const text = weekText(b.rt);
+  assert.match(text, /## Cost of each scenario\n\n\| scenario \| tasks \| tokens \| tokens per task \| the week before \|\n\|---\|---\|---\|---\|---\|\n\| mr-review \| 2 \| 10000 \| 5000 \| 20000 \|/);
 });

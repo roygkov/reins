@@ -156,3 +156,31 @@ export function eight(rows: JournalRow[], now: number = Date.now(), days = 7): E
   for (const name of EIGHT) out[name] = { value: last[name].value, prev: before[name].value, n: last[name].n };
   return out;
 }
+
+// The cost of each scenario in the period that ends at `now`: its tasks that spent something,
+// the tokens, the tokens for one task, and the same number of the period before. The scenario
+// that spent the most comes first. A free request is no scenario.
+export type ScenarioCost = { scenario: string; tasks: number; tokens: number; per_task: number; prev_per_task: number | null };
+export function costByScenario(rows: JournalRow[], now: number = Date.now(), days = 7): ScenarioCost[] {
+  const span = days * 24 * 60 * 60 * 1000;
+  const sum = (from: number, to: number): Map<string, { tokens: number; tasks: Set<string> }> => {
+    const by = new Map<string, { tokens: number; tasks: Set<string> }>();
+    for (const row of rows) {
+      const time = Date.parse(row.ts);
+      if (row.kind !== 'executor.cost' || row.scenario === undefined || Number.isNaN(time) || time < from || time >= to) continue;
+      const at = by.get(row.scenario) ?? { tokens: 0, tasks: new Set<string>() };
+      if (typeof row.data?.tokens === 'number') at.tokens += row.data.tokens;
+      if (row.task !== undefined) at.tasks.add(row.task);
+      by.set(row.scenario, at);
+    }
+    return by;
+  };
+  const before = sum(now - 2 * span, now - span);
+  const out: ScenarioCost[] = [];
+  for (const [scenario, at] of sum(now - span, now)) {
+    if (at.tasks.size === 0) continue;
+    const prev = before.get(scenario);
+    out.push({ scenario, tasks: at.tasks.size, tokens: at.tokens, per_task: Math.round(at.tokens / at.tasks.size), prev_per_task: prev === undefined || prev.tasks.size === 0 ? null : Math.round(prev.tokens / prev.tasks.size) });
+  }
+  return out.sort((a, b) => b.tokens - a.tokens || a.scenario.localeCompare(b.scenario));
+}

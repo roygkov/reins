@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Runtime } from '../core/runtime.ts';
-import { EIGHT, eight } from '../journal/metrics.ts';
+import { EIGHT, costByScenario, eight } from '../journal/metrics.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listRecords } from '../memory/store.ts';
 import { listProposals, proposalLine } from './craft.ts';
@@ -22,9 +22,18 @@ const cell = (x: number | null): string => (x === null ? '-' : String(x));
 // The text of the summary for the seven days that end at `now`.
 export function weekText(rt: Runtime, now: number = Date.now()): string {
   const day = new Date(now).toISOString().slice(0, 10);
-  const numbers = eight(readJournalSince(rt.stateDir, now - 14 * DAY), now);
+  const journal = readJournalSince(rt.stateDir, now - 14 * DAY);
+  const numbers = eight(journal, now);
   const lines = [`# reins: the week to ${day}`, '', '## Numbers of the week', '', '| number | this week | the week before | rows |', '|---|---|---|---|'];
   for (const name of EIGHT) lines.push(`| ${name} | ${cell(numbers[name].value)} | ${cell(numbers[name].prev)} | ${numbers[name].n} |`);
+  // Where the tokens of the week went: one line for a scenario, the one that spent the most first.
+  const costs = costByScenario(journal, now);
+  lines.push('', '## Cost of each scenario', '');
+  if (costs.length === 0) lines.push('Nothing.');
+  else {
+    lines.push('| scenario | tasks | tokens | tokens per task | the week before |', '|---|---|---|---|---|');
+    for (const c of costs) lines.push(`| ${c.scenario} | ${c.tasks} | ${c.tokens} | ${c.per_task} | ${cell(c.prev_per_task)} |`);
+  }
   const proposals = listProposals(rt);
   const open = proposals.filter((p) => p.state === 'open');
   lines.push('', '## Needs a decision of the human', '');
