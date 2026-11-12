@@ -11,7 +11,8 @@ import { applyEvent, openScenario, submitReport, loadTask, type Runtime } from '
 import { afterAction, beforeAction, type ClientTools, type ToolCall } from '../src/client/before.ts';
 import { findRoot, loadConfig } from '../src/gate/index.ts';
 import { grantsOf } from '../src/core/task.ts';
-import type { Manifest } from '../src/contracts/manifest.ts';
+import { validateManifest, type Manifest } from '../src/contracts/manifest.ts';
+import { executorStarted } from '../src/client/executors.ts';
 import { loadCases } from './cases.ts';
 
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'before-'));
@@ -36,7 +37,7 @@ const TOOLS = {
 
 type Box = { rt: Runtime; root: string; cwd: string };
 let n = 0;
-function box(limit = 20): Box {
+function box(limit = 20, executors?: Record<string, unknown>[]): Box {
   n += 1;
   const root = path.join(SB, String(n));
   const cwd = path.join(root, 'work');
@@ -50,8 +51,9 @@ function box(limit = 20): Box {
     else if (typeof value === 'string' && value.startsWith('$manifest:')) {
       const m = structuredClone(manifests.get(value.slice(10))) as any;
       if (value === '$manifest:review') m.permissions.write[0].limit = limit;
+      if (value === '$manifest:review' && executors !== undefined) m.model.executors = executors;
       fs.writeFileSync(file, JSON.stringify(m));
-    } else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), tools: TOOLS }));
+    } else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), tools: TOOLS, ...(executors !== undefined ? { roles: executors.map((e) => e.role) } : {}) }));
     else fs.writeFileSync(file, JSON.stringify(value));
   }
   const packs = path.join(root, 'packs');
@@ -59,7 +61,7 @@ function box(limit = 20): Box {
   assert.deepEqual(merged.rejected, []);
   assert.deepEqual(merged.packs.map((p) => p.errors), [[], [], []]);
   const stateDir = path.join(root, 'state');
-  return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000 }, root, cwd };
+  return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000, ...(executors !== undefined ? { workDir: cwd } : {}) }, root, cwd };
 }
 
 const fill = (b: Box, value: unknown): unknown =>
@@ -339,4 +341,82 @@ test('before: a pack directory of any repository is protected', () => {
     assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.packs'], command);
   }
   assert.equal(beforeAction(b.rt, call(b, 'write_file', { path: '$CWD/src/reins.ts' }), CLIENT).outcome, 'allow');
+});
+
+// ---- The role of a subordinate executor bounds its rights.
+
+function roles(executors: Record<string, unknown>[]): { b: Box; id: string; as: (role: string | undefined, tool: string, input: Record<string, unknown>) => string } {
+  const b = box(20, executors);
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  for (const e of executors) assert.equal(executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: String(e.role) }).outcome, 'allow');
+  const as = (role: string | undefined, tool: string, input: Record<string, unknown>): string => {
+    const r = beforeAction(b.rt, { ...call(b, tool, input), session: 's1', ...(role !== undefined ? { sub: role } : {}) }, CLIENT);
+    return `${r.outcome} ${r.rule}`;
+  };
+  return { b, id: opened.task.id, as };
+}
+
+test('before: a subordinate executor with the right to read changes nothing', () => {
+  const { b, as } = roles([{ role: 'reviewer', count: 1, rights: 'read' }]);
+  assert.equal(as('reviewer', 'read_file', { path: 'src/a.ts' }), 'allow default.read');
+  assert.equal(as('reviewer', 'shell', { command: 'cat src/a.ts' }).split(' ')[0], 'allow');
+  assert.equal(as('reviewer', 'write_file', { path: 'src/a.ts' }), 'deny executor.read-only');
+  assert.equal(as('reviewer', 'shell', { command: 'echo x > src/a.ts' }), 'deny executor.read-only');
+  // A command of git that changes the tree or the history names no path: it is a change too.
+  for (const command of ['git commit -am x', 'git add -A', 'git stash', 'cd src && git -C . checkout -- a.ts']) assert.equal(as('reviewer', 'shell', { command }), 'deny executor.read-only', command);
+  for (const command of ['git diff HEAD', 'git log --oneline -3', 'git status --short']) assert.equal(as('reviewer', 'shell', { command }).split(' ')[0], 'allow', command);
+  // The envelope of the parent task is not its envelope, and a question to the human is not its way to a change.
+  assert.equal(as('reviewer', 'tracker__add_comment', { change: '7' }), 'deny executor.read-only');
+  assert.equal(as('reviewer', 'unknown__tool', {}), 'deny executor.read-only');
+  assert.equal(as('reviewer', 'write_file', { path: '$PACKS/person/pack.json' }), 'deny executor.read-only');
+  // The main executor keeps its rights.
+  assert.equal(as(undefined, 'write_file', { path: 'src/a.ts' }), 'allow default.local');
+  const rows = readJournal(b.rt.journal.file);
+  const denied = rows.filter((r) => r.kind === 'policy.basis' && r.data?.rule === 'executor.read-only');
+  assert.equal(denied.length, 9);
+  assert.ok(denied.every((r) => r.executor === 'sub' && r.role === 'reviewer'));
+  for (const r of rows) assert.deepEqual(validateRow(r), [], r.kind);
+});
+
+test('before: a subordinate executor with an area writes only there, and reads everywhere', () => {
+  const { b, as } = roles([{ role: 'part-a', count: 1, rights: 'write', area: ['src/a/**', 'docs/a.md'] }, { role: 'part-b', count: 1, rights: 'write', area: ['src/b/**'] }]);
+  fs.mkdirSync(path.join(b.cwd, 'src/a'), { recursive: true });
+  fs.mkdirSync(path.join(b.cwd, 'src/b'), { recursive: true });
+  assert.equal(as('part-a', 'write_file', { path: 'src/a/x.ts' }), 'allow default.local');
+  assert.equal(as('part-a', 'write_file', { path: 'docs/a.md' }), 'allow default.local');
+  assert.equal(as('part-a', 'write_file', { path: 'src/b/x.ts' }), 'deny executor.area');
+  assert.equal(as('part-a', 'write_file', { path: 'src/a/../b/x.ts' }), 'deny executor.area');
+  assert.equal(as('part-a', 'write_file', { path: '$CWD/../x.ts' }), 'deny executor.area');
+  assert.equal(as('part-b', 'write_file', { path: 'src/b/x.ts' }), 'allow default.local');
+  assert.equal(as('part-b', 'write_file', { path: 'src/a/x.ts' }), 'deny executor.area');
+  assert.equal(as('part-a', 'shell', { command: 'echo x > src/a/y.ts' }).split(' ')[0], 'allow');
+  assert.equal(as('part-a', 'shell', { command: 'echo x > src/b/y.ts' }), 'deny executor.area');
+  assert.equal(as('part-a', 'shell', { command: 'rm -r src' }), 'deny executor.area');
+  // What all executors share is not an area of one: the tree and the history of git.
+  for (const command of ['git stash', 'git checkout -- src/b', 'git commit -am x']) assert.equal(as('part-a', 'shell', { command }), 'deny executor.area', command);
+  assert.equal(as('part-a', 'shell', { command: 'git diff' }).split(' ')[0], 'allow');
+  // A write of a connector is not a file: the policy and the envelope of the parent task decide it, as before.
+  assert.equal(as('part-a', 'tracker__add_comment', { change: '7' }), 'ask default.write');
+  assert.equal(as('part-b', 'read_file', { path: 'src/a/x.ts' }), 'allow default.read');
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), [], r.kind);
+});
+
+test('before: a role without rights in the manifest works as before, in the envelope of its parent', () => {
+  const { as } = roles([{ role: 'reviewer', count: 1 }]);
+  assert.equal(as('reviewer', 'write_file', { path: 'src/a.ts' }), 'allow default.local');
+});
+
+test('before: the rights of a role are a word of the list, and the areas of two roles do not meet', () => {
+  const errors = (executors: unknown[]) => validateManifest({ ...(manifests.get('review') as object), model: { level: 'medium', executors } }).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'read' }, { role: 'b', count: 1, rights: 'write', area: ['src/b/**'] }, { role: 'c', count: 1, rights: 'write' }]), []);
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'all' }]), ['not_in_list model.executors[0].rights']);
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'read', area: ['src/**'] }, { role: 'b', count: 1, area: ['src/**'] }]), ['not_allowed model.executors[0].area', 'not_allowed model.executors[1].area']);
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'write', area: ['/x', '../y', 7] }]), ['bad_name model.executors[0].area[0]', 'bad_name model.executors[0].area[1]', 'bad_name model.executors[0].area[2]']);
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'write', area: [] }]), ['empty model.executors[0].area']);
+  // Two areas meet when one lies in the other, or when a pattern has no fixed start.
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'write', area: ['src/**'] }, { role: 'b', count: 1, rights: 'write', area: ['src/b/**'] }]), ['duplicate model.executors[1].area']);
+  assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'write', area: ['**/*.ts'] }, { role: 'b', count: 1, rights: 'write', area: ['docs/**'] }]), ['duplicate model.executors[1].area']);
+  // One role with a count of two shares its area: its executors can meet.
+  assert.deepEqual(errors([{ role: 'a', count: 2, rights: 'write', area: ['src/**'] }]), ['not_allowed model.executors[0].count']);
 });

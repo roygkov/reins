@@ -40,7 +40,7 @@ export type Manifest = {
   trigger: { kind: (typeof TRIGGER_KINDS)[number]; value?: string; inputs?: { name: string; type: (typeof INPUT_TYPES)[number] }[] };
   collect?: { script: string; outputs: string[]; flags?: string[]; max_bytes?: number; timeout_s?: number };
   run_if?: string;
-  model: { level?: Level; raise_to?: Level; executors?: { role: string; count: number }[]; token_limit?: number };
+  model: { level?: Level; raise_to?: Level; executors?: { role: string; count: number; rights?: (typeof EXECUTOR_RIGHTS)[number]; area?: string[] }[]; token_limit?: number };
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
@@ -83,6 +83,8 @@ const REF = /^[a-z0-9][a-z0-9_-]*(\/[a-z0-9][a-z0-9_-]*)*$/; // an object of the
 export const ITEM_CORE_FIELDS: readonly string[] = ['file', 'line', 'end', 'quote', 'text'];
 const PLACEHOLDER = /\{([^{}]*)\}/g;
 
+// What a subordinate executor may do. read: it changes nothing. write: it changes the work, inside its area when it has one.
+export const EXECUTOR_RIGHTS = ['read', 'write'] as const;
 const TOP = ['manifest', 'version', 'name', 'title', 'package', 'state', 'description', 'trigger', 'collect', 'run_if', 'model', 'permissions', 'done', 'output', 'memory'] as const;
 const TOP_REQUIRED = ['manifest', 'name', 'title', 'package', 'trigger', 'model', 'permissions', 'done', 'output'] as const;
 
@@ -236,12 +238,29 @@ function model(r: Report, value: unknown, pack: PackContext): void {
     if (raise !== null && rank(raise) > rank(pack.maxLevel)) r.add('above_pack', 'model.raise_to');
   }
   let total = 0;
+  const areas: string[][] = [];
   (list(r, m.executors, 'model.executors') ?? []).forEach((item, i) => {
     const path = `model.executors[${i}]`;
-    const e = fields(r, item, path, ['role', 'count'], ['role', 'count']);
+    const e = fields(r, item, path, ['role', 'count', 'rights', 'area'], ['role', 'count']);
     if (e === null) return;
     inPack(r, pack.roles, named(r, e.role, `${path}.role`, NAME), `${path}.role`);
-    total += positive(r, e.count, `${path}.count`) ?? 0;
+    const count = positive(r, e.count, `${path}.count`) ?? 0;
+    total += count;
+    const rights = choice(r, e.rights, `${path}.rights`, EXECUTOR_RIGHTS);
+    if (e.area === undefined) return;
+    // An area is a part of the work that one executor changes: only a writer has one.
+    if (rights !== 'write') return r.add('not_allowed', `${path}.area`);
+    const area = list(r, e.area, `${path}.area`);
+    if (area === null) return;
+    if (area.length === 0) return r.add('empty', `${path}.area`);
+    let good = true;
+    area.forEach((g, j) => { if (!isGuard(g)) { good = false; r.add('bad_name', `${path}.area[${j}]`); } });
+    if (!good) return;
+    // Two executors of one role would share the area.
+    if (count > 1) return r.add('not_allowed', `${path}.count`);
+    const starts = (area as string[]).map(fixedStart);
+    if (areas.some((other) => other.some((a) => starts.some((b) => a === '' || b === '' || a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`))))) r.add('duplicate', `${path}.area`);
+    areas.push(starts);
   });
   if (pack.maxExecutors !== undefined && total > pack.maxExecutors) r.add('above_pack', 'model.executors');
   const tokens = positive(r, m.token_limit, 'model.token_limit');
@@ -310,6 +329,12 @@ const MAX_GUARDS = 20;
 function isGuard(value: unknown): value is string {
   if (typeof value !== 'string' || value === '' || value.length > 200 || /[\\\0\n]/.test(value)) return false;
   return value.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
+// The part of a pattern before its first `*`: a fixed path.
+export function fixedStart(guard: string): string {
+  const parts = guard.split('/');
+  const at = parts.findIndex((p) => p.includes('*'));
+  return (at === -1 ? parts : parts.slice(0, at)).join('/');
 }
 export function guardPattern(guard: string): RegExp {
   const source = guard.split('**').map((piece) => piece.split('*').map((text) => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')).join('.*');

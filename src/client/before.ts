@@ -18,6 +18,7 @@ import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
 import { touchedPlaces } from './places.ts';
 import { sessionTask } from './session.ts';
+import { guardPattern } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { findRoot, loadConfig, shellAction, type GateConfig } from '../gate/index.ts';
@@ -431,8 +432,56 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   return r;
 }
 
+// The role of a subordinate executor bounds what it does (harness-core, page 6). The manifest of
+// its parent task names the rights of the role: `read` changes nothing; `write` with an area
+// changes only the files of the area. A role without rights works in the envelope of its parent.
+const GIT_CHANGE = /(^|[\s;&|(`])git\b[^;&|]*?\s(add|commit|stash|checkout|switch|restore|reset|merge|rebase|cherry-pick|revert|rm|mv|clean|apply|am|pull|push|tag|worktree)(\s|$)/;
+function roleLimit(rt: Runtime, call: ToolCall, clientTools: ClientTools, read: Read): string | null {
+  const by = subOf(rt, call, sessionTask(rt, call.session));
+  if (by === undefined) return null;
+  const place = loadTask(rt, by.parent)?.manifest?.model.executors?.find((x) => x.role === by.role);
+  if (place?.rights === undefined) return null;
+  const own = Object.hasOwn(clientTools, call.tool) ? clientTools[call.tool] : undefined;
+  // The places that a shell command changes, as the parse of the command names them. A change that
+  // the parse does not see (a script that writes) passes: the harness cannot look inside a program.
+  const command = own?.kind === 'shell' ? call.input[own.command] : undefined;
+  const changed = typeof command === 'string' ? touchedPlaces(command, call.cwd, os.homedir(), true).filter((p) => p.write || p.tree || p.into).map((p) => p.path) : [];
+  // A command of git that changes the work tree, the index or the history names no path, and it
+  // changes what all executors share: it is the work of the main executor.
+  const shared = typeof command === 'string' && GIT_CHANGE.test(command);
+  if (place.rights === 'read') {
+    // A question about a protected place is a way to a change: a reader has none.
+    if ('guard' in read) return read.guard.outcome === 'ask' ? 'executor.read-only' : null;
+    if (read.action.via === 'shell') return read.action.kind === 'write' || shared || changed.length > 0 ? 'executor.read-only' : null;
+    return read.action.kind === 'read' ? null : 'executor.read-only';
+  }
+  if (place.area === undefined || 'guard' in read) return null;
+  // A command that the gate reads as a write names no path either: nothing says that it stays in the area.
+  if (shared || (read.action.via === 'shell' && read.action.kind === 'write')) return 'executor.area';
+  const files: string[] = [...changed];
+  if (own?.kind === 'local') {
+    const file = call.input[own.path];
+    if (typeof file === 'string') files.push(path.resolve(call.cwd, file));
+  }
+  const root = real(rt.workDir ?? call.cwd);
+  const patterns = place.area.map(guardPattern);
+  const inArea = (file: string): boolean => {
+    const target = real(file);
+    return inside(target, root) && patterns.some((p) => p.test(path.relative(root, target).split(path.sep).join('/')));
+  };
+  return files.every(inArea) ? null : 'executor.area';
+}
+
 function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
   const read = readCall(rt, call, clientTools);
+  const limit = call.sub === undefined ? null : roleLimit(rt, call, clientTools, read);
+  if (limit !== null) {
+    record(rt, call, [
+      { kind: 'policy.decision', data: { outcome: 'deny', action_kind: 'guard' in read ? 'local' : read.action.kind, env: 'guard' in read ? LOCAL_ENV.name : read.action.env.name } },
+      { kind: 'policy.basis', data: { layer: 'core', rule: limit } },
+    ]);
+    return { outcome: 'deny', rule: limit, layer: 'core', envelope: 'none' };
+  }
   if ('guard' in read) {
     record(rt, call, [{ kind: 'policy.protected_attempt', data: { rule: read.guard.rule, outcome: read.guard.outcome } }]);
     return { outcome: read.guard.outcome, rule: read.guard.rule, layer: 'core', envelope: 'none' };

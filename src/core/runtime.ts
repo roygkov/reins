@@ -9,7 +9,7 @@ import path from 'node:path';
 import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
-import { LEVELS, guardPattern, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
+import { LEVELS, fixedStart, guardPattern, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
 import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
 import { patchSession } from './sessions.ts';
@@ -325,7 +325,7 @@ export function redGuards(rt: Runtime): { root: string; patterns: RegExp[]; dirs
       // the path as the collect step named it
     }
     // The part of a pattern before its first `*` is a fixed path: a directory above it holds the files too.
-    const dirs = guards.map((g) => { const parts = g.split('/'); const at = parts.findIndex((p) => p.includes('*')); return (at === -1 ? parts : parts.slice(0, at)).join('/'); });
+    const dirs = guards.map(fixedStart);
     out.push({ root: dir, patterns: guards.map(guardPattern), dirs });
   }
   return out;
