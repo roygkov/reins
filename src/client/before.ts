@@ -14,7 +14,7 @@ import { decide, grantKey, plainValue, type Action, type Decision, type Envelope
 import { applyEvent, confirm, decideAction, loadTask, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
-import { currentScenario, readSession } from '../core/sessions.ts';
+import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
 import { touchedPlaces } from './places.ts';
 import { sessionTask } from './session.ts';
 import { roleOf } from './executors.ts';
@@ -342,6 +342,9 @@ function reply(d: Decision, more: { task?: string; grant?: string } = {}): Reply
 }
 
 export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
+  // The word before an action came: the first one of a session is noted, for the measure in `afterAction`.
+  const seen = readSession(rt, call.session);
+  if (seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true) patchSession(rt, call.session, { before: true });
   let r = decideBefore(rt, call, clientTools);
   // Without a window nobody answers a question: the action waits in the queue of the human.
   if (call.headless === true && r.outcome === 'ask') {
@@ -457,6 +460,14 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // `asked`: false when the client did not show the question to the human (a mode of the client
 // that skips permission questions). Then the run of the tool is no approval.
 export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true): { confirmed: boolean } {
+  // The measure of the level of the client. The adapter said that the client tells the harness
+  // before an action; an action ended, and no such word came in this session. The barriers did
+  // not act: that is a fact for the journal and for the human, written once for a session.
+  const seen = readSession(rt, call.session);
+  if (seen !== null && seen !== undefined && seen.claims !== undefined && seen.before !== true && seen.unguarded !== true) {
+    patchSession(rt, call.session, { unguarded: true });
+    rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: seen.claims, level: 'no_before', measured: 1 } });
+  }
   if (!asked) {
     fs.rmSync(pendingFile(rt, call), { force: true });
     return { confirmed: false };

@@ -295,6 +295,18 @@ test('claude-code: a question that no run of the tool answered is the "no" of th
   assert.equal(decisions(b).length, 1);
 });
 
+test('claude-code: actions with no hook before them: the human reads it at the stop, once', () => {
+  const b = box();
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  fs.writeFileSync(path.join(b.cwd, 'new.txt'), 'x');
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } }));
+  const said = run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.systemMessage ?? '';
+  assert.match(said, /did not tell the harness before them/);
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  assert.doesNotMatch(run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.systemMessage ?? '', /did not tell the harness/);
+});
+
 test('claude-code: the next request also settles a question: a turn that the human broke has no end', () => {
   const b = box();
   run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));

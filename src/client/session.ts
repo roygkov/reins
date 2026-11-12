@@ -95,6 +95,8 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
   measure(rt);
   const level = levelOf(e.capabilities);
   rt.journal.write({ kind: 'harness.client_level_detected', project: rt.project, data: { client: e.client ?? 'unknown', level } });
+  // The level is the word of the adapter. The harness measures it: see `afterAction`.
+  if (level !== 'no_before') patchSession(rt, e.session, { claims: e.client ?? 'unknown' });
   // The harness does not pretend to protect: a client without the event before an action gets the words.
   const context = level === 'no_before'
     ? ['reins: the harness of this workspace. This client does not tell the harness before an action: the barriers do not act here. Say this to the human.']
@@ -229,18 +231,23 @@ export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
 
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result
 // is "not verified" (harness-core, page 2, rule 4).
-export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; label?: string; changed?: boolean } {
+export function agentStopped(rt: Runtime, e: SessionEvent): { task?: string; label?: string; changed?: boolean; unguarded?: boolean } {
   settleQuestions(rt, e.session);
+  // A measured fact: actions of this session ended, and the client told the harness before none
+  // of them. The human hears it once, at the first stop after it, whatever the stop finds.
+  const seen = readSession(rt, e.session);
+  const unguarded: { unguarded?: boolean } = seen?.unguarded === true && seen.told !== true ? { unguarded: true } : {};
+  if (unguarded.unguarded === true) patchSession(rt, e.session, { told: true });
   const id = current(rt, e.session).id;
-  if (id === undefined) return {};
-  const before = readSession(rt, e.session)?.work;
+  if (id === undefined) return { ...unguarded };
+  const before = seen?.work;
   // A fact, not the words of the agent: the work tree is not what it was at the request.
   // A work with no fingerprint (a directory of too many files, no answer of git) gives no fact: nothing is said.
   const now = workState(e.cwd);
   const changed = typeof before === 'string' && now !== null ? now !== before : undefined;
   const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000', ...(changed === true ? { changed: true } : {}) }, 'agent');
-  if (!('task' in r) || r.error !== undefined) return {};
-  const out: { task: string; label?: string; changed?: boolean } = { task: id };
+  if (!('task' in r) || r.error !== undefined) return { ...unguarded };
+  const out: { task: string; label?: string; changed?: boolean; unguarded?: boolean } = { task: id, ...unguarded };
   if (r.task.label !== undefined) out.label = r.task.label;
   if (changed !== undefined) out.changed = changed;
   return out;

@@ -11,7 +11,7 @@ import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { loadTask, openScenario, openTasks, type Runtime } from '../src/core/runtime.ts';
-import { beforeAction } from '../src/client/before.ts';
+import { afterAction, beforeAction } from '../src/client/before.ts';
 import { agentStopped, humanRequest, sessionEnd, sessionStart } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
 
@@ -68,6 +68,38 @@ test('session: the next request closes the task of the request before it', () =>
   assert.deepEqual([loadTask(b.rt, first.task)?.state, loadTask(b.rt, first.task)?.label], ['closed', 'not_verified']);
   assert.equal(act(b, 's1'), second.task);
   assert.deepEqual(openTasks(b.rt).map((t) => t.id), [second.task]);
+});
+
+test('session: a client that says it tells the harness before an action is measured: an action with no word before it is a fact', () => {
+  const b = box();
+  const levels = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.client_level_detected').map((r) => r.data);
+  // The adapter says "full". The first action comes with its word before: nothing is said.
+  sessionStart(b.rt, { session: 's1', cwd: b.cwd, client: 'test_client' });
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  beforeAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' }, CLIENT);
+  afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' }, CLIENT);
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unguarded, undefined);
+  assert.deepEqual(levels(), [{ client: 'test_client', level: 'full' }]);
+  // Another session of the same client: the actions end, and no word came before any of them.
+  sessionStart(b.rt, { session: 's2', cwd: b.cwd, client: 'test_client' });
+  humanRequest(b.rt, { session: 's2', cwd: b.cwd });
+  afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's2' }, CLIENT);
+  afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's2' }, CLIENT);
+  assert.deepEqual(levels().slice(2), [{ client: 'test_client', level: 'no_before', measured: 1 }], 'the fact is written once');
+  assert.equal(agentStopped(b.rt, { session: 's2', cwd: b.cwd }).unguarded, true, 'the human is told at the stop');
+  // Once: the next stop, which finds no open task, says nothing more.
+  assert.deepEqual(agentStopped(b.rt, { session: 's2', cwd: b.cwd }), {});
+  // A stop that finds no task says it all the same.
+  sessionStart(b.rt, { session: 's4', cwd: b.cwd, client: 'test_client' });
+  afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's4' }, CLIENT);
+  assert.deepEqual(agentStopped(b.rt, { session: 's4', cwd: b.cwd }), { unguarded: true });
+  // A client that says itself that it has no word before an action is not measured: the start said it.
+  sessionStart(b.rt, { session: 's3', cwd: b.cwd, client: 'plain', capabilities: { before: false } });
+  humanRequest(b.rt, { session: 's3', cwd: b.cwd });
+  afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's3' }, CLIENT);
+  assert.equal(agentStopped(b.rt, { session: 's3', cwd: b.cwd }).unguarded, undefined);
+  assert.equal(levels().length, 6);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
 });
 
 test('session: when the agent stops, the free task closes as not verified', () => {

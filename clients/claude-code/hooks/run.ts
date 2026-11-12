@@ -232,9 +232,12 @@ function session(mode: string): void {
     else if (mode === 'stop') {
       // The label of the result goes to the human when the request changed the work tree. A request
       // that changed nothing is a question: it has no result to label.
-      if (agentStopped(rt, e).changed === true) {
-        process.stdout.write(JSON.stringify({ systemMessage: 'reins: this request changed the work tree and no check judged the result: not verified. A scenario with a done check gives a verified result (`reins scenarios`).' }));
-      }
+      const stopped = agentStopped(rt, e);
+      const words: string[] = [];
+      if (stopped.changed === true) words.push('reins: this request changed the work tree and no check judged the result: not verified. A scenario with a done check gives a verified result (`reins scenarios`).');
+      // A measured fact: the client did not tell the harness before its actions.
+      if (stopped.unguarded === true) words.push('reins: this client ran actions and did not tell the harness before them: the barriers did not act in this session. Look at the hooks of the plugin.');
+      if (words.length > 0) process.stdout.write(JSON.stringify({ systemMessage: words.join('\n') }));
     }
     else if (mode === 'session-end') sessionEnd(rt, e);
     else if (mode === 'pre-compact') beforeCompaction(rt, e);

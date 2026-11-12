@@ -12,7 +12,10 @@ import type { Runtime } from './runtime.ts';
 // `compacted`: the last time the client compacted the context of the session.
 // `costMarks`: how far the cost is counted in each file of the client, by the path of the file.
 // `since`: the time when the harness saw the session first.
-export type SessionFile = { since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
+// claims: the client said at the start that it tells the harness before an action (the name of the client).
+// before: such a word came in this session. unguarded: an action ended and no such word had come.
+// told: the human heard about it at a stop.
+export type SessionFile = { claims?: string; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; executors?: { role: string; task: string; at: number }[] };
 
 const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
 export const sessionName = (session: string | undefined): string =>
