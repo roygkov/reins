@@ -263,7 +263,8 @@ test('journal: rows are only added, and a broken line does not hide the others',
 test('journal: a write error does not stop the work', () => {
   const dir = path.join(SB, 'blocked');
   fs.writeFileSync(dir, 'a file where the state directory should be');
-  const journal = openJournal(dir);
+  // The count of the loss stays in the box of the test, not in the home directory of the user.
+  const journal = openJournal(dir, undefined, { lostDir: path.join(SB, 'blocked-spare') });
   const r = journal.write({ kind: 'memory.read', project: 'p1' });
   assert.equal(r.written, false);
   assert.equal(journal.failures, 1);
