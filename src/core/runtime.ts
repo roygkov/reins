@@ -9,7 +9,7 @@ import path from 'node:path';
 import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
 import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
-import { LEVELS, fixedStart, guardPattern, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
+import { LEVELS, fixedStart, guardPattern, inputForm, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
 import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
 import { patchSession } from './sessions.ts';
@@ -221,7 +221,7 @@ export function frozenRuntime(rt: Runtime, id: string | undefined): Runtime {
 
 // Opens a task of a scenario by its name. The trigger is refused before any task exists when
 // the scenario is unknown or disabled or the inputs do not fit.
-export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { session?: string } = {}): Opened {
+export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { session?: string; byForm?: boolean } = {}): Opened {
   const scenario = rt.merged.scenarios.find((s) => s.name === name);
   if (scenario === undefined) return { ok: false, error: 'unknown_scenario' };
   if (scenario.manifest.state === 'disabled') return { ok: false, error: 'disabled' };
@@ -229,7 +229,7 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   if (scenarioOff(rt, name)) return { ok: false, error: 'idle' };
   // The task works with its own copy of the manifest from here on.
   const manifest = structuredClone(scenario.manifest);
-  const made = newScenarioTask(newId(), manifest, { ...inputs });
+  const made = newScenarioTask(newId(), manifest, { ...inputs }, opts.byForm === true ? 'input_form' : 'scenario_name');
   if ('errors' in made) return { ok: false, error: 'bad_inputs', details: made.errors };
   if (scenario.instructions !== undefined) made.task.instructions = scenario.instructions;
   made.task.level ??= defaultLevel(rt);
@@ -238,6 +238,29 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   freeze(rt, made.task.id);
   noteUse(rt, name);
   return { ok: true, ...prepareTask(rt, made.task) };
+}
+
+// A scenario by the form of the input (harness-core, page 8): a value that fits the form of one
+// manifest opens that scenario without its name. The form is the pattern of the one input of a
+// command scenario. A value that fits the forms of several manifests opens nothing: the human
+// chooses by the name. A type alone is no form.
+const MAX_FORM_VALUE = 500;
+export type OpenedByForm = Opened | { ok: false; error: 'no_match' } | { ok: false; error: 'several'; scenarios: string[] };
+export function openByForm(rt: Runtime, value: string, opts: { session?: string } = {}): OpenedByForm {
+  const fits: { name: string; input: string }[] = [];
+  // A value is a ticket, a link, a name: a longer text has no form, and a pattern of a pack is not run on it.
+  if (value.length > MAX_FORM_VALUE || /[\r\n]/.test(value)) return { ok: false, error: 'no_match' };
+  for (const s of rt.merged.scenarios) {
+    const inputs = s.manifest.trigger.inputs ?? [];
+    const [only] = inputs;
+    // A scenario that does not act (disabled, or switched off for no calls) is no choice.
+    if (s.manifest.trigger.kind !== 'command' || s.manifest.state === 'disabled' || scenarioOff(rt, s.name) || inputs.length !== 1 || only === undefined || only.pattern === undefined) continue;
+    if (inputForm(only.pattern)?.test(value) === true) fits.push({ name: s.name, input: only.name });
+  }
+  const [one] = fits;
+  if (one === undefined) return { ok: false, error: 'no_match' };
+  if (fits.length > 1) return { ok: false, error: 'several', scenarios: fits.map((f) => f.name).sort() };
+  return openScenario(rt, one.name, { [one.input]: value }, { ...opts, byForm: true });
 }
 
 // The session that holds a task. The task becomes the current scenario task of that session:

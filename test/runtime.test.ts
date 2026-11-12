@@ -1,5 +1,6 @@
 // The runtime on the disk: packs, a collect script, the task store and the journal.
 import { test, after } from 'node:test';
+import { validateManifest } from '../src/contracts/manifest.ts';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,7 +8,7 @@ import path from 'node:path';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { applyEvent, confirm, decideAction, loadTask, openFreeTask, openScenario, readCollected, readReport, runCheck, submitReport, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, confirm, decideAction, loadTask, openFreeTask, openScenario, readCollected, readReport, runCheck, submitReport, type Runtime, openByForm } from '../src/core/runtime.ts';
 import { runCollect } from '../src/core/collect.ts';
 import type { Action } from '../src/contracts/policy.ts';
 import { loadCases, patch } from './cases.ts';
@@ -537,4 +538,42 @@ test('journal: rows that could not be written are counted on the disk, and the n
   assert.equal(back.write({ kind: 'memory.read', project: 'p1', data: { n: 1 } }).written, true);
   assert.deepEqual(readJournal(back.file).map((r) => [r.kind, r.data?.lost]), [['harness.failure', 2], ['memory.read', undefined]]);
   assert.deepEqual(fs.readdirSync(spare), []);
+});
+
+// ---- A scenario by the form of the input.
+
+test('runtime: an input of a known form opens the one scenario whose manifest names that form', () => {
+  const rt = runtime();
+  const form = (name: string, inputs: unknown[]): Runtime => ({ ...rt, merged: { ...rt.merged, scenarios: rt.merged.scenarios.map((s) => (s.name === name ? { ...s, manifest: { ...s.manifest, trigger: { kind: 'command', inputs } } as typeof s.manifest } : s)) } });
+  const one = form('change-review', [{ name: 'change_id', type: 'id', pattern: 'CH-[0-9]+' }]);
+  // The value fits the form of one manifest: the code opens that scenario, and the journal says why.
+  const opened = openByForm(one, 'CH-7');
+  assert.ok(opened.ok, JSON.stringify(opened));
+  assert.deepEqual([opened.task.scenario, opened.task.inputs], ['change-review', { change_id: 'CH-7' }]);
+  assert.equal(readJournal(rt.journal.file).find((r) => r.kind === 'task.kind_decided' && r.task === opened.task.id)?.data?.reason, 'input_form');
+  // The form is the whole value, not a part of it. A value that fits no form opens nothing.
+  assert.deepEqual(openByForm(one, 'see CH-7'), { ok: false, error: 'no_match' });
+  assert.deepEqual(openByForm(one, 'other'), { ok: false, error: 'no_match' });
+  // The form holds also when the human names the scenario: a value of another form is refused.
+  assert.deepEqual(openScenario(one, 'change-review', { change_id: 'other' }), { ok: false, error: 'bad_inputs', details: [{ code: 'bad_form', path: 'change_id' }] });
+  assert.deepEqual(openByForm(one, `CH-${'7'.repeat(600)}`), { ok: false, error: 'no_match' });
+  // An input without a form matches nothing: a type alone says too little.
+  assert.deepEqual(openByForm(rt, '7'), { ok: false, error: 'no_match' });
+  // Two manifests name a form that the value fits: the human chooses by the name.
+  const first = one.merged.scenarios.find((s) => s.name === 'change-review');
+  assert.ok(first !== undefined);
+  const two: Runtime = { ...one, merged: { ...one.merged, scenarios: [...one.merged.scenarios, { ...first, name: 'change-audit', manifest: { ...first.manifest, name: 'change-audit', trigger: { kind: 'command', inputs: [{ name: 'change', type: 'id', pattern: 'CH-.*' }] } } }] } };
+  assert.deepEqual(openByForm(two, 'CH-7'), { ok: false, error: 'several', scenarios: ['change-audit', 'change-review'] });
+  for (const row of readJournal(rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+test('runtime: the form of an input is a pattern of the manifest', () => {
+  const base = manifests.get('review') as { trigger: Record<string, unknown> };
+  const errors = (input: Record<string, unknown>) => validateManifest({ ...base, trigger: { kind: 'command', inputs: [input] } }).filter((e) => e.path.startsWith('trigger')).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ name: 'change_id', type: 'id', pattern: 'CH-[0-9]+' }), []);
+  assert.deepEqual(errors({ name: 'change_id', type: 'url', pattern: 'https://tracker\\.example\\.com/c/[0-9]+' }), []);
+  assert.deepEqual(errors({ name: 'change_id', type: 'id', pattern: 'CH-[0-9' }), ['bad_form trigger.inputs[0].pattern']);
+  assert.deepEqual(errors({ name: 'change_id', type: 'id', pattern: '' }), ['bad_form trigger.inputs[0].pattern']);
+  assert.deepEqual(errors({ name: 'change_id', type: 'number', pattern: '[0-9]+' }), ['not_allowed trigger.inputs[0].pattern']);
+  assert.deepEqual(errors({ name: 'change_id', type: 'id', pattern: 7 }), ['bad_form trigger.inputs[0].pattern']);
 });

@@ -3,7 +3,7 @@
 // or a decision of the human does that. Every move drafts the journal rows that describe it.
 // Specification: docs/spec/harness-core, pages 2, 5, 6 and 7; harness-manifest, page 2.
 
-import { labelOf, type Level, type Manifest, type ResultLabel } from '../contracts/manifest.ts';
+import { inputForm, labelOf, type Level, type Manifest, type ResultLabel } from '../contracts/manifest.ts';
 import type { EventKind, TASK_KINDS } from '../contracts/journal.ts';
 import { decide, grantKey, plainValue, type Action, type Decision, type Grant, type LayerDecision, type TaskUse } from '../contracts/policy.ts';
 import type { Fault } from '../contracts/shape.ts';
@@ -74,7 +74,7 @@ export type TaskEvent =
 export type RowDraft = { kind: EventKind; data?: Record<string, string | number | boolean>; fp?: string };
 export type Step = { task: Task; rows: RowDraft[]; error?: 'bad_event' };
 
-export type InputErrorCode = 'missing' | 'unknown' | 'bad_type';
+export type InputErrorCode = 'missing' | 'unknown' | 'bad_type' | 'bad_form';
 export type InputError = Fault<InputErrorCode>;
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/;
@@ -101,6 +101,8 @@ export function checkInputs(manifest: Manifest, inputs: Inputs): InputError[] {
     const value = Object.hasOwn(inputs, d.name) ? inputs[d.name] : undefined;
     if (value === undefined) errors.push({ code: 'missing', path: d.name });
     else if (!inputFits(d.type, value)) errors.push({ code: 'bad_type', path: d.name });
+    // The form that the manifest names holds for every way a task opens, also by the name of the scenario.
+    else if (d.pattern !== undefined && typeof value === 'string' && inputForm(d.pattern)?.test(value) !== true) errors.push({ code: 'bad_form', path: d.name });
   }
   for (const name of Object.keys(inputs)) if (!declared.some((d) => d.name === name)) errors.push({ code: 'unknown', path: name });
   return errors;
@@ -117,7 +119,8 @@ export function grantsOf(manifest: Manifest, inputs: Inputs): Grant[] {
   }));
 }
 
-export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs): { task: Task; rows: RowDraft[] } | { errors: InputError[] } {
+// `reason`: why the task is a task of this scenario: the human named the scenario, or the input had the form of its manifest.
+export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs, reason: 'scenario_name' | 'input_form' = 'scenario_name'): { task: Task; rows: RowDraft[] } | { errors: InputError[] } {
   const errors = checkInputs(manifest, inputs);
   if (errors.length > 0) return { errors };
   const task: Task = {
@@ -133,7 +136,7 @@ export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs):
     returns: 0,
     ...(manifest.model.level !== undefined ? { level: manifest.model.level } : {}),
   };
-  return { task, rows: [{ kind: 'task.opened' }, { kind: 'task.kind_decided', data: { kind: 'scenario', reason: 'scenario_name' } }] };
+  return { task, rows: [{ kind: 'task.opened' }, { kind: 'task.kind_decided', data: { kind: 'scenario', reason } }] };
 }
 
 // A task with a contract: a manifest for one task, proposed by the agent. Nothing runs before

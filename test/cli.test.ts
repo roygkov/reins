@@ -472,3 +472,19 @@ test('cli: a copy of a collected result that was changed is written again, and a
   assert.equal(again, 'd'.repeat(5000), 'the result stays in the input');
   assert.equal(fs.readFileSync(target, 'utf8'), 'untouched');
 });
+
+test('cli: a value of a known form opens the scenario of that form without its name', () => {
+  const b = box({ manifest: (m) => { if (m.name === 'change-review') m.trigger.inputs[0].pattern = 'CH-[0-9]+'; } });
+  const opened = reins(b, ['match', 'CH-7']).json;
+  assert.deepEqual([opened.ok, opened.scenario, opened.state], [true, 'change-review', 'executing']);
+  assert.equal(reins(b, ['input', opened.task]).json.task, opened.task);
+  const none = reins(b, ['match', 'something-else']).json;
+  assert.deepEqual([none.ok, none.error], [false, 'no_match']);
+  // Two manifests name a form that the value fits: the answer names them, and the human chooses.
+  const two = box({ manifest: (m) => { if (m.name === 'change-review') m.trigger.inputs[0].pattern = 'CH-[0-9]+'; } });
+  const second = path.join(two.root, 'person/manifests/draft-message.json');
+  const draft = JSON.parse(fs.readFileSync(second, 'utf8'));
+  fs.writeFileSync(second, JSON.stringify({ ...draft, trigger: { kind: 'command', inputs: [{ name: 'ticket', type: 'id', pattern: 'CH-.*' }] } }));
+  const several = reins(two, ['match', 'CH-7']).json;
+  assert.deepEqual([several.ok, several.error, several.scenarios], [false, 'several', ['change-review', 'draft-message']]);
+});

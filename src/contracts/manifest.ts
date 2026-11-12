@@ -37,7 +37,8 @@ export type Manifest = {
   package: Package;
   state?: (typeof STATES)[number];
   description?: string;
-  trigger: { kind: (typeof TRIGGER_KINDS)[number]; value?: string; inputs?: { name: string; type: (typeof INPUT_TYPES)[number] }[] };
+  // `pattern` of an input: the form of its value. A value that fits the form of one manifest opens that scenario without its name.
+  trigger: { kind: (typeof TRIGGER_KINDS)[number]; value?: string; inputs?: { name: string; type: (typeof INPUT_TYPES)[number]; pattern?: string }[] };
   collect?: { script: string; outputs: string[]; flags?: string[]; max_bytes?: number; timeout_s?: number };
   run_if?: string;
   model: { level?: Level; raise_to?: Level; executors?: { role: string; count: number; rights?: (typeof EXECUTOR_RIGHTS)[number]; area?: string[] }[]; token_limit?: number };
@@ -198,10 +199,15 @@ function trigger(r: Report, value: unknown): Set<string> {
   if (kind === 'schedule' && items.length > 0) r.add('not_allowed', 'trigger.inputs');
   items.forEach((item, i) => {
     const path = `trigger.inputs[${i}]`;
-    const input = fields(r, item, path, ['name', 'type'], ['name', 'type']);
+    const input = fields(r, item, path, ['name', 'type', 'pattern'], ['name', 'type']);
     if (input === null) return;
     const name = named(r, input.name, `${path}.name`, IDENT);
-    choice(r, input.type, `${path}.type`, INPUT_TYPES);
+    const type = choice(r, input.type, `${path}.type`, INPUT_TYPES);
+    // The form of the value: a pattern for the whole value. A number has no form of a text.
+    if (input.pattern !== undefined) {
+      if (type === 'number') r.add('not_allowed', `${path}.pattern`);
+      else if (inputForm(input.pattern) === null) r.add('bad_form', `${path}.pattern`);
+    }
     if (name === null) return;
     if (inputs.has(name)) r.add('duplicate', `${path}.name`);
     inputs.add(name);
@@ -323,6 +329,18 @@ function permissions(r: Report, value: unknown, pack: PackContext, inputs: Set<s
       seen.add(key);
     }
   });
+}
+
+// The pattern of the form of an input, for the whole value; null when it is not a pattern.
+export function inputForm(pattern: unknown): RegExp | null {
+  if (typeof pattern !== 'string' || pattern === '' || pattern.length > 300) return null;
+  try {
+    // Alone first: a bracket without its pair would close the group that makes the match whole.
+    new RegExp(pattern);
+    return new RegExp(`^(?:${pattern})$`);
+  } catch {
+    return null;
+  }
 }
 
 const MAX_GUARDS = 20;
