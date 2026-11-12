@@ -127,7 +127,10 @@ function view(rt: Runtime, task: Task): Out {
     // The memory about the places of this work: the changed files when the scenario names them.
     const changed = task.manifest?.done.changed === undefined ? undefined : readCollected(rt, task.id)?.[task.manifest.done.changed];
     const places = Array.isArray(changed) ? changed.map((f) => (typeof f === 'string' ? f : isObj(f) && typeof f.path === 'string' ? f.path : '')).filter((p) => p !== '') : [];
-    const records = recordsForInput(rt, { paths: places, maxBytes: MEMORY_INPUT_BYTES });
+    // The terms of the task: the values of its inputs (a ticket, a change, a name). A link gives its parts.
+    // A path of this machine is not a term: its parts (the name of the project, of the user) are in too many records.
+    const terms = Object.values(task.inputs).flatMap((v) => (typeof v === 'number' ? [String(v)] : typeof v === 'string' && !/^[/~]/.test(v) ? v.split(/[\s/:?&=#@,;]+/) : [])).filter((w) => !/^(https?|www|com|org|net)$/i.test(w));
+    const records = recordsForInput(rt, { paths: places, maxBytes: MEMORY_INPUT_BYTES, terms, ...(task.scenario !== undefined ? { scenario: task.scenario } : {}) });
     if (records.length > 0) {
       input.memory = records;
       input.protocol.push('`memory` holds records about this work. When a record helped, cite its id in the report: the harness counts that as a use of the record.');

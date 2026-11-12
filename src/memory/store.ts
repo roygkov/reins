@@ -35,6 +35,7 @@ export type MemoryRecord = {
   anchor?: { path: string; fp: string; root: string }; // the first place that has a fingerprint, and the directory of all the places
   anchors?: { path: string; fp: string }[]; // the other places that have a fingerprint
   task?: string;
+  scenario?: string; // the scenario of the task that wrote the record
   veto_until?: string; // a pending record becomes active at this time
   verified?: string; // the last time a human said that the record still holds
   because?: string; // the reason of a decision
@@ -75,7 +76,7 @@ const ID = /^m[0-9a-f]{10}$/;
 const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'];
 const MAX_STEP = 500; // characters of a next step and of an outer status of a case
 const MAX_STATE_PART = 1000; // characters of the next steps and of the unverified things of a state
-const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong', 'carried', 'carried_day'] as const;
+const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'scenario', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong', 'carried', 'carried_day'] as const;
 const ENCODED = ['paths', 'anchor', 'anchors', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status', 'unverified'] as const;
 
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
@@ -353,7 +354,12 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     id: `m${crypto.randomBytes(5).toString('hex')}`, type, state, project: rt.project, by: input.by, created,
     text: scrub(input.text), paths: [...input.paths], history: [{ at: new Date(now).toISOString(), state }], uses: 0,
   };
-  if (input.task !== undefined) record.task = input.task;
+  if (input.task !== undefined) {
+    record.task = input.task;
+    // The scenario of that task: a later task of the same scenario gets the record in its input.
+    const scenario = loadTask(rt, input.task)?.scenario;
+    if (scenario !== undefined) record.scenario = scenario;
+  }
   if (input.verified !== undefined) record.verified = input.verified;
   if (pending) record.veto_until = new Date(now + (rt.merged.vetoDays ?? VETO_DAYS) * DAY).toISOString();
   for (const key of ['because', 'rejected', 'revisit', 'source'] as const) {
@@ -486,6 +492,9 @@ export function findRecords(rt: Runtime, query: { paths: string[]; project?: str
 
 // The order of the records for the agent: a record that the human marked as wrong goes after the
 // others, then the most cited first, then the newest.
+const MIN_TERM = 4; // characters: a shorter word is in too many texts to be a term
+const MAX_TERMS = 20;
+const WORD_PART = /[\p{L}\p{N}_-]/u;
 const byWeight = (a: MemoryRecord, b: MemoryRecord): number =>
   (a.wrong ?? 0) - (b.wrong ?? 0) || b.uses - a.uses || b.created.localeCompare(a.created) || a.id.localeCompare(b.id);
 
@@ -661,8 +670,30 @@ export function wrongRecord(rt: Runtime, id: string, now: number = Date.now()): 
 
 // The records that go into the input of a task: with their ids, the most cited first, then the
 // newest, and only as many as fit the size limit.
-export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes: number }, now: number = Date.now()): { id: string; type: RecordType; text: string }[] {
-  const found = findRecords(rt, { paths: query.paths }, now).sort(byWeight);
+// A record is chosen by the keys of the task (harness-memory, page 5): the place (the files of
+// the work), the scenario (a record that an earlier task of the same scenario wrote) and the
+// terms (a value of an input of the task that the text of the record names). A record about the
+// whole project is chosen always. The closest records come first: the place, then the scenario,
+// then a term, then the rest; inside one group the order of the weight.
+export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes: number; terms?: string[]; scenario?: string }, now: number = Date.now()): { id: string; type: RecordType; text: string }[] {
+  const terms = [...new Set((query.terms ?? []).map((t) => t.trim().toLowerCase()).filter((t) => t.length >= MIN_TERM))].slice(0, MAX_TERMS);
+  // A term is a whole word of the text: the name of a project inside a longer word is no match.
+  const named = (text: string, term: string): boolean => {
+    for (let at = text.indexOf(term); at >= 0; at = text.indexOf(term, at + 1)) {
+      const before = at === 0 ? '' : text[at - 1] ?? '';
+      const after = text[at + term.length] ?? '';
+      if (!WORD_PART.test(before) && !WORD_PART.test(after)) return true;
+    }
+    return false;
+  };
+  const score = (r: MemoryRecord): number => {
+    const text = terms.length === 0 ? '' : r.text.toLowerCase();
+    return (r.paths.length > 0 && about(r, query.paths) ? 4 : 0) + (query.scenario !== undefined && r.scenario === query.scenario ? 2 : 0) + (terms.some((t) => named(text, t)) ? 1 : 0);
+  };
+  const scored = findRecords(rt, { paths: [], all: true, silent: true }, now).map((r) => ({ r, score: score(r) })).filter((x) => x.score > 0 || x.r.paths.length === 0);
+  // A record that the human marked as wrong stays behind the others, as in every order of the memory.
+  const found = scored.sort((a, b) => (a.r.wrong ?? 0) - (b.r.wrong ?? 0) || b.score - a.score || byWeight(a.r, b.r)).map((x) => x.r);
+
   const out: { id: string; type: RecordType; text: string }[] = [];
   let size = 0;
   for (const r of found) {
@@ -671,6 +702,8 @@ export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes:
     size += bytes;
     out.push({ id: r.id, type: r.type, text: r.text });
   }
+  // The journal counts the records that the agent got, after the limit of the size.
+  if (out.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: out.length } });
   return out;
 }
 

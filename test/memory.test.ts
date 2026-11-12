@@ -158,7 +158,7 @@ test('memory: the command line adds, lists and vetoes records', () => {
 });
 
 // ---- The memory by the specification: the place of a record, its use, its age, its history.
-import { countUses, importRecords, recordsForInput, restoreRecord, scrub } from '../src/memory/store.ts';
+import { countUses, importRecords, memoryDir, recordsForInput, restoreRecord, scrub } from '../src/memory/store.ts';
 
 function repo(b: Box): string {
   fs.mkdirSync(path.join(b.cwd, 'src'), { recursive: true });
@@ -318,7 +318,7 @@ test('memory: secrets are cleaned from a record before it is written', () => {
   assert.equal(r.record.text, 'The job needs password=[redacted] to start.');
 });
 
-test('memory: the records for a task come with their ids, the most used first, inside a size limit', () => {
+test('memory: the records for a task come with their ids, the record about the place first, inside a size limit', () => {
   const b = box();
   const ids: string[] = [];
   for (const [text, paths] of [['About the limit file.', ['src/Limit.java']], ['About the whole project.', []], ['About another file.', ['src/Other.java']], ['Long. '.repeat(200), []]] as const) {
@@ -328,7 +328,7 @@ test('memory: the records for a task come with their ids, the most used first, i
   }
   countUses(b.rt, `see ${ids[1]}`, T0);
   const got = recordsForInput(b.rt, { paths: ['a/src/Limit.java'], maxBytes: 600 }, T0);
-  assert.deepEqual(got.map((x) => x.id), [ids[1], ids[0]], 'the used record first; the other file and the record over the limit are left out');
+  assert.deepEqual(got.map((x) => x.id), [ids[0], ids[1]], 'the record about the place first, then the used one; the other file and the record over the limit are left out');
   assert.deepEqual(Object.keys(got[0] ?? {}).sort(), ['id', 'text', 'type']);
 });
 
@@ -467,4 +467,52 @@ test('memory: a record file that a human broke is shown, not skipped in silence'
   fs.writeFileSync(path.join(dir, 'm0000000002.md'), fs.readFileSync(path.join(dir, `${r.record.id}.md`), 'utf8').replace(r.record.id, 'm0000000002').replace('state: active', 'state: alive'));
   const out = reins(b, ['memory']).json;
   assert.deepEqual(out.broken, ['pitfall/m0000000001.md', 'pitfall/m0000000002.md']);
+});
+
+test('memory: the records for a task are chosen by the place, by the scenario and by the terms of the task', () => {
+  const b = box();
+  const add = (text: string, paths: string[] = [], scenario?: string): string => {
+    const r = addRecord(b.rt, { type: 'pitfall', text, paths, by: 'human' }, T0);
+    assert.ok(r.ok);
+    // The scenario of the task that wrote a record is kept with the record.
+    if (scenario !== undefined) {
+      const file = path.join(memoryDir(b.rt), 'pitfall', `${r.record.id}.md`);
+      const text = fs.readFileSync(file, 'utf8');
+      assert.match(text, /^id: /m);
+      fs.writeFileSync(file, text.replace(/^id: (.*)$/m, `id: $1\nscenario: ${scenario}`));
+    }
+    return r.record.id;
+  };
+  const place = add('About the limit file.', ['src/Limit.java']);
+  const general = add('About the whole project.');
+  const ofScenario = add('The release card moves by hand.', ['docs/release.md'], 'solr-release');
+  const term = add('The ticket MPD-123583 needs a Production Change.', ['docs/other.md']);
+  const far = add('About another file.', ['src/Other.java']);
+  const ids = (query: Record<string, unknown>) => recordsForInput(b.rt, { paths: [], maxBytes: 4000, ...query }, T0).map((x) => x.id);
+  // As before: the place and the records about the whole project.
+  assert.deepEqual(ids({ paths: ['a/src/Limit.java'] }), [place, general]);
+  // The scenario of the task brings the records that its earlier tasks wrote, whatever their place.
+  assert.deepEqual(ids({ paths: ['a/src/Limit.java'], scenario: 'solr-release' }), [place, ofScenario, general]);
+  // A term of the task brings a record that names it. The case of the letters does not matter; a short word is no term.
+  assert.deepEqual(ids({ terms: ['mpd-123583'] }), [term, general]);
+  assert.deepEqual(ids({ terms: ['the'] }), [general]);
+  assert.deepEqual(ids({ paths: ['a/src/Limit.java'], scenario: 'solr-release', terms: ['MPD-123583'] }), [place, ofScenario, term, general]);
+  assert.equal(ids({ paths: ['a/src/Limit.java'], scenario: 'solr-release', terms: ['MPD-123583'] }).includes(far), false);
+  // A term is a whole word: the name inside a longer word is no match.
+  assert.deepEqual(ids({ terms: ['release'] }), [ofScenario, general]);
+  assert.deepEqual(ids({ terms: ['releas'] }), [general]);
+  // The journal counts what the agent got, after the limit of the size.
+  const reads = () => readJournal(b.rt.journal.file).filter((x) => x.kind === 'memory.read').map((x) => x.data?.n);
+  const before = reads().length;
+  recordsForInput(b.rt, { paths: ['a/src/Limit.java'], scenario: 'solr-release', terms: ['MPD-123583'], maxBytes: 60 }, T0);
+  assert.deepEqual(reads().slice(before), [2]);
+  // The scenario of a record is the scenario of the task that wrote it.
+  const task = scenario(b);
+  const own = addRecord(b.rt, { type: 'pitfall', text: 'A note of a review task.', paths: ['docs/review.md'], task, by: 'agent' }, T0 - 30 * DAY);
+  assert.ok(own.ok);
+  assert.equal(own.record.scenario, 'change-review');
+  assert.equal(listRecords(b.rt, T0).find((x) => x.id === own.record.id)?.scenario, 'change-review');
+  assert.equal(ids({ scenario: 'change-review' }).includes(own.record.id), true);
+  // The limit of the size keeps the closest records.
+  assert.deepEqual(recordsForInput(b.rt, { paths: ['a/src/Limit.java'], scenario: 'solr-release', terms: ['MPD-123583'], maxBytes: 60 }, T0).map((x) => x.id), [place, ofScenario]);
 });
