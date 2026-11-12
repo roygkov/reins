@@ -383,7 +383,7 @@ function main(args: string[]): Out {
       const [type, text, ...more] = first === 'add' ? rest : ['decision', ...rest];
       const value = (name: string): string | undefined => more.find((m) => m.startsWith(`${name}=`))?.slice(name.length + 1);
       const input: Parameters<typeof addRecord>[1] = { type: type ?? '', text: text ?? '', paths: more.filter((m) => m.startsWith('path=')).map((m) => m.slice(5)), by: first === 'add' ? 'agent' : 'human' };
-      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes', 'next', 'status'] as const) {
+      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes', 'next', 'status', 'unverified'] as const) {
         const v = value(key);
         if (v !== undefined) input[key] = v;
       }

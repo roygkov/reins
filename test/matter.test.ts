@@ -12,7 +12,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { openScenario, type Runtime } from '../src/core/runtime.ts';
 import { sessionStart } from '../src/client/session.ts';
-import { addRecord, casesForStart, closeCase, importRecords, listRecords, recordsForStart, restoreRecord, searchRecords, stepCase, vetoRecord } from '../src/memory/store.ts';
+import { addRecord, casesForStart, closeCase, importRecords, listRecords, recordsForStart, restoreRecord, searchRecords, stateForStart, stepCase, vetoRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -37,6 +37,8 @@ function box(memory: unknown = { write: ['case'], class: 'auto' }): Box {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (rel.endsWith('.sh')) fs.writeFileSync(file, `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${JSON.stringify(out)}'\n`, { mode: 0o755 });
     else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), memory }));
+    // The organization of the test knows the state among the types of its memory.
+    else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), memory: { types: ['pitfall', 'case', 'state'] } }));
     else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
     else fs.writeFileSync(file, JSON.stringify(value));
   }
@@ -198,4 +200,79 @@ test('case: the agent goes on with a case that it opened, while the case waits f
   assert.deepEqual([of(b, r.record.id, T0 + DAY)?.state, of(b, r.record.id, T0 + DAY)?.next], ['pending', 'the owner answered']);
   // A draft is not shown at a start: the human has not let it pass yet.
   assert.deepEqual(casesForStart(b.rt, 2000, T0 + DAY).lines, []);
+});
+
+// ---- The record "state": where the work of a project is now. One for a project, written anew each time.
+
+test('state: a new state of a project takes the place of the one before it', () => {
+  const b = box({ write: ['state'], class: 'auto' });
+  const task = scenario(b);
+  const first = addRecord(b.rt, { type: 'state', text: 'The release is requested; the card is in Pre-check.', paths: [], by: 'agent', task, next: '1. check the approval\n2. post to the channel', unverified: 'the image on UAT was not opened by hand' }, T0);
+  assert.ok(first.ok, JSON.stringify(first));
+  assert.deepEqual([first.record.state, first.record.next, first.record.unverified], ['active', '1. check the approval\n2. post to the channel', 'the image on UAT was not opened by hand']);
+  const second = addRecord(b.rt, { type: 'state', text: 'The release is on production.', paths: [], by: 'agent', task, next: 'move the card to Accepted' }, T0 + DAY);
+  assert.ok(second.ok);
+  assert.deepEqual(listRecords(b.rt, T0 + DAY).map((r) => [r.id, r.state]).sort(), [[first.record.id, 'replaced'], [second.record.id, 'active']].sort());
+  // The state of another project stays.
+  const there: Runtime = { ...b.rt, project: 'p9z8y7x6' };
+  const other = addRecord(there, { type: 'state', text: 'Another project is quiet.', paths: [], by: 'human' }, T0 + DAY);
+  assert.ok(other.ok);
+  assert.equal(of(b, second.record.id, T0 + DAY)?.state, 'active');
+  // The file of a state is a text that a human reads.
+  const file = fs.readFileSync(path.join(b.rt.stateDir, 'memory', 'state', `${second.record.id}.md`), 'utf8');
+  assert.match(file, /^next: "move the card to Accepted"$/m);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
+test('state: what is not verified is a thing of a state, and an outer status is a thing of a case', () => {
+  const b = box();
+  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', unverified: 'x' }, T0), { ok: false, error: 'bad_type' });
+  assert.deepEqual(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', status: 'x' }, T0), { ok: false, error: 'bad_type' });
+  assert.deepEqual(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', next: 'n'.repeat(1001) }, T0), { ok: false, error: 'bad_text' });
+  // The next steps of a state are a short list: lines are kept. The next step of a case is one line.
+  assert.ok(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', next: 'one\ntwo' }, T0).ok);
+  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'one\ntwo' }, T0), { ok: false, error: 'bad_text' });
+});
+
+test('state: the start of a session gives the state of the project, whole', () => {
+  const b = box();
+  assert.deepEqual(stateForStart(b.rt, 3000, T0), []);
+  const old = addRecord(b.rt, { type: 'state', text: 'An old state.', paths: [], by: 'human' }, T0 - DAY);
+  const now = addRecord(b.rt, { type: 'state', text: 'The harness runs the daily work.', paths: [], by: 'human', next: '1. the first real firecheck', unverified: 'the answer "no" in a window' }, T0);
+  assert.ok(old.ok && now.ok);
+  const lines = stateForStart(b.rt, 3000, T0 + DAY);
+  assert.match(lines[0] ?? '', new RegExp(`^State of this project \\(${now.record.id}, written 2026-11-12\\):$`));
+  assert.deepEqual(lines.slice(1), ['The harness runs the daily work.', 'Next:', '1. the first real firecheck', 'Not verified:', 'the answer "no" in a window']);
+  // The state is not among the other records, and a state that is too long is cut with a mark.
+  assert.deepEqual(recordsForStart(b.rt, 2000, T0 + DAY).lines, []);
+  const long = addRecord(b.rt, { type: 'state', text: 'я'.repeat(900), paths: [], by: 'human', next: 'a step' }, T0 + DAY);
+  assert.ok(long.ok);
+  const cut = stateForStart(b.rt, 300, T0 + 2 * DAY).join('\n');
+  assert.equal(Buffer.byteLength(cut) <= 300, true, String(Buffer.byteLength(cut)));
+  assert.match(cut, /я{50,}\n… cut: `reins memory find <word>` gives the rest\.$/);
+  assert.ok(addRecord(b.rt, { type: 'state', text: 'The harness runs the daily work.', paths: [], by: 'human', next: '1. the first real firecheck' }, T0 + 2 * DAY).ok);
+  const text = sessionStart(b.rt, { session: 's1', cwd: b.cwd }).context.join('\n');
+  assert.match(text, /State of this project/);
+  assert.match(text, /the first real firecheck/);
+});
+
+test('state: the command line writes a state with its next steps and with what is not verified', () => {
+  const b = box({ write: ['state'], class: 'auto' });
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  const task = scenario(b);
+  const added = reins(['memory', 'add', 'state', 'The release is requested.', `task=${task}`, 'next=check the approval', 'unverified=the image on UAT']);
+  assert.deepEqual([added.ok, added.record.type, added.record.state, added.record.next, added.record.unverified], [true, 'state', 'active', 'check the approval', 'the image on UAT']);
+  assert.deepEqual(reins(['memory', 'add', 'state', 'x']), { ok: false, error: 'not_allowed' });
+});
+
+test('state: a state of the agent is in use at once, also where other records wait for a veto', () => {
+  const b = box({ write: ['state', 'pitfall'], class: 'veto' });
+  const task = scenario(b);
+  const before = addRecord(b.rt, { type: 'state', text: 'The first wrap-up.', paths: [], by: 'agent', task }, T0);
+  const note = addRecord(b.rt, { type: 'pitfall', text: 'x is slow', paths: [], by: 'agent', task }, T0);
+  const now = addRecord(b.rt, { type: 'state', text: 'The second wrap-up.', paths: [], by: 'agent', task }, T0 + DAY);
+  assert.ok(before.ok && note.ok && now.ok);
+  assert.deepEqual([of(b, before.record.id, T0 + DAY)?.state, of(b, note.record.id, T0 + DAY)?.state, of(b, now.record.id, T0 + DAY)?.state], ['replaced', 'pending', 'active']);
+  assert.deepEqual(stateForStart(b.rt, 3000, T0 + DAY).slice(1), ['The second wrap-up.']);
 });

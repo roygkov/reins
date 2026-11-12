@@ -49,6 +49,8 @@ export type MemoryRecord = {
   status?: string; // the outer status, when there is one: the state of a card, of a merge request
   carried?: number; // the days the case was shown at a start of a session since its last step
   carried_day?: string; // the last day that was counted
+  // A state: where the work of a project is now. It also has `next`: what to do next.
+  unverified?: string; // what was said without a check
 };
 
 export type NewRecord = {
@@ -57,6 +59,7 @@ export type NewRecord = {
   root?: string; // the directory that the paths are relative to: gives the record its anchor
   because?: string; rejected?: string; revisit?: string; supersedes?: string; source?: string; created?: string;
   next?: string; status?: string; // of a case
+  unverified?: string; // of a state; a state has `next` too
 };
 export type AddError = 'bad_type' | 'bad_text' | 'bad_path' | 'human_only' | 'not_allowed' | 'no_reason' | 'unknown_record';
 
@@ -67,9 +70,10 @@ const MAX_TEXT = 2000;
 const MAX_PATHS = 20;
 const ID = /^m[0-9a-f]{10}$/;
 const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'];
-const MAX_STEP = 500; // characters of a next step and of an outer status
+const MAX_STEP = 500; // characters of a next step and of an outer status of a case
+const MAX_STATE_PART = 1000; // characters of the next steps and of the unverified things of a state
 const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong', 'carried', 'carried_day'] as const;
-const ENCODED = ['paths', 'anchor', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status'] as const;
+const ENCODED = ['paths', 'anchor', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status', 'unverified'] as const;
 
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
 const fileOf = (rt: Runtime, type: string, id: string): string => path.join(memoryDir(rt), type, `${id}.md`);
@@ -128,7 +132,7 @@ function parse(text: string): Omit<MemoryRecord, 'uses'> | null {
     if (Number.isInteger(carried) && carried >= 0) fields.carried = carried;
     else delete fields.carried;
   }
-  for (const key of ['next', 'status'] as const) if (fields[key] !== undefined && typeof fields[key] !== 'string') delete fields[key];
+  for (const key of ['next', 'status', 'unverified'] as const) if (fields[key] !== undefined && typeof fields[key] !== 'string') delete fields[key];
   const body = lines.slice(end + 1).join('\n').replace(/\n+$/, '');
   return { ...(fields as object), paths: (fields.paths as string[] | undefined) ?? [], history: Array.isArray(fields.history) ? fields.history : [], text: body } as Omit<MemoryRecord, 'uses'>;
 }
@@ -246,14 +250,19 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     if (type === 'decision') return { ok: false, error: 'human_only' };
     const memory = mayWrite(rt, input.task, type);
     if (memory === null) return { ok: false, error: 'not_allowed' };
-    pending = memory.class !== 'auto';
+    // A state is written anew at every wrap-up and the next one takes its place: it has no veto
+    // window (harness-memory, page 4: "a task is closed: a new state, by itself").
+    pending = memory.class !== 'auto' && type !== 'state';
   }
-  // A next step and an outer status are things of a case.
-  for (const key of ['next', 'status'] as const) {
+  // A next step is a thing of a case and of a state; an outer status of a case; what is not
+  // verified of a state. The step of a case is one line; the parts of a state are short lists.
+  for (const key of ['next', 'status', 'unverified'] as const) {
     const value = input[key];
     if (value === undefined) continue;
-    if (type !== 'case') return { ok: false, error: 'bad_type' };
-    if (typeof value !== 'string' || value.length > MAX_STEP || /[\r\n]/.test(value)) return { ok: false, error: 'bad_text' };
+    const fits = key === 'next' ? type === 'case' || type === 'state' : key === 'status' ? type === 'case' : type === 'state';
+    if (!fits) return { ok: false, error: 'bad_type' };
+    if (typeof value !== 'string') return { ok: false, error: 'bad_text' };
+    if (type === 'case' ? value.length > MAX_STEP || /[\r\n]/.test(value) : value.length > MAX_STATE_PART) return { ok: false, error: 'bad_text' };
   }
   // A decision without its reason is of no use in a month (harness-memory, page 2, rule 1).
   if (type === 'decision' && (input.because === undefined || input.because.trim() === '')) return { ok: false, error: 'no_reason' };
@@ -276,7 +285,7 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     const value = input[key];
     if (value !== undefined && value.trim() !== '') record[key] = scrub(value).slice(0, MAX_TEXT);
   }
-  for (const key of ['next', 'status'] as const) {
+  for (const key of ['next', 'status', 'unverified'] as const) {
     const value = input[key];
     if (value !== undefined && value.trim() !== '') record[key] = scrub(value.trim());
   }
@@ -288,6 +297,14 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
   if (before !== undefined) {
     record.supersedes = before.id;
     write(rt, { ...before, state: 'replaced', history: [...before.history, { at: new Date(now).toISOString(), state: 'replaced' }] });
+  }
+  // A project has one state: a new one that is in use takes the place of the states before it.
+  if (type === 'state' && state === 'active') {
+    for (const old of stored(rt)) {
+      if (old.type !== 'state' || old.project !== rt.project || (old.state !== 'active' && old.state !== 'pending')) continue;
+      write(rt, { ...old, state: 'replaced', history: [...old.history, { at: new Date(now).toISOString(), state: 'replaced' }] });
+      rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: old.id, type: 'state', state: 'replaced' } });
+    }
   }
   write(rt, record);
   rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(record.task !== undefined ? { task: record.task } : {}), data: { record: record.id, type, state: record.state } });
@@ -371,8 +388,8 @@ const byWeight = (a: MemoryRecord, b: MemoryRecord): number =>
 // The records of the project for the start of a session: one line for a record, within a size
 // limit. `more`: how many records did not fit.
 export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Date.now()): { lines: string[]; more: number } {
-  // The cases have their own place in the start of a session: see `casesForStart`.
-  const found = findRecords(rt, { paths: [], all: true, silent: true }, now).filter((r) => r.type !== 'case').sort(byWeight);
+  // The cases and the state have their own places in the start of a session: see `casesForStart` and `stateForStart`.
+  const found = findRecords(rt, { paths: [], all: true, silent: true }, now).filter((r) => r.type !== 'case' && r.type !== 'state').sort(byWeight);
   const lines: string[] = [];
   let size = 0;
   for (const r of found) {
@@ -480,6 +497,27 @@ export function casesForStart(rt: Runtime, maxBytes: number, now: number = Date.
   return { lines, more: cases.length - lines.length };
 }
 
+// ---- A state: where the work of a project is now, what to do next, what is not verified. One
+// for a project; each new one takes the place of the one before it.
+
+// The state of the project for the start of a session, whole: the newest state in use. A state
+// that is too long for the size limit is cut, and the cut is said.
+export function stateForStart(rt: Runtime, maxBytes: number, now: number = Date.now()): string[] {
+  const state = listRecords(rt, now).filter((r) => r.type === 'state' && r.state === 'active' && r.project === rt.project)
+    .sort((a, b) => b.created.localeCompare(a.created) || a.id.localeCompare(b.id))[0];
+  if (state === undefined) return [];
+  const head = `State of this project (${state.id}, written ${state.created.slice(0, 10)}):`;
+  const body = [state.text, ...(state.next !== undefined ? ['Next:', state.next] : []), ...(state.unverified !== undefined ? ['Not verified:', state.unverified] : [])].join('\n');
+  rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: 1 } });
+  if (Buffer.byteLength(head) + 1 + Buffer.byteLength(body) <= maxBytes) return [head, ...body.split('\n')];
+  // The mark of the cut is a part of the size. Whole characters only: the cut is counted in bytes.
+  const mark = '… cut: `reins memory find <word>` gives the rest.';
+  const room = Math.max(0, maxBytes - Buffer.byteLength(head) - 1 - Buffer.byteLength(mark) - 1);
+  let cut = body.slice(0, room);
+  while (cut.length > 0 && Buffer.byteLength(cut) > room) cut = cut.slice(0, -1);
+  return [head, ...(cut === '' ? [] : cut.split('\n')), mark];
+}
+
 // The human shares a record: it is a record of every project from now on.
 export function shareRecord(rt: Runtime, id: string, _now: number = Date.now()): boolean {
   const record = stored(rt).find((r) => r.id === id);
@@ -561,7 +599,7 @@ export function importRecords(rt: Runtime, file: string, now: number = Date.now(
     const text = typeof value.text === 'string' ? scrub(value.text) : '';
     if (have.has(`${String(value.type)}\n${text}`)) return;
     const input: NewRecord = { type: String(value.type), text: typeof value.text === 'string' ? value.text : '', paths: Array.isArray(value.paths) ? (value.paths as string[]) : [], by: 'human' };
-    for (const key of ['because', 'rejected', 'revisit', 'created', 'source', 'root', 'next', 'status'] as const) if (typeof value[key] === 'string') input[key] = value[key];
+    for (const key of ['because', 'rejected', 'revisit', 'created', 'source', 'root', 'next', 'status', 'unverified'] as const) if (typeof value[key] === 'string') input[key] = value[key];
     // The record is old in its own store and new here: its term starts at the import.
     input.verified = new Date(now).toISOString();
     const r = addRecord(rt, input, now);

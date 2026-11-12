@@ -11,7 +11,7 @@ import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, measure, propose } from '../craft/craft.ts';
-import { casesForStart, listRecords, recordsForStart } from '../memory/store.ts';
+import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
 // `capabilities`: what the client can do. `before`: it tells the core before an action.
 // `choice`: it can show the human a question with a choice. Absent: the client can.
@@ -24,6 +24,7 @@ export const levelOf = (c: SessionEvent['capabilities']): ClientLevel => (c?.bef
 
 const START_MEMORY_BYTES = 2000; // the memory records in the context of a session start
 const START_CASES_BYTES = 1500; // the open cases in the context of a session start
+const START_STATE_BYTES = 3000; // the state of the project in the context of a session start
 const nameOf = sessionName;
 const fileOf = sessionFile;
 
@@ -123,6 +124,8 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push('Open scenario tasks (read one with `reins input <task>`):');
     for (const t of open) context.push(`- ${t.id}: ${t.scenario ?? ''}, ${t.state}`);
   }
+  // Where the work of this project is now: the state that the last wrap-up wrote.
+  context.push(...stateForStart(rt, START_STATE_BYTES));
   // What is not finished in this project: the cases with their next steps.
   const cases = casesForStart(rt, START_CASES_BYTES);
   if (cases.lines.length > 0) {
