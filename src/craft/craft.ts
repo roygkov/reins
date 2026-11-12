@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { JournalRow } from '../contracts/journal.ts';
+import type { CraftSettings } from '../packs/packs.ts';
 import { isObj } from '../contracts/shape.ts';
 import type { Runtime } from '../core/runtime.ts';
 import { loadTask } from '../core/runtime.ts';
@@ -21,6 +22,7 @@ export type Effect = 'better' | 'same' | 'worse' | 'not_measured';
 export type Proposal = Pattern & { id: string; created: string; state: 'open' | 'accepted' | 'rejected'; change?: Change; resolved?: string; applied?: boolean; effect?: Effect; rejected_n?: number };
 
 const DAY = 24 * 60 * 60 * 1000;
+// The thresholds of the code. A pack can set its own: the section `craft`.
 const MIN_QUESTIONS = 5; // the same rule asked this often: describe the tool or name the write in a scenario
 const MIN_CHECKS = 4; // a scenario with this many checks ...
 const FAIL_SHARE = 0.5; // ... and this share of FAIL: its instructions do not lead to a ready report
@@ -61,12 +63,16 @@ function count(rows: JournalRow[]): Counts {
 }
 
 // The patterns of a set of journal rows.
-export function detect(rows: JournalRow[]): Pattern[] {
+export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
   const c = count(rows);
   const out: Pattern[] = [];
-  for (const [key, n] of c.asked) if (n >= MIN_QUESTIONS) out.push({ pattern: 'repeated_question', key, n });
-  for (const [key, k] of c.checks) if (k.all >= MIN_CHECKS && k.fail / k.all >= FAIL_SHARE) out.push({ pattern: 'check_fails_often', key, n: k.fail });
-  for (const [key, n] of c.contracts) if (n >= MIN_CONTRACTS) out.push({ pattern: 'repeated_contract', key, n });
+  for (const [key, n] of c.asked) if (n >= (set.min_questions ?? MIN_QUESTIONS)) out.push({ pattern: 'repeated_question', key, n });
+  for (const [key, k] of c.checks) {
+    // A scenario that the packs tell the craft to leave alone gets no proposal about itself.
+    if ((set.keep ?? []).includes(key)) continue;
+    if (k.all >= (set.min_checks ?? MIN_CHECKS) && k.fail / k.all >= FAIL_SHARE) out.push({ pattern: 'check_fails_often', key, n: k.fail });
+  }
+  for (const [key, n] of c.contracts) if (n >= (set.min_contracts ?? MIN_CONTRACTS)) out.push({ pattern: 'repeated_contract', key, n });
   return out;
 }
 
@@ -78,7 +84,7 @@ function unusedRecords(rt: Runtime, now: number): Pattern[] {
     if (r.state !== 'active' || r.type === 'decision' || r.project !== rt.project) continue;
     const fresh = Math.max(Date.parse(r.created), r.verified === undefined ? 0 : Date.parse(r.verified), r.last_use === undefined ? 0 : Date.parse(r.last_use));
     const days = Math.floor((now - fresh) / DAY);
-    if (days >= UNUSED_DAYS) out.push({ pattern: 'record_unused', key: r.id, n: days });
+    if (days >= (rt.merged.craft?.unused_days ?? UNUSED_DAYS)) out.push({ pattern: 'record_unused', key: r.id, n: days });
   }
   return out;
 }
@@ -145,9 +151,14 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
   const rows = readJournalSince(rt.stateDir, now - PERIOD_MS).filter((r) => Date.parse(r.ts) >= now - PERIOD_MS);
   const known = new Map(listProposals(rt).map((p) => [`${p.pattern} ${p.key}`, p]));
   const made: Proposal[] = [];
-  for (const found of [...detect(rows), ...unusedRecords(rt, now)]) {
+  // The count of proposals in a week, when the packs name one: the human reads a few, not a heap.
+  // What does not fit waits: its pattern stays in the journal and is found again.
+  const perWeek = rt.merged.craft?.per_week;
+  let week = [...known.values()].filter((p) => now - Date.parse(p.created) < 7 * DAY && Date.parse(p.created) <= now).length;
+  for (const found of [...detect(rows, rt.merged.craft), ...unusedRecords(rt, now)]) {
     const before = known.get(`${found.pattern} ${found.key}`);
     if (before !== undefined && !(before.state === 'rejected' && found.n >= 2 * (before.rejected_n ?? before.n))) continue;
+    if (perWeek !== undefined && week >= perWeek) break;
     const change = changeOf(rt, found);
     // The id comes from the pattern: two sessions that start together make one proposal, not two.
     const p: Proposal = {
@@ -165,6 +176,7 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
     } catch {
       continue; // another process made it
     }
+    week += 1;
     rt.journal.write({ kind: 'craft.pattern_found', project: rt.project, data: { pattern: p.pattern, key: p.key, n: p.n } });
     rt.journal.write({ kind: 'craft.proposal_created', project: rt.project, data: { proposal: p.id, pattern: p.pattern } });
     made.push(p);
@@ -176,7 +188,7 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
 function apply(rt: Runtime, p: Proposal, now: number): boolean {
   const change = p.change;
   if (change === undefined) return false;
-  if (change.kind === 'memory') return retireRecord(rt, change.record, now, UNUSED_DAYS);
+  if (change.kind === 'memory') return retireRecord(rt, change.record, now, rt.merged.craft?.unused_days ?? UNUSED_DAYS);
   // A new scenario lies in the pack of the person. A file that is there already is not replaced.
   const dir = rt.merged.packs.find((x) => x.level === 'person')?.dir;
   if (dir === undefined || !NAME.test(p.key)) return false;
@@ -218,6 +230,7 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
   if (p.pattern === 'repeated_contract') {
     const a = after.started.get(p.key) ?? 0;
     const b = before.started.get(p.key) ?? 0;
+    // The size of the sample of a measure is a number of the code: a pack does not set how an effect is judged.
     if (a < MIN_CONTRACTS || b === 0) return 'not_measured';
     return compare((after.returned.get(p.key) ?? 0) / a, (before.returned.get(p.key) ?? 0) / b);
   }

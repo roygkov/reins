@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPacks } from '../src/packs/packs.ts';
+import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
@@ -77,6 +77,48 @@ test('craft: a memory record that no report cited for a month is a pattern, a de
   assert.ok(note.ok && decision.ok && fresh.ok);
   const made = propose(b.rt, NOW);
   assert.deepEqual(made.map((p) => [p.pattern, p.key, p.change]), [['record_unused', note.record.id, { kind: 'memory', record: note.record.id, state: 'stale' }]]);
+});
+
+test('craft: the packs set the thresholds, the count of proposals in a week, and the scenarios that the craft leaves alone', () => {
+  const b = box();
+  const check = (scenario: string, result: string) => ({ kind: 'check.answered', scenario, scenario_v: 1, data: { result, check_kind: 'citations' } });
+  rows(b, NOW - DAY, [...times(3, question('tool.unknown')), ...times(2, question('shell.rm'))]);
+  rows(b, NOW - DAY, [...times(4, [check('change-review', 'FAIL')]), ...times(4, [check('draft-message', 'FAIL')])]);
+  // The thresholds of the code: three questions are no pattern; both scenarios fail often.
+  assert.deepEqual(propose(b.rt, NOW).map((p) => [p.pattern, p.key]).sort(), [['check_fails_often', 'change-review'], ['check_fails_often', 'draft-message']]);
+  // The packs: a lower threshold for questions, one scenario that the craft leaves alone, two proposals in a week.
+  const next = box();
+  rows(next, NOW - DAY, [...times(3, question('tool.unknown')), ...times(2, question('shell.rm')), ...times(2, question('git.push'))]);
+  rows(next, NOW - DAY, [...times(4, [check('change-review', 'FAIL')]), ...times(4, [check('draft-message', 'FAIL')])]);
+  next.rt.merged.craft = { min_questions: 2, keep: ['change-review'], per_week: 2 };
+  const made = propose(next.rt, NOW);
+  assert.equal(made.length, 2, 'the count of proposals in a week');
+  assert.equal(made.some((p) => p.key === 'change-review'), false, 'the scenario that the craft leaves alone');
+  // The rest waits: the same week gives nothing more, the next week gives the next two.
+  assert.deepEqual(propose(next.rt, NOW + DAY), []);
+  rows(next, NOW + 7 * DAY, [...times(3, question('tool.unknown')), ...times(2, question('shell.rm')), ...times(2, question('git.push'))]);
+  rows(next, NOW + 7 * DAY, times(4, [check('draft-message', 'FAIL')]));
+  const later = propose(next.rt, NOW + 8 * DAY);
+  assert.equal(later.length, 2);
+  assert.equal(new Set([...made, ...later].map((p) => p.id)).size, 4);
+  // The term of an unused record and the count of contracts come from the packs too; the acceptance uses the same term.
+  const third = box();
+  third.rt.merged.craft = { unused_days: 10, min_contracts: 2, min_checks: 9 };
+  const note = addRecord(third.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 15 * DAY);
+  assert.ok(note.ok);
+  rows(third, NOW - DAY, times(2, [{ kind: 'task.contract_approved', scenario: 'fix-flaky-test', scenario_v: 1 }]));
+  rows(third, NOW - DAY, times(4, [check('draft-message', 'FAIL')]));
+  const found = propose(third.rt, NOW);
+  assert.deepEqual(found.map((p) => [p.pattern, p.key]).sort(), [['record_unused', note.record.id], ['repeated_contract', 'fix-flaky-test']].sort(), 'four checks are under the threshold of nine');
+  assert.equal(resolveProposal(third.rt, found.find((p) => p.pattern === 'record_unused')?.id ?? '', 'accepted', NOW), true);
+  assert.equal(listRecords(third.rt, NOW).find((r) => r.id === note.record.id)?.state, 'stale');
+  // The form of the section, and the merge: a lower pack sets a number again, the lists add up.
+  assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', craft: { min_questions: 0, per_week: 'two', keep: ['Bad Name'], more: 1 } }, 'person').errors.map((e) => `${e.code} ${e.path}`).sort(), ['bad_name craft.keep[0]', 'not_integer craft.per_week', 'not_positive craft.min_questions', 'unknown_field craft.more']);
+  const packFile = (level: string) => path.join(b.root, 'packs', level, 'pack.json');
+  const add = (level: string, craft: unknown) => fs.writeFileSync(packFile(level), JSON.stringify({ ...JSON.parse(fs.readFileSync(packFile(level), 'utf8')), craft }));
+  add('organization', { min_questions: 8, min_checks: 6, keep: ['change-review'] });
+  add('person', { min_questions: 3, unused_days: 60, keep: ['draft-message'] });
+  assert.deepEqual(loadPacks(b.packs).craft, { min_questions: 3, min_checks: 6, unused_days: 60, keep: ['change-review', 'draft-message'] });
 });
 
 // ---- A proposal with a ready change.

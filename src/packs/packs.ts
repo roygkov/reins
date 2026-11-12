@@ -66,6 +66,7 @@ export type PackSettings = {
   // an approval that nobody used holds, how long an entry that ended is kept.
   queue?: { wait_days?: number; approval_hours?: number; keep_days?: number };
   scenarios?: { idle_days?: number }; // how long a scenario that nobody calls stays in use
+  craft?: CraftSettings;
 };
 
 // Rule data of the shell gate that a pack adds: the names that mean production in this
@@ -108,6 +109,7 @@ export type Merged = {
   queueWaitDays?: number;
   queueApprovalHours?: number;
   queueKeepDays?: number;
+  craft?: CraftSettings; // a number: the lowest pack that names it; the scenarios to leave alone: all that the packs name
   scenarioIdleDays?: number; // a scenario that nobody called for this long is switched off: the longest that a pack names
   connectorEnv: Record<string, string[]>; // read connector -> its environment variables, from the organization pack
 };
@@ -124,7 +126,10 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 // Variables that decide what a script runs and where: a pack does not set them.
 const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP'];
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults', 'scenarios'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults', 'scenarios', 'craft'] as const;
+// The numbers of the craft that a pack can set, and the scenarios that the craft leaves alone.
+export const CRAFT_NUMBERS = ['min_questions', 'min_checks', 'min_contracts', 'unused_days', 'per_week'] as const;
+export type CraftSettings = { [K in (typeof CRAFT_NUMBERS)[number]]?: number } & { keep?: string[] };
 
 type ReadResult = { value: unknown } | { error: 'missing' | 'too_large' | 'bad_json' };
 
@@ -334,6 +339,17 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
   if (journal !== null) {
     const keep = limit(errors, journal.keep_days, 'journal.keep_days');
     settings.journal = keep === undefined ? {} : { keep_days: keep };
+  }
+  const craft = section(errors, value.craft, 'craft', [...CRAFT_NUMBERS, 'keep']);
+  if (craft !== null) {
+    const out: CraftSettings = {};
+    for (const key of CRAFT_NUMBERS) {
+      const n = limit(errors, craft[key], `craft.${key}`);
+      if (n !== undefined) out[key] = n;
+    }
+    const keep = names(errors, craft.keep, 'craft.keep');
+    if (keep !== undefined) out.keep = keep;
+    settings.craft = out;
   }
   const idle = section(errors, value.scenarios, 'scenarios', ['idle_days']);
   if (idle !== null) {
@@ -639,6 +655,11 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   if (approval !== undefined && (m.queueApprovalHours === undefined || approval < m.queueApprovalHours)) m.queueApprovalHours = approval;
   const kept = s.queue?.keep_days;
   if (kept !== undefined && (m.queueKeepDays === undefined || kept > m.queueKeepDays)) m.queueKeepDays = kept;
+  if (s.craft !== undefined) {
+    const { keep, ...numbers } = s.craft;
+    const all = [...(m.craft?.keep ?? []), ...(keep ?? []).filter((name) => !(m.craft?.keep ?? []).includes(name))];
+    m.craft = { ...m.craft, ...numbers, ...(all.length > 0 ? { keep: all } : {}) };
+  }
   const idle = s.scenarios?.idle_days;
   if (idle !== undefined && (m.scenarioIdleDays === undefined || idle > m.scenarioIdleDays)) m.scenarioIdleDays = idle;
   const veto = s.memory?.veto_days;
