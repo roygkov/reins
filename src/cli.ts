@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigError, loadRuntime } from './client/config.ts';
-import { runTask } from './client/run.ts';
+import { runTask, runTasks } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
 import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
@@ -164,8 +164,10 @@ const RUNNABLE: readonly string[] = ['citations', 'human', 'command', 'artifact'
 // another. A system that started the command reads the exit code: a task that did not end as
 // verified is not a success.
 function runOpened<T extends { task: string; state: string }>(rt: Runtime, list: T[]): { opened: unknown[]; failed?: true } {
-  const opened = list.map((t) => {
-    const ran = runTask(rt, t.task);
+  // Several clients at one time when the config says so: each in a work tree of its own.
+  const replies = runTasks(rt, list.map((t) => t.task));
+  const opened = list.map((t, i) => {
+    const ran = replies[i] ?? { ran: false };
     const task = loadTask(rt, t.task);
     return { ...t, ...ran, state: task?.state ?? t.state, ...(task?.label !== undefined ? { label: task.label } : {}), ...(task?.waiting !== undefined ? { waiting: task.waiting } : {}) };
   });

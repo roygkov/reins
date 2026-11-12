@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal } from '../src/journal/writer.ts';
 import { beforeAction } from '../src/client/before.ts';
+import { loadRuntime } from '../src/client/config.ts';
+import { runTasks, worktreesDir } from '../src/client/run.ts';
+import type { Runtime } from '../src/core/runtime.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -177,6 +180,99 @@ test('run: the harness has no process of its own: `reins timer` gives the human 
   assert.ok(odd.json.cron.includes('PATH=/opt/50\\%/bin '));
   assert.ok(odd.json.systemd.service.includes('Environment=PATH=/opt/50%%/bin'));
   assert.ok(odd.json.launchd.text.includes('<string>/opt/50%/bin</string>'));
+});
+
+// ---- Several clients at one time.
+
+// The runtime of a box, as the command line makes it.
+function runtimeOf(b: Box): Runtime {
+  const before = process.env.REINS_CONFIG;
+  process.env.REINS_CONFIG = b.config;
+  try {
+    return loadRuntime(b.cwd);
+  } finally {
+    if (before === undefined) delete process.env.REINS_CONFIG;
+    else process.env.REINS_CONFIG = before;
+  }
+}
+const repoIn = (dir: string): void => {
+  const git = (...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' });
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'first');
+};
+
+test('run: with the key of the config the clients of two tasks run at one time, each in a work tree of its own', () => {
+  const b = box('');
+  repoIn(b.cwd);
+  const script = JSON.parse(fs.readFileSync(b.config, 'utf8')).runner[1];
+  // The client says when it starts and when it ends; the second one writes a file into its work.
+  fs.appendFileSync(script, `const mark = (m) => fs.appendFileSync(${JSON.stringify(b.log)}, JSON.stringify({ mark: m, t: Date.now() }) + '\\n');\nmark('start');\nif (fs.existsSync(${JSON.stringify(path.join(b.root, 'write'))})) fs.writeFileSync('made-by-the-task.txt', 'x');\nsetTimeout(() => mark('end'), 1500);\n`);
+  fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_parallel: 2 }));
+  const ids = [b.run(['open', 'draft-message']).json.task, b.run(['open', 'draft-message']).json.task];
+  const rt = runtimeOf(b);
+  const replies = runTasks(rt, ids);
+  assert.deepEqual(replies, [{ ran: true, exit: 0 }, { ran: true, exit: 0 }]);
+  const lines = calls(b);
+  const marks = lines.filter((l) => l.mark !== undefined);
+  assert.ok(Math.max(...marks.filter((l) => l.mark === 'start').map((l) => l.t)) < Math.min(...marks.filter((l) => l.mark === 'end').map((l) => l.t)), 'the second client started before the first one ended');
+  const dirs = lines.filter((l) => l.cwd !== undefined).map((l) => l.cwd).sort();
+  assert.deepEqual(dirs, ids.map((id) => path.join(worktreesDir(rt), id)).sort(), 'each client worked in its own work tree');
+  // A work tree that the client left as it was is gone.
+  assert.deepEqual(fs.readdirSync(worktreesDir(rt)), []);
+  assert.equal(spawnSync('git', ['worktree', 'list'], { cwd: b.cwd, encoding: 'utf8' }).stdout.trim().split('\n').length, 1);
+  // A work tree with the work of the task stays, and the reply names it.
+  fs.writeFileSync(path.join(b.root, 'write'), '');
+  const more = [b.run(['open', 'draft-message']).json.task, b.run(['open', 'draft-message']).json.task];
+  const kept = runTasks(rt, more);
+  assert.deepEqual(kept.map((r) => r.worktree), more.map((id) => path.join(worktreesDir(rt), id)));
+  assert.equal(fs.existsSync(path.join(kept[0]?.worktree ?? '', 'made-by-the-task.txt')), true);
+  assert.equal(fs.existsSync(path.join(b.cwd, 'made-by-the-task.txt')), false, 'the work of the human is as it was');
+  // A linked work tree is the same project as its repository: the memory of the project reaches the client there.
+  assert.equal(runtimeOf({ ...b, cwd: kept[0]?.worktree ?? '' }).project, rt.project);
+  // The repository reached through a link is the same project, too.
+  const link = path.join(b.root, 'link-to-work');
+  fs.symlinkSync(b.cwd, link);
+  assert.equal(runtimeOf({ ...b, cwd: link }).project, rt.project);
+  // A change of the human that is not committed: a copy at the commit would not hold it, so the tasks run one by one in the work itself.
+  fs.rmSync(path.join(b.root, 'write'));
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'one, not committed\n');
+  const before = calls(b).length;
+  const plain = runTasks(rt, [b.run(['open', 'draft-message']).json.task, b.run(['open', 'draft-message']).json.task]);
+  assert.deepEqual(plain, [{ ran: true, exit: 0 }, { ran: true, exit: 0 }]);
+  assert.deepEqual(calls(b).slice(before).filter((l) => l.cwd !== undefined).map((l) => l.cwd), [b.cwd, b.cwd]);
+  for (const r of kept) spawnSync('git', ['worktree', 'remove', '--force', r.worktree ?? ''], { cwd: b.cwd });
+});
+
+test('run: the clients run as a pool: the next task starts as soon as one client ends', () => {
+  const b = box('');
+  repoIn(b.cwd);
+  const script = JSON.parse(fs.readFileSync(b.config, 'utf8')).runner[1];
+  // The first task is slow, the others are quick: the third must not wait for the first.
+  fs.appendFileSync(script, `const mark = (m) => fs.appendFileSync(${JSON.stringify(b.log)}, JSON.stringify({ mark: m, task: process.argv[2], t: Date.now() }) + '\\n');\nmark('start');\nsetTimeout(() => mark('end'), fs.readFileSync(${JSON.stringify(path.join(b.root, 'slow'))}, 'utf8') === process.argv[2] ? 3000 : 300);\n`);
+  fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_parallel: 2 }));
+  const ids = [1, 2, 3].map(() => b.run(['open', 'draft-message']).json.task as string);
+  fs.writeFileSync(path.join(b.root, 'slow'), ids[0] ?? '');
+  const rt = runtimeOf(b);
+  assert.deepEqual(runTasks(rt, ids).map((r) => r.exit), [0, 0, 0]);
+  const at = (task: string | undefined, m: string): number => calls(b).find((l) => l.mark === m && l.task === task)?.t ?? 0;
+  assert.ok(at(ids[2], 'start') < at(ids[0], 'end'), 'the third task started while the slow first one still ran');
+  assert.deepEqual(fs.readdirSync(worktreesDir(rt)), []);
+});
+
+test('run: a work that is no repository has no copy: its tasks run one by one, and the key takes a small number', () => {
+  const b = box('');
+  fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_parallel: 2 }));
+  const ids = [b.run(['open', 'draft-message']).json.task, b.run(['open', 'draft-message']).json.task];
+  const rt = runtimeOf(b);
+  assert.deepEqual(runTasks(rt, ids), [{ ran: true, exit: 0 }, { ran: true, exit: 0 }]);
+  assert.deepEqual(calls(b).map((l) => l.cwd), [b.cwd, b.cwd]);
+  assert.equal(fs.existsSync(worktreesDir(rt)), false);
+  for (const bad of [0, 9, 'two', 1.5]) {
+    fs.writeFileSync(b.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), runner_parallel: bad }));
+    assert.equal(b.run(['scenarios']).json.error, 'bad_config', String(bad));
+  }
 });
 
 test('run: a bad runner in the config is a bad config, and the agent asks before it starts a client', () => {

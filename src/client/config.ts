@@ -16,7 +16,7 @@ import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 // cache has no core beside it: its entry loads the adapter from this directory.
 // `runner`: the command that starts a client without a window, as a list of words; `{task}` and
 // `{prompt}` in a word are filled in, and `{model}` with the model of the level of the task. `runner_timeout_s`: the time limit of one run.
-const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'script_sandbox', 'repo_packs', 'runner', 'runner_timeout_s', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'script_sandbox', 'repo_packs', 'runner', 'runner_timeout_s', 'runner_parallel', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -28,7 +28,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; runner?: string[]; runnerTimeoutMs?: number } {
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; runner?: string[]; runnerTimeoutMs?: number; runnerParallel?: number } {
   const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
   let text: string;
   try {
@@ -64,9 +64,12 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   // The runner is a command that the harness starts: a list of words, never one line for a shell.
   if (value.runner !== undefined && (!Array.isArray(value.runner) || value.runner.length === 0 || value.runner.some((w) => typeof w !== 'string' || w === ''))) throw bad;
   if (value.runner_timeout_s !== undefined && (typeof value.runner_timeout_s !== 'number' || !Number.isInteger(value.runner_timeout_s) || value.runner_timeout_s <= 0)) throw bad;
-  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; runner?: string[]; runnerTimeoutMs?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  // How many clients the schedule or an event runs at one time, each in its own work tree.
+  if (value.runner_parallel !== undefined && (typeof value.runner_parallel !== 'number' || !Number.isInteger(value.runner_parallel) || value.runner_parallel < 1 || value.runner_parallel > 8)) throw bad;
+  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; runner?: string[]; runnerTimeoutMs?: number; runnerParallel?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
   if (Array.isArray(value.runner)) out.runner = value.runner as string[];
   if (typeof value.runner_timeout_s === 'number') out.runnerTimeoutMs = value.runner_timeout_s * 1000;
+  if (typeof value.runner_parallel === 'number') out.runnerParallel = value.runner_parallel;
   if (typeof value.memory_dir === 'string') out.memoryDir = value.memory_dir;
   if (value.memory_commit === true) out.memoryCommit = true;
   if (value.script_sandbox === true) out.scriptSandbox = true;
@@ -75,6 +78,20 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
 
 // The runtime of one call of a client. `cwd` is the directory where the client works: its token
 // is the project of the rows of the journal.
+// The directory of the repository that a work tree belongs to. The common directory of git of a
+// linked work tree is the `.git` of the repository.
+function mainRoot(root: { root: string; gitDir?: string | null; commonDir?: string | null }): string {
+  const common = root.commonDir;
+  const dir = typeof common === 'string' && common !== root.gitDir && path.basename(common) === '.git' ? path.dirname(common) : root.root;
+  // git names the repository of a linked work tree by its real path, and the human may reach the
+  // repository through a link: the project is the directory as the system has it, so both ways give one project.
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
 export function loadRuntime(cwd: string = process.cwd()): Runtime {
   const config = readConfig();
   // The pack of the project lies with the project: `.reins` at the root of the repository where
@@ -87,7 +104,9 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   if (config.packs.project === undefined && config.repoPacks && repoPack !== undefined && fs.existsSync(path.join(repoPack, 'pack.json'))) config.packs.project = repoPack;
   // The project is the repository where the client works, whatever directory of it the client
   // started in. Outside a repository it is the directory itself.
-  const project = `p${crypto.createHash('sha1').update(root.isRepo ? root.root : cwd).digest('hex').slice(0, 8)}`;
+  // A linked work tree of a repository (`git worktree`) is the same project as the repository:
+  // its memory, its cases and its state are those of the repository.
+  const project = `p${crypto.createHash('sha1').update(root.isRepo ? mainRoot(root) : cwd).digest('hex').slice(0, 8)}`;
   const rt: Runtime = { merged: loadPacks(config.packs), stateDir: config.stateDir, journal: openJournal(config.stateDir), project, configFile: config.file, workDir: cwd };
   if (repoPack !== undefined) rt.projectPackDir = repoPack;
   if (config.memoryDir !== undefined) rt.memoryDir = config.memoryDir;
@@ -95,5 +114,6 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   if (config.scriptSandbox === true) rt.scriptSandbox = true;
   if (config.runner !== undefined) rt.runner = config.runner;
   if (config.runnerTimeoutMs !== undefined) rt.runnerTimeoutMs = config.runnerTimeoutMs;
+  if (config.runnerParallel !== undefined) rt.runnerParallel = config.runnerParallel;
   return rt;
 }

@@ -40,6 +40,7 @@ export type Runtime = {
   runner?: string[]; // the command of the machine that starts a client for one task, with its arguments
   memoryCommit?: boolean; // the harness commits the directory of the memory records after a change
   runnerTimeoutMs?: number; // how long one run of the client can take
+  runnerParallel?: number; // how many clients the schedule or an event runs at one time
   scriptSandbox?: boolean; // the scripts of the packs run in the sandbox of the system
   workDir?: string; // the directory where the client works: a script of a pack must not change it
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
