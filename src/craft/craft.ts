@@ -46,11 +46,11 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number>; restored: Set<string> };
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map(), restored: new Set() };
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
   // The tools of the connectors that each free task called, in order. A task of a scenario repeats by design: it is not counted.
@@ -58,6 +58,12 @@ function count(rows: JournalRow[]): Counts {
   // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
   const startedTasks = new Set<string>();
   for (const row of rows) {
+    // A record of the memory that came back to work: the human restored it. A step of a case and a share say something else.
+    // The last word counts: a record that went out of the work again after it is not restored.
+    if (row.kind === 'memory.record_changed' && typeof row.data?.record === 'string' && row.data.step === undefined && row.data.scope === undefined && row.data.wrong === undefined) {
+      if (row.data.state === 'active') c.restored.add(row.data.record);
+      else if (row.data.state === 'stale' || row.data.state === 'vetoed') c.restored.delete(row.data.record);
+    }
     if (row.kind === 'policy.decision') {
       c.decisions += 1;
       // A question that no human saw (a mode of the client without questions) is no load on the human.
@@ -367,6 +373,14 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
     if (a < MIN_RAISES || b === 0) return 'not_measured';
     return compare((after.raised.get(p.key) ?? 0) / a, (before.raised.get(p.key) ?? 0) / b);
   }
+  if (p.pattern === 'record_unused') {
+    // The record went out of the work. The human brought it back: the change was wrong. Nobody
+    // brought it back while the agent worked: the memory is smaller at no cost.
+    // A change that was not made (a report cited the record meanwhile) changed nothing: nothing is measured.
+    if (p.applied !== true) return 'not_measured';
+    if (after.restored.has(p.key)) return 'worse';
+    return after.decisions === 0 ? 'not_measured' : 'better';
+  }
   return 'not_measured';
 }
 
@@ -408,7 +422,8 @@ export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {
     if (effect === 'not_measured') continue;
     rt.journal.write({ kind: 'craft.effect_measured', project: rt.project, data: { proposal: p.id, effect } });
     out.push(next);
-    if (effect === 'worse') proposeUndo(rt, next, now);
+    // A record that the human restored is back already: there is nothing to undo.
+    if (effect === 'worse' && p.pattern !== 'record_unused') proposeUndo(rt, next, now);
   }
   return out;
 }

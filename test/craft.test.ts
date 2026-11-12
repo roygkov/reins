@@ -485,3 +485,42 @@ test('craft: a record that a report cited in the last month is not unused, and i
   assert.equal(listProposals(b.rt)[0]?.applied, false);
   assert.equal(listRecords(b.rt, NOW).find((x) => x.id === note.record.id)?.state, 'active');
 });
+
+// ---- The effect of "the record is stale".
+
+test('craft: a record that went stale and nobody brought back is a better memory; one that the human restored is worse', () => {
+  const stale = (b: Box): { record: string; proposal: string } => {
+    const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);
+    assert.ok(note.ok);
+    const made = propose(b.rt, NOW).filter((p) => p.pattern === 'record_unused');
+    assert.equal(resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW), true);
+    return { record: note.record.id, proposal: made[0]?.id ?? '' };
+  };
+  // Nobody worked after the acceptance: nothing is measured.
+  const idle = box();
+  stale(idle);
+  assert.deepEqual(measure(idle.rt, NOW + 8 * DAY), []);
+  // The agent worked, and nobody needed the record.
+  const quiet = box();
+  stale(quiet);
+  rows(quiet, NOW + DAY, question('default.write'));
+  assert.deepEqual(measure(quiet.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['record_unused', 'better']]);
+  // The human brought the record back: the change was wrong. The record is back already: no undo is proposed.
+  const back = box();
+  const made = stale(back);
+  rows(back, NOW + DAY, [...question('default.write'), { kind: 'memory.record_changed', data: { record: made.record, type: 'pitfall', state: 'active' } }]);
+  assert.deepEqual(measure(back.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['record_unused', 'worse']]);
+  assert.equal(listProposals(back.rt).some((p) => p.pattern === 'rollback'), false);
+  // A change that was not made is not measured, whatever follows.
+  const unmade = box();
+  const skipped = stale(unmade);
+  const file = path.join(unmade.rt.stateDir, 'craft', `${skipped.proposal}.json`);
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), applied: false }));
+  rows(unmade, NOW + DAY, question('default.write'));
+  assert.deepEqual(measure(unmade.rt, NOW + 8 * DAY), []);
+  // A step of a case and a share of another record are not a restore of this one.
+  const other = box();
+  const kept = stale(other);
+  rows(other, NOW + DAY, [...question('default.write'), { kind: 'memory.record_changed', data: { record: kept.record, type: 'case', state: 'active', step: 1 } }, { kind: 'memory.record_changed', data: { record: 'm0000000000', type: 'pitfall', state: 'active' } }, { kind: 'memory.record_changed', data: { record: kept.record, type: 'pitfall', state: 'active', wrong: 1 } }]);
+  assert.deepEqual(measure(other.rt, NOW + 8 * DAY).map((p) => p.effect), ['better']);
+});
