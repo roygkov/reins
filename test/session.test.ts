@@ -125,6 +125,22 @@ test('session: a client without a window that stops with its scenario task not f
   assert.equal(agentStopped(b.rt, { session: 's3', cwd: b.cwd, headless: true }).unfinished, undefined);
 });
 
+test('session: the answer of the human to a question names the rule that asked', () => {
+  const b = box();
+  const answers = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'task.human_decision').map((r) => r.data);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  const call = { cwd: b.cwd, tool: 'some_new_tool', input: {}, session: 's1' };
+  // The tool ran after the question: the human said "yes" to the rule.
+  assert.deepEqual([beforeAction(b.rt, call, CLIENT).outcome, beforeAction(b.rt, call, CLIENT).rule], ['ask', 'default.unknown-tool']);
+  afterAction(b.rt, call, CLIENT);
+  assert.deepEqual(answers(), [{ decision: 'answered', rule: 'default.unknown-tool' }]);
+  // The turn ended and the tool did not run: the human said "no" to the rule.
+  beforeAction(b.rt, call, CLIENT);
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  assert.deepEqual(answers().slice(1), [{ decision: 'refused', rule: 'default.unknown-tool' }]);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
+});
+
 test('session: when the agent stops, the free task closes as not verified', () => {
   const b = box();
   const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });

@@ -6,6 +6,7 @@
 // client itself (read a file, change a file, run a command). The organization pack describes the
 // tools of the connectors. A tool that nothing describes counts as a write.
 
+import { RULE_NAME } from '../contracts/journal.ts';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -366,7 +367,8 @@ export function beforeAction(rt: Runtime, call: ToolCall, clientTools: ClientToo
   else if (!(r.scope === 'task' && fs.existsSync(file))) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // The session is kept with the question: at the end of the turn a question without an answer is the "no" of the human.
-    fs.writeFileSync(file, JSON.stringify({ ask: true, ...asker(call) }));
+    // The rule that asked is kept too: the answer of the human is an answer to this rule.
+    fs.writeFileSync(file, JSON.stringify({ ask: true, rule: r.rule, ...asker(call) }));
   }
   return r;
 }
@@ -487,8 +489,9 @@ export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTool
   if (pending === null || typeof pending !== 'object') return { confirmed: false };
   const { task, key } = pending as { task?: unknown; key?: unknown };
   if (typeof task !== 'string' || typeof key !== 'string') {
-    // A question about this one action: the human said "yes". The fact goes to the journal.
-    record(rt, call, [{ kind: 'task.human_decision', data: { decision: 'answered' } }]);
+    // A question about this one action: the human said "yes". The fact goes to the journal, with the rule that asked.
+    const rule = (pending as { rule?: unknown }).rule;
+    record(rt, call, [{ kind: 'task.human_decision', data: { decision: 'answered', ...(typeof rule === 'string' && RULE_NAME.test(rule) ? { rule } : {}) } }]);
     return { confirmed: false };
   }
   if (Object.hasOwn(clientTools, call.tool)) return { confirmed: false };

@@ -3,6 +3,7 @@
 // never reach the core: a request is only the fact that it happened.
 // Specification: docs/spec/harness-client, page 1.
 
+import { RULE_NAME } from '../contracts/journal.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
@@ -191,11 +192,11 @@ export function settleQuestions(rt: Runtime, session: string | undefined, who: '
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
     const file = path.join(dir, name);
-    let asked: { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown };
+    let asked: { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown; rule?: unknown };
     try {
       const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (value === null || typeof value !== 'object') continue;
-      asked = value as { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown };
+      asked = value as { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown; rule?: unknown };
     } catch {
       continue;
     }
@@ -214,7 +215,7 @@ export function settleQuestions(rt: Runtime, session: string | undefined, who: '
       continue;
     }
     if (!seen || task === undefined) continue;
-    rt.journal.write({ kind: 'task.human_decision', project: rt.project, task, ...(/^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}), data: { decision: 'refused' } });
+    rt.journal.write({ kind: 'task.human_decision', project: rt.project, task, ...(/^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}), data: { decision: 'refused', ...(typeof asked.rule === 'string' && RULE_NAME.test(asked.rule) ? { rule: asked.rule } : {}) } });
     settled += 1;
   }
   return settled;

@@ -69,6 +69,8 @@ const FIELDS = ['ts', 'v', 'kind', 'project', 'task', 'parent', 'session', 'scen
 const TOKENS = ['project', 'task', 'parent', 'session', 'scenario', 'role', 'client'] as const;
 // A token is an identifier or a code: no spaces, bounded length. A sentence is not a token.
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/;
+// The name of a rule in the data of a row: the same form as a token, so no text of a command and no long path.
+export const RULE_NAME = TOKEN;
 const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const FINGERPRINT = /^[0-9a-f]{8,64}$/;
 // The name of a data field is an identifier: free text cannot hide in a key.

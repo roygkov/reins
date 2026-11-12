@@ -184,6 +184,32 @@ test('craft: a proposal without a ready change says so, and its acceptance appli
   assert.equal(listProposals(b.rt)[0]?.applied, false);
 });
 
+test('craft: a rule that asked many times and got "yes" every time is a pattern of its own', () => {
+  const b = box();
+  const answer = (rule: string, decision: string) => ({ kind: 'task.human_decision', data: { decision, rule } });
+  const asked = (rule: string, decision: string) => [...question(rule), answer(rule, decision)];
+  // Five questions, five times "yes"; another rule got one "no"; a third rule has no answers in the journal (old rows).
+  rows(b, NOW - DAY, [...times(5, asked('git.push', 'answered')), ...times(4, asked('shell.rm', 'answered')), ...asked('shell.rm', 'refused'), ...times(5, question('default.unknown-tool'))]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file)).map((p) => [p.pattern, p.key, p.n]).sort(), [['repeated_approval', 'git.push', 5], ['repeated_question', 'default.unknown-tool', 5], ['repeated_question', 'shell.rm', 5]]);
+  assert.deepEqual(detect(readJournal(b.rt.journal.file), { min_approvals: 6 }).map((p) => [p.pattern, p.key]).sort(), [['repeated_question', 'default.unknown-tool'], ['repeated_question', 'git.push'], ['repeated_question', 'shell.rm']]);
+  // A rule that guards the harness itself is never a pattern, however often the human said "yes".
+  const guarded = box();
+  rows(guarded, NOW - DAY, times(9, [answer('protect.packs', 'answered'), answer('adapter.shape', 'answered')]));
+  assert.deepEqual(detect(readJournal(guarded.rt.journal.file)), []);
+  const made = propose(b.rt, NOW);
+  assert.equal(made.find((p) => p.key === 'git.push')?.pattern, 'repeated_approval');
+  // A rule that has a proposal about its questions already gets no second one about its approvals.
+  const c = box();
+  rows(c, NOW - 2 * DAY, times(5, question('git.push')));
+  assert.deepEqual(propose(c.rt, NOW - DAY).map((p) => p.pattern), ['repeated_question']);
+  rows(c, NOW - DAY, times(5, asked('git.push', 'answered')));
+  assert.deepEqual(propose(c.rt, NOW), []);
+  // The effect is the count of the questions of the rule, as for a repeated question.
+  resolveProposal(b.rt, made.find((p) => p.key === 'git.push')?.id ?? '', 'accepted', NOW);
+  rows(b, NOW + DAY, asked('git.push', 'answered'));
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['repeated_approval', 'better']]);
+});
+
 // ---- The class "with a veto window".
 
 test('craft: with a term of the packs a proposal whose change can be taken back applies itself, unless the human rejected it', () => {

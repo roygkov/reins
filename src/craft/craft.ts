@@ -14,7 +14,8 @@ import { readJournalSince } from '../journal/writer.ts';
 import { listRecords, retireRecord } from '../memory/store.ts';
 
 // `rollback`: an accepted proposal made things worse; the key is the id of that proposal.
-export type Pattern = { pattern: 'repeated_question' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
+// `repeated_approval`: a rule asked many times and the human said "yes" every time.
+export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
@@ -28,6 +29,7 @@ export type Proposal = Pattern & { id: string; created: string; state: 'open' | 
 const DAY = 24 * 60 * 60 * 1000;
 // The thresholds of the code. A pack can set its own: the section `craft`.
 const MIN_QUESTIONS = 5; // the same rule asked this often: describe the tool or name the write in a scenario
+const MIN_APPROVALS = 5; // the human said "yes" to one rule this often, and never "no": the question costs more than it guards
 const MIN_CHECKS = 4; // a scenario with this many checks ...
 const FAIL_SHARE = 0.5; // ... and this share of FAIL: its instructions do not lead to a ready report
 const MIN_RAISES = 3; // a scenario with this many raises of the level of the model ...
@@ -39,11 +41,11 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number> };
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map() };
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
   // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
@@ -57,6 +59,13 @@ function count(rows: JournalRow[]): Counts {
       const rule = row.data?.rule;
       if (question && typeof rule === 'string') add(c.asked, rule);
       question = false;
+    } else if (row.kind === 'task.human_decision') {
+      // The answer of the human to a question of a rule. A row without a rule (an older journal) is not counted.
+      // A rule that guards the harness itself or the form of the client is no matter of the craft: its question is never "too many".
+      const rule = row.data?.rule;
+      if (typeof rule !== 'string' || rule.startsWith('protect.') || rule.startsWith('adapter.')) continue;
+      if (row.data?.decision === 'answered') add(c.yes, rule);
+      else if (row.data?.decision === 'refused') add(c.no, rule);
     } else if (row.scenario === undefined) continue;
     else if (row.kind === 'check.answered') {
       const k = c.checks.get(row.scenario) ?? { all: 0, fail: 0 };
@@ -80,7 +89,14 @@ function count(rows: JournalRow[]): Counts {
 export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
   const c = count(rows);
   const out: Pattern[] = [];
-  for (const [key, n] of c.asked) if (n >= (set.min_questions ?? MIN_QUESTIONS)) out.push({ pattern: 'repeated_question', key, n });
+  // A rule whose every question got "yes" is one pattern, not two: the approvals say more than the questions.
+  const approved = new Set<string>();
+  for (const [key, n] of c.yes) {
+    if (n < (set.min_approvals ?? MIN_APPROVALS) || (c.no.get(key) ?? 0) > 0) continue;
+    out.push({ pattern: 'repeated_approval', key, n });
+    approved.add(key);
+  }
+  for (const [key, n] of c.asked) if (n >= (set.min_questions ?? MIN_QUESTIONS) && !approved.has(key)) out.push({ pattern: 'repeated_question', key, n });
   for (const [key, k] of c.checks) {
     // A scenario that the packs tell the craft to leave alone gets no proposal about itself.
     if ((set.keep ?? []).includes(key)) continue;
@@ -180,6 +196,9 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
   for (const found of [...detect(rows, rt.merged.craft), ...unusedRecords(rt, now)]) {
     const before = known.get(`${found.pattern} ${found.key}`);
     if (before !== undefined && !(before.state === 'rejected' && found.n >= 2 * (before.rejected_n ?? before.n))) continue;
+    // The questions and the approvals of one rule are one matter for the human: one proposal about the rule is enough.
+    const twin = found.pattern === 'repeated_approval' ? 'repeated_question' : found.pattern === 'repeated_question' ? 'repeated_approval' : undefined;
+    if (twin !== undefined && known.has(`${twin} ${found.key}`)) continue;
     if (perWeek !== undefined && week >= perWeek) break;
     const change = changeOf(rt, found);
     // The class "with a veto window": a change that one command takes back (a memory record that
@@ -288,7 +307,7 @@ const compare = (after: number, before: number): Effect => (after < before ? 'be
 // What an accepted proposal did: the same scenario or rule before the acceptance and after it,
 // over equal periods. Without enough data after the acceptance the effect is "not measured".
 function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
-  if (p.pattern === 'repeated_question') {
+  if (p.pattern === 'repeated_question' || p.pattern === 'repeated_approval') {
     // No decision of the policy after the acceptance: nobody worked, so nothing is measured.
     if (after.decisions === 0 || (before.asked.get(p.key) ?? 0) === 0) return 'not_measured';
     return compare(after.asked.get(p.key) ?? 0, before.asked.get(p.key) ?? 0);
