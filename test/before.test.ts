@@ -33,6 +33,7 @@ const TOOLS = {
   'tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' },
   'tracker__*': { kind: 'write', action: 'comment', target: 'any/{id}', env: 'work' },
   'live__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'live' },
+  'chat__send': { kind: 'write', action: 'comment', target: 'channel/{channel}', env: 'work', outward: true },
 };
 
 type Box = { rt: Runtime; root: string; cwd: string };
@@ -419,4 +420,15 @@ test('before: the rights of a role are a word of the list, and the areas of two 
   assert.deepEqual(errors([{ role: 'a', count: 1, rights: 'write', area: ['**/*.ts'] }, { role: 'b', count: 1, rights: 'write', area: ['docs/**'] }]), ['duplicate model.executors[1].area']);
   // One role with a count of two shares its area: its executors can meet.
   assert.deepEqual(errors([{ role: 'a', count: 2, rights: 'write', area: ['src/**'] }]), ['not_allowed model.executors[0].count']);
+});
+
+// ---- A write that another human sees, outside a task.
+
+test('before: a write that another human sees, outside the envelope of a task, asks under its own rule', () => {
+  const b = box();
+  const r = beforeAction(b.rt, { ...call(b, 'chat__send', { channel: 'ops' }), session: 's1' }, CLIENT);
+  assert.deepEqual([r.outcome, r.rule], ['ask', 'default.outward-write']);
+  const plain = beforeAction(b.rt, { ...call(b, 'tracker__add_comment', { change: '7' }), session: 's1' }, CLIENT);
+  assert.deepEqual([plain.outcome, plain.rule], ['ask', 'default.write']);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
 });

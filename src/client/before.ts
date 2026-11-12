@@ -527,7 +527,10 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
     // No envelope names this write: the reply names no task.
     return { outcome: 'deny', rule: 'contract.scope', layer: 'core', envelope: 'none' };
   }
-  const decision = decide({ action, layers });
+  let decision = decide({ action, layers });
+  // A write that another human sees, outside the envelope of a task: no check of the harness saw
+  // its text. The question has its own rule, so the client can say this to the human.
+  if (decision.basis.rule === 'default.write' && action.outward === true) decision = { ...decision, basis: { ...decision.basis, rule: 'default.outward-write' } };
   record(rt, call, [
     { kind: 'policy.decision', data: { outcome: decision.outcome, action_kind: action.kind, env: action.env.name } },
     { kind: 'policy.basis', data: { layer: decision.basis.layer, rule: decision.basis.rule } },

@@ -75,13 +75,15 @@ function runtime(cwd?: string): Runtime | null {
 
 function reason(r: Reply): string {
   let text = `reins: ${r.rule}`;
+  // A write that another human sees, outside a task: the warning stands also when the question waits in the queue.
+  const unchecked = r.rule === 'default.outward-write' ? ' Another human will see this write, and no task of a scenario covers it: the harness did not check its text. Verify every claim of the text first.' : '';
   if (r.outcome === 'defer') text += `: the action is not done now, it waits for the human in the queue; the human runs \`reins queue approve ${r.queued ?? ''}\` and the same call passes once`;
   else if (r.scope === 'task' && r.task !== undefined) text += `: one approval for the task ${r.task} covers "${r.grant ?? ''}"`;
   else if (r.envelope === 'limit') text += ': the limit of writes of the task is reached';
   else if (r.envelope === 'applied') text += `: named by the task ${r.task ?? ''}`;
   else if (r.outcome === 'deny') text += ': the harness does not allow this action';
   else text += ': the human decides';
-  return text;
+  return text + unchecked;
 }
 
 function pre(): void {
