@@ -366,7 +366,7 @@ export function redGuards(rt: Runtime): { root: string; patterns: RegExp[]; dirs
   for (const task of openTasks(rt)) {
     const guards = task.manifest?.done.guards;
     if (task.red !== true || guards === undefined || guards.length === 0) continue;
-    const root = sourceRoot(rt, task) ?? rt.workDir;
+    const root = task.root ?? sourceRoot(rt, task) ?? rt.workDir;
     if (root === undefined || !path.isAbsolute(root)) continue;
     let dir = root;
     try {
@@ -386,7 +386,7 @@ export function redGuards(rt: Runtime): { root: string; patterns: RegExp[]; dirs
 export function verifyWork(rt: Runtime, id: string, now: number = Date.now()): boolean {
   const task = loadTask(rt, id);
   if (task === null || task.state !== 'publishing') return true;
-  const root = sourceRoot(rt, task);
+  const root = task.root ?? sourceRoot(rt, task);
   const term = task.manifest?.done.valid_minutes;
   // The work had a fingerprint at the check. No fingerprint now is not "the same work".
   const reason =
@@ -530,6 +530,11 @@ export function applyEvent(rt: Runtime, id: string, event: TaskEvent, origin: Or
     if (coreChecks(task) && (event.type === 'report' || event.type === 'check')) return 'not_allowed' as const;
     // The approval of a contract starts a preparation: only `approveContract` does both.
     if (task.waiting === 'contract' && event.type === 'human' && event.decision === 'accept') return 'not_allowed' as const;
+    // An approval of a result, also of one that the check did not accept: the human saw the work as it is now.
+    if (event.type === 'human' && event.decision === 'accept' && (task.waiting === 'approval' || task.waiting === 'check') && task.root !== undefined) {
+      const work = workState(task.root);
+      if (work !== null) event = { ...event, work, at: Date.now() };
+    }
     const s = step(task, event);
     if (s.error === undefined && event.type === 'human' && event.decision === 'return') {
       // The human lets a stopped task go on: one more budget of the size of its limit, or the
@@ -720,7 +725,7 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   const text = readReport(rt, id);
   // A report that cannot be read is a fault of the harness: no answer.
   // The answer holds for one state of the work: the work is read before the check and after it.
-  const root = sourceRoot(rt, before);
+  const root = before.root ?? sourceRoot(rt, before);
   const workBefore = root === null ? null : workState(root);
   let answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : before.manifest?.done.kind === 'citations' ? citations(rt, before, text) : scriptCheck(rt, before);
   const work = root === null ? null : workState(root);
@@ -763,7 +768,10 @@ export function submitReport(rt: Runtime, id: string, text: string): Submitted {
   const submitted = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return null;
-    const s = step(task, { type: 'report', size, fp });
+    // The work that the report is about: the source that the manifest names, else the directory
+    // where the report is given. The answer of the check and an approval of the human hold for it.
+    const root = sourceRoot(rt, task) ?? (rt.workDir !== undefined && path.isAbsolute(rt.workDir) ? rt.workDir : null);
+    const s = step(task, { type: 'report', size, fp, ...(root !== null ? { root } : {}) });
     if (s.error !== undefined) return s;
     // The text is on the disk before the state says "checking": a check never reads an older report.
     const file = reportFile(rt, id);

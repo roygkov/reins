@@ -37,6 +37,7 @@ export type Task = {
   level?: Level;
   label?: ResultLabel;
   work?: string; // the fingerprint of the work that the accepted result holds for
+  root?: string; // the directory of that work: the source of the manifest, else the directory where the report was given
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more
   reads?: number; // the reads through connectors that the task made
@@ -53,7 +54,8 @@ export type TaskEvent =
   | { type: 'prepared'; work: boolean; flag?: string; outputs?: number; bytes?: number }
   | { type: 'collect_failed'; reason: string }
   // `changed`: a fact of the client about a free request: the work tree is not what it was at the request.
-  | { type: 'report'; size: number; fp: string; changed?: boolean }
+  // `root`: the directory of the work that the report is about.
+  | { type: 'report'; size: number; fp: string; changed?: boolean; root?: string }
   // `detail`: counts and a reason code of the check for the journal, never text.
   // `work`: the fingerprint of the work that the check saw.
   // `at`: the time of the answer. `check`: the fingerprint of the check that answered.
@@ -62,7 +64,8 @@ export type TaskEvent =
   | { type: 'limit' } // the task went past its limit of tokens
   | { type: 'scope' } // a contract task needs a write that its contract does not name // the work changed after the check: the answer does not hold any more
   | { type: 'ask' }
-  | { type: 'human'; decision: 'answered' | 'accept' | 'return' | 'stop' }
+  // `work`, `at`: an approval of a result: the fingerprint of the work that the human saw, and the time.
+  | { type: 'human'; decision: 'answered' | 'accept' | 'return' | 'stop'; work?: string; at?: number }
   | { type: 'finish' } // the publication is over: nothing more will be written
   | { type: 'expire' };
 
@@ -209,6 +212,7 @@ export function step(task: Task, event: TaskEvent): Step {
         if (event.changed === true && task.kind === 'free') for (const row of closed.rows) if (row.kind === 'task.closed') row.data = { ...row.data, changed: 1 };
         return closed;
       }
+      if (event.root !== undefined) task = { ...task, root: event.root };
       if (done.kind === 'human') return { task: { ...task, state: 'waiting_human', waiting: 'approval' }, rows: [submitted, { kind: 'task.waiting_human', data: { reason: 'approval' } }] };
       return { task: { ...task, state: 'checking' }, rows: [submitted, { kind: 'check.started', data: { check_kind: done.kind } }] };
     }
@@ -279,7 +283,8 @@ export function step(task: Task, event: TaskEvent): Step {
         if (event.decision !== 'return') return refuse(task);
         return back(task, [decided], 'human', false);
       }
-      if (event.decision === 'accept') return accept(task, 'approved_by_human', [decided]);
+      // The approval holds for the work as the human saw it: a change after it ends the publication.
+      if (event.decision === 'accept') return accept(event.work === undefined ? task : { ...task, work: event.work, ...(event.at !== undefined ? { checked: event.at } : {}) }, 'approved_by_human', [decided]);
       // One more try: after a human check it counts as a send-back, after the limit it does not.
       if (event.decision === 'return') return back(task, [decided], 'human', task.waiting === 'approval');
       return refuse(task);

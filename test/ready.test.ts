@@ -630,3 +630,67 @@ test('ready: the parts of a check are a list of names of the packs, in place of 
   assert.deepEqual(errors({ kind: 'citations', source: 'worktree', checks: ['tests', 'lint'], retries: 1 }), ['not_allowed done.checks']);
   assert.deepEqual(errors({ kind: 'command', checks: ['a', 'b', 'c', 'd', 'e', 'f'].map(() => 'tests'), retries: 1 }).slice(0, 1), ['not_in_range done.checks']);
 });
+
+// ---- The answer is tied to the work also without a named source, and after an approval of the human.
+
+test('ready: a check without a named source is tied to the work where the report was given', () => {
+  const b = box({ done: { kind: 'command', check: 'tests', retries: 0 }, check: PASSING });
+  const id = accepted(b);
+  const task = loadTask(b.rt, id);
+  assert.match(task?.work ?? '', /^[0-9a-f]{32}$/);
+  assert.equal(task?.root, b.cwd);
+  // The barrier of a session that stands in another directory looks at the same work.
+  assert.equal(verifyWork({ ...b.rt, workDir: b.root }, id), true);
+  fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
+  assert.equal(verifyWork({ ...b.rt, workDir: b.root }, id), false);
+  assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.invalidated')?.data?.reason, 'work_changed');
+  // Without a directory of the client and without a source there is nothing to tie to, as before.
+  const bare = box({ done: { kind: 'command', check: 'tests', retries: 0 }, check: PASSING });
+  const { workDir: _, ...noDir } = bare.rt;
+  const opened = openScenario(noDir, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  const r = submitReport(noDir, opened.task.id, REPORT);
+  assert.ok('step' in r);
+  assert.deepEqual([r.step.task.state, r.step.task.work, r.step.task.root], ['publishing', undefined, undefined]);
+});
+
+test('ready: a result that the human approved holds for the work that the human saw', () => {
+  const b = box({ done: { kind: 'human', retries: 0 } });
+  const approved = (): string => {
+    const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+    assert.ok(opened.ok);
+    const r = submitReport(b.rt, opened.task.id, REPORT);
+    assert.ok('step' in r);
+    assert.equal(r.step.task.state, 'waiting_human');
+    // The human answers from another directory: the work is the one of the report.
+    const done = applyEvent({ ...b.rt, workDir: b.root }, opened.task.id, { type: 'human', decision: 'accept' }, 'human');
+    assert.ok('task' in done);
+    assert.deepEqual([done.task.state, done.task.label], ['publishing', 'approved_by_human']);
+    assert.match(loadTask(b.rt, opened.task.id)?.work ?? '', /^[0-9a-f]{32}$/);
+    return opened.task.id;
+  };
+  const same = approved();
+  assert.equal(verifyWork(b.rt, same), true);
+  assert.equal(comment(b).task, same);
+  applyEvent(b.rt, same, { type: 'finish' }, 'agent');
+  const moved = approved();
+  fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
+  assert.equal(verifyWork(b.rt, moved), false);
+  assert.deepEqual([loadTask(b.rt, moved)?.state, loadTask(b.rt, moved)?.label], ['closed', 'not_verified']);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+test('ready: the human who accepts a result that the check did not accept ties it to the work too', () => {
+  const b = box({ done: { kind: 'command', check: 'tests', retries: 0 }, check: PART('FAIL') });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  const r = submitReport(b.rt, opened.task.id, REPORT);
+  assert.ok('step' in r);
+  assert.deepEqual([r.step.task.state, r.step.task.waiting], ['waiting_human', 'check']);
+  const done = applyEvent(b.rt, opened.task.id, { type: 'human', decision: 'accept' }, 'human');
+  assert.ok('task' in done);
+  assert.equal(done.task.state, 'publishing');
+  assert.match(loadTask(b.rt, opened.task.id)?.work ?? '', /^[0-9a-f]{32}$/);
+  fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
+  assert.equal(verifyWork(b.rt, opened.task.id), false);
+});
