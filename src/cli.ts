@@ -361,10 +361,28 @@ function main(args: string[]): Out {
     }
     // A case: `next <id> <step> task=<id> [status=<s>]` gives it a step, `close <id> task=<id>` ends it.
     // These are commands of the agent: the task says that its manifest lets the agent write cases.
-    // Without `task=` they change nothing. The human ends a case of his own with a scenario, or removes it with `memory veto`.
+    // Without `task=` they change nothing: the words of the human are `step` and `end`.
+    // The same two changes on the word of the human: `step <id> <step> [status=<s>]` and `end <id>`.
+    // They name no task. The agent can type them, so a client with the hook asks the human first.
+    if ((first === 'step' && rest.length >= 2) || (first === 'end' && rest.length === 1)) {
+      const id = rest[0] ?? '';
+      if (first === 'end') {
+        const r = closeCase(rt, id, { by: 'human' });
+        if (!r.ok) throw new Stop(r.error);
+        return { ok: true, record: id, state: 'closed' };
+      }
+      // A step without quotes would lose its words after the first: that is a mistake, not a step.
+      if (rest.slice(2).some((m) => !m.startsWith('status='))) throw new Stop('usage');
+      const status = rest.slice(2).find((m) => m.startsWith('status='))?.slice(7);
+      const r = stepCase(rt, id, { by: 'human', next: rest[1] ?? '', ...(status !== undefined ? { status } : {}) });
+      if (!r.ok) throw new Stop(r.error);
+      return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}) };
+    }
     if ((first === 'next' && rest.length >= 2) || (first === 'close' && rest.length >= 1)) {
       const id = rest[0] ?? '';
       const more = rest.slice(first === 'next' ? 2 : 1);
+      // A step without quotes would lose its words after the first: that is a mistake, not a step.
+      if (more.some((m) => !m.startsWith('task=') && !m.startsWith('status='))) throw new Stop('usage');
       const value = (name: string): string | undefined => more.find((m) => m.startsWith(`${name}=`))?.slice(name.length + 1);
       const task = value('task');
       const who = { by: 'agent' as const, ...(task !== undefined ? { task } : {}) };
@@ -468,7 +486,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const RESULT_MAX = 200_000; // characters of a text report that `result` gives

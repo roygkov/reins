@@ -12,6 +12,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { openScenario, type Runtime } from '../src/core/runtime.ts';
 import { sessionStart } from '../src/client/session.ts';
+import { beforeAction } from '../src/client/before.ts';
 import { addRecord, casesForStart, closeCase, importRecords, listRecords, recordsForStart, restoreRecord, searchRecords, stateForStart, stepCase, vetoRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
@@ -275,4 +276,39 @@ test('state: a state of the agent is in use at once, also where other records wa
   assert.ok(before.ok && note.ok && now.ok);
   assert.deepEqual([of(b, before.record.id, T0 + DAY)?.state, of(b, note.record.id, T0 + DAY)?.state, of(b, now.record.id, T0 + DAY)?.state], ['replaced', 'pending', 'active']);
   assert.deepEqual(stateForStart(b.rt, 3000, T0 + DAY).slice(1), ['The second wrap-up.']);
+});
+
+test('case: the human gives a step to a case and ends it with words of his own', () => {
+  const b = box();
+  const id = open(b, 'The MR waits for a review.', 'ping the reviewer');
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (args: string[]) => {
+    const p = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd });
+    return { code: p.status, json: JSON.parse(p.stdout) };
+  };
+  // The command line of the test runs in the project of the directory: the case is opened there.
+  const made = reins(['memory', 'import', (() => {
+    const file = path.join(b.root, 'one.jsonl');
+    fs.writeFileSync(file, `${JSON.stringify({ type: 'case', text: 'The card waits for an approval.', next: 'ask the owner of the service' })}\n`);
+    return file;
+  })()]);
+  assert.equal(made.json.added, 1);
+  const mine = reins(['memory']).json.records.find((r: any) => r.text === 'The card waits for an approval.').id;
+  // No task: these are the words of the human.
+  const stepped = reins(['memory', 'step', mine, 'the owner approved: wait for the window', 'status=card: Approved']);
+  assert.deepEqual([stepped.code, stepped.json], [0, { ok: true, record: mine, next: 'the owner approved: wait for the window', status: 'card: Approved' }]);
+  // A step without quotes is a mistake of the command, for the human and for the agent.
+  assert.equal(reins(['memory', 'step', mine, 'ping', 'the', 'reviewer']).json.error, 'usage');
+  assert.equal(reins(['memory', 'next', mine, 'ping', 'the', 'reviewer', 'task=t0123456789ab']).json.error, 'usage');
+  assert.deepEqual(reins(['memory', 'end', mine]).json, { ok: true, record: mine, state: 'closed' });
+  assert.deepEqual(reins(['memory', 'end', mine]).json, { ok: false, error: 'unknown_record' });
+  assert.deepEqual(reins(['memory', 'step', id, 'x']).json, { ok: false, error: 'unknown_record' }, 'a case of another project');
+  // The agent can type these commands, so a client with the hook asks the human first.
+  for (const command of [`reins memory step ${mine} 'a step'`, `reins memory end ${mine}`, `cd /x && reins memory end ${mine}`]) {
+    const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command } }, { shell: { kind: 'shell', command: 'command' } });
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  // The commands of the agent name a task: the harness checks the task, the client does not ask.
+  const own = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: `reins memory next ${mine} 'a step' task=t0123456789ab` } }, { shell: { kind: 'shell', command: 'command' } });
+  assert.notEqual(own.rule, 'protect.human-command');
 });
