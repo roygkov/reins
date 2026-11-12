@@ -15,6 +15,7 @@ import { patchSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect } from './collect.ts';
 import { workState } from './work.ts';
+import { noteUse, scenarioOff } from './idle.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
 
 export type Runtime = {
@@ -53,7 +54,7 @@ const ALLOWED: Record<Origin, readonly TaskEvent['type'][]> = {
 
 export type Opened =
   | { ok: true; task: Task; collected: Record<string, unknown> | null }
-  | { ok: false; error: 'unknown_scenario' | 'disabled' }
+  | { ok: false; error: 'unknown_scenario' | 'disabled' | 'idle' }
   | { ok: false; error: 'bad_inputs'; details: InputError[] };
 
 const TASK_ID = /^[a-z0-9]{6,32}$/;
@@ -176,6 +177,8 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   const scenario = rt.merged.scenarios.find((s) => s.name === name);
   if (scenario === undefined) return { ok: false, error: 'unknown_scenario' };
   if (scenario.manifest.state === 'disabled') return { ok: false, error: 'disabled' };
+  // Nobody called the scenario for the term of the packs: the human brings it back with `reins enable`.
+  if (scenarioOff(rt, name)) return { ok: false, error: 'idle' };
   // The task works with its own copy of the manifest from here on.
   const manifest = structuredClone(scenario.manifest);
   const made = newScenarioTask(newId(), manifest, { ...inputs });
@@ -184,6 +187,7 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   made.task.level ??= defaultLevel(rt);
   hold(rt, made.task, opts.session);
   commit(rt, { task: made.task, rows: made.rows });
+  noteUse(rt, name);
   return { ok: true, ...prepareTask(rt, made.task) };
 }
 

@@ -9,6 +9,7 @@ import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime
 import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, withSession } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
+import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, measure, propose } from '../craft/craft.ts';
 import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
@@ -114,7 +115,7 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     const first = p.errors[0];
     if (!p.connected && first !== undefined) context.push(`The ${p.level} pack is NOT connected: ${p.errors.length} mistake(s), the first is ${first.code} at ${first.path}. Say this to the human: \`reins scenarios\` lists the mistakes.`);
   }
-  const scenarios = rt.merged.scenarios.filter((s) => s.manifest.state !== 'disabled');
+  const scenarios = rt.merged.scenarios.filter((s) => s.manifest.state !== 'disabled' && !scenarioOff(rt, s.name));
   if (scenarios.length > 0) {
     context.push('Scenarios (start one with `reins open <name> name=value`):');
     for (const s of scenarios) context.push(`- ${s.name}: ${s.manifest.title}`);

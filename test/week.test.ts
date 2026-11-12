@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,8 @@ import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, pruneArchive, readJournal, readJournalSince } from '../src/journal/writer.ts';
 import { validateRow, type JournalRow } from '../src/contracts/journal.ts';
 import { eight, summarize } from '../src/journal/metrics.ts';
-import type { Runtime } from '../src/core/runtime.ts';
+import { openScenario, type Runtime } from '../src/core/runtime.ts';
+import { scenarioOff } from '../src/core/idle.ts';
 import { sweep } from '../src/core/sweep.ts';
 import { addRecord, listRecords, restoreRecord, vetoRecord } from '../src/memory/store.ts';
 import { afterAction, beforeAction, type ClientTools } from '../src/client/before.ts';
@@ -232,6 +234,69 @@ test('week: the pack sets how long a removed record is kept, and the sweep remov
   sweep(none.rt, NOW);
   assert.equal(listRecords(none.rt, NOW).length, 1);
   assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', memory: { keep_days: 0 } }, 'person').errors.map((e) => `${e.code} ${e.path}`), ['not_positive memory.keep_days']);
+});
+
+test('week: a scenario that nobody called for the term of the packs is switched off, and one command brings it back', () => {
+  const b = box({ organization: { scenarios: { idle_days: 30 } }, person: { scenarios: { idle_days: 10 } } });
+  assert.equal(b.rt.merged.scenarioIdleDays, 30, 'the longest term of the packs');
+  // A scenario of a project pack is counted for its project: the project of the command is the directory of the work.
+  b.rt.project = `p${crypto.createHash('sha1').update(b.cwd).digest('hex').slice(0, 8)}`;
+  const names = b.rt.merged.scenarios.map((s) => s.name);
+  assert.ok(names.includes('change-review') && names.length > 1);
+  const real = Date.now();
+  // The first look only notes the time: the term does not start before the scenario is connected.
+  sweep(b.rt, real - 40 * DAY);
+  assert.equal(scenarioOff(b.rt, 'change-review'), false);
+  assert.equal(openScenario(b.rt, 'change-review', { change_id: '7' }).ok, true);
+  sweep(b.rt, real + 1000);
+  const off = names.filter((name) => scenarioOff(b.rt, name));
+  assert.deepEqual(off.sort(), names.filter((name) => name !== 'change-review').sort(), 'the scenario that was called stays');
+  const rows = readJournalSince(b.rt.stateDir).filter((r) => r.kind === 'harness.pack_changed');
+  assert.deepEqual(rows.map((r) => r.data?.scenario).sort(), [...off].sort());
+  assert.deepEqual(rows[0]?.data, { scenario: rows[0]?.data?.scenario, state: 'off', reason: 'idle' });
+  for (const row of rows) assert.deepEqual(validateRow(row), []);
+  // The term of the called scenario runs from the call.
+  sweep(b.rt, real + 31 * DAY);
+  assert.equal(scenarioOff(b.rt, 'change-review'), true);
+  assert.deepEqual(openScenario(b.rt, 'change-review', { change_id: '7' }), { ok: false, error: 'idle' });
+  // The command of the human, and what the agent sees.
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (...args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  assert.equal(reins('scenarios').scenarios.find((s: { name: string }) => s.name === 'change-review').off, 'idle');
+  assert.equal(reins('open', 'change-review', 'change_id=7').error, 'idle');
+  assert.deepEqual(reins('enable', 'change-review'), { ok: true, scenario: 'change-review' });
+  assert.equal(reins('enable', 'change-review').error, 'not_off');
+  assert.equal(reins('enable', 'no-such').error, 'unknown_scenario');
+  assert.equal(scenarioOff(b.rt, 'change-review'), false);
+  assert.equal(openScenario(b.rt, 'change-review', { change_id: '7' }).ok, true);
+  // The agent can type the command, so a client with the hook asks the human first.
+  const asked = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: 'reins enable change-review' } }, { shell: { kind: 'shell', command: 'command' } });
+  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'protect.human-command']);
+  // Without a term nothing is switched off, and the term does not run: a term that comes later starts from its first look.
+  const none = box();
+  sweep(none.rt, real - 4000 * DAY);
+  assert.equal(openScenario(none.rt, 'change-review', { change_id: '7' }).ok, true);
+  sweep(none.rt, real);
+  assert.deepEqual(none.rt.merged.scenarios.filter((s) => scenarioOff(none.rt, s.name)), []);
+  none.rt.merged.scenarioIdleDays = 30;
+  sweep(none.rt, real + 100 * DAY);
+  assert.deepEqual(none.rt.merged.scenarios.filter((s) => scenarioOff(none.rt, s.name)), [], 'the first look with a term');
+  sweep(none.rt, real + 131 * DAY);
+  assert.equal(scenarioOff(none.rt, 'change-review'), true);
+  // A term that goes away: nothing is off, and the count starts again when it comes back.
+  delete none.rt.merged.scenarioIdleDays;
+  assert.equal(scenarioOff(none.rt, 'change-review'), false);
+  sweep(none.rt, real + 132 * DAY);
+  none.rt.merged.scenarioIdleDays = 30;
+  assert.equal(scenarioOff(none.rt, 'change-review'), false);
+  // A scenario that a schedule or an event starts is never idle: a long period is no want of use.
+  const timed = none.rt.merged.scenarios.find((s) => s.name === 'change-review');
+  assert.ok(timed);
+  sweep(none.rt, real + 133 * DAY);
+  timed.manifest.trigger = { ...timed.manifest.trigger, kind: 'schedule', value: 'daily 09:00' };
+  sweep(none.rt, real + 400 * DAY);
+  assert.equal(scenarioOff(none.rt, 'change-review'), false);
+  assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', scenarios: { idle_days: 0, more: 1 } }, 'person').errors.map((e) => `${e.code} ${e.path}`), ['unknown_field scenarios.more', 'not_positive scenarios.idle_days']);
 });
 
 // ---- Cases of the review.

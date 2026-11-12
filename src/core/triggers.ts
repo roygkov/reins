@@ -4,6 +4,7 @@
 // Specification: docs/spec/harness-manifest, page 2; harness-model, page 6.
 
 import fs from 'node:fs';
+import { scenarioOff } from './idle.ts';
 import path from 'node:path';
 import { nextRun, parseSchedule } from '../contracts/schedule.ts';
 import { openScenario, type Runtime } from './runtime.ts';
@@ -49,7 +50,7 @@ export function tick(rt: Runtime, now: number = Date.now()): TriggerResult {
   const out: TriggerResult = { opened: [], skipped: [] };
   for (const s of rt.merged.scenarios) {
     const trigger = s.manifest.trigger;
-    if (trigger.kind !== 'schedule' || s.manifest.state === 'disabled') continue;
+    if (trigger.kind !== 'schedule' || s.manifest.state === 'disabled' || scenarioOff(rt, s.name)) continue;
     const form = parseSchedule(trigger.value ?? '');
     if (form === null) continue;
     // One look at a scenario at a time: two timers that fire together must not both run it.
@@ -86,7 +87,7 @@ export function fire(rt: Runtime, event: string, inputs: Record<string, string |
   const out: TriggerResult & { refused: { scenario: string; error: string }[] } = { opened: [], skipped: [], refused: [] };
   for (const s of rt.merged.scenarios) {
     const trigger = s.manifest.trigger;
-    if (trigger.kind !== 'event' || trigger.value !== event || s.manifest.state === 'disabled') continue;
+    if (trigger.kind !== 'event' || trigger.value !== event || s.manifest.state === 'disabled' || scenarioOff(rt, s.name)) continue;
     // A value of the event is text; an input that the scenario types as a number is read as one.
     const typed: Inputs = {};
     const types = new Map((trigger.inputs ?? []).map((i) => [i.name, i.type]));

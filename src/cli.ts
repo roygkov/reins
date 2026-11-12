@@ -29,6 +29,7 @@ import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
 import { sweep } from './core/sweep.ts';
+import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
 import { listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { eight, summarize } from './journal/metrics.ts';
@@ -138,6 +139,8 @@ function scenarios(rt: Runtime): Out {
       row.inputs = s.manifest.trigger.inputs ?? [];
       // What starts the scenario: a command, a schedule or an event.
       row.trigger = { kind: s.manifest.trigger.kind, ...(s.manifest.trigger.value !== undefined ? { value: s.manifest.trigger.value } : {}) };
+      // Nobody called it for the term of the packs: `reins enable <name>` brings it back.
+      if (scenarioOff(rt, s.name)) row.off = 'idle';
       return row;
     }),
     rejected: rt.merged.rejected,
@@ -261,6 +264,14 @@ function main(args: string[]): Out {
     return { ok: true, until: pause(runtime(), Number(first)) };
   }
   if (command === 'sweep' && first === undefined) return { ok: true, closed: sweep(runtime()) };
+  // The word of the human: a scenario that the harness switched off for want of use acts again.
+  if (command === 'enable' && first !== undefined && rest.length === 0) {
+    const rt = runtime();
+    if (!rt.merged.scenarios.some((s) => s.name === first)) throw new Stop('unknown_scenario');
+    const enabled = enableScenario(rt, first);
+    if (enabled !== 'on') throw new Stop(enabled);
+    return { ok: true, scenario: first };
+  }
   // Triggers without a human. A timer of the system runs `tick`; a system that saw an event runs `fire`.
   if (command === 'tick' && first === undefined) return { ok: true, ...tick(runtime()) };
   // The schedule with a client: every task that it opens and that needs the model gets a run of
@@ -508,7 +519,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'status [days]', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search
