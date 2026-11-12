@@ -12,6 +12,7 @@ import { workState } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listProposals, measure, propose } from '../craft/craft.ts';
+import { writeWeek } from '../craft/weekly.ts';
 import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
 // `capabilities`: what the client can do. `before`: it tells the core before an action.
@@ -153,6 +154,10 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push('Proposals of the harness for the human (say them to the human; `reins craft accept|reject <id>` resolves one):');
     for (const p of proposals.slice(0, 10)) context.push(`- ${p.id}: ${p.pattern} of "${p.key}", seen ${p.n} times`);
   }
+  // The summary of the week is a file and a notice: once in seven days the harness writes it and says where it is.
+  // A client without a window has no human who reads the notice: the summary waits for a session with one.
+  const week = process.env.REINS_HEADLESS === '1' ? null : writeWeek(rt);
+  if (week !== null) context.push(`The harness wrote the summary of the week: ${week}. Say this to the human; \`reins week\` prints it.`);
   return { context };
 }
 

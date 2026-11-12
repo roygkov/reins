@@ -16,6 +16,8 @@ import { openScenario, type Runtime } from '../src/core/runtime.ts';
 import { scenarioOff } from '../src/core/idle.ts';
 import { sweep } from '../src/core/sweep.ts';
 import { addRecord, listRecords, restoreRecord, vetoRecord } from '../src/memory/store.ts';
+import { weekText, writeWeek } from '../src/craft/weekly.ts';
+import { sessionStart } from '../src/client/session.ts';
 import { afterAction, beforeAction, type ClientTools } from '../src/client/before.ts';
 import { loadCases } from './cases.ts';
 
@@ -297,6 +299,47 @@ test('week: a scenario that nobody called for the term of the packs is switched 
   sweep(none.rt, real + 400 * DAY);
   assert.equal(scenarioOff(none.rt, 'change-review'), false);
   assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', scenarios: { idle_days: 0, more: 1 } }, 'person').errors.map((e) => `${e.code} ${e.path}`), ['unknown_field scenarios.more', 'not_positive scenarios.idle_days']);
+});
+
+test('week: the summary of the week is a file: the numbers, what needs a decision, what waits, what was accepted', () => {
+  const b = box();
+  b.rt.project = `p${crypto.createHash('sha1').update(b.cwd).digest('hex').slice(0, 8)}`;
+  const real = Date.now();
+  const task = openScenario(b.rt, 'change-review', { change_id: '7' });
+  assert.ok(task.ok);
+  // A draft of the memory in its veto window, and a proposal of the craft.
+  const decision = addRecord(b.rt, { type: 'decision', text: 'we keep one cache', because: 'two caches went out of step', paths: [], by: 'human' }, real);
+  assert.ok(decision.ok);
+  fs.mkdirSync(path.join(b.rt.stateDir, 'craft'), { recursive: true });
+  fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c0123456789.json'), JSON.stringify({ id: 'c0123456789', pattern: 'repeated_question', key: 'tool.unknown', n: 7, created: new Date(real).toISOString(), state: 'open' }));
+  fs.writeFileSync(path.join(b.rt.stateDir, 'craft', 'c1123456789.json'), JSON.stringify({ id: 'c1123456789', pattern: 'check_fails_often', key: 'change-review', n: 4, created: new Date(real - 9 * DAY).toISOString(), state: 'accepted', resolved: new Date(real - 8 * DAY).toISOString(), effect: 'better' }));
+  const text = weekText(b.rt, real);
+  assert.match(text, /^# reins: the week to \d{4}-\d{2}-\d{2}\n/);
+  for (const name of ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']) assert.match(text, new RegExp(`^\\| ${name} \\| `, 'm'));
+  assert.match(text, /## Needs a decision of the human\n\n- c0123456789: repeated_question of "tool.unknown", seen 7 times\. `reins craft accept c0123456789` or `reins craft reject c0123456789`/);
+  assert.match(text, /## Waits for its term\n\nNothing\./);
+  assert.match(text, /## Accepted, and the effect\n\n- c1123456789: check_fails_often of "change-review", accepted \d{4}-\d{2}-\d{2}: better/);
+  // A client without a window writes no summary: nobody reads its notice.
+  process.env.REINS_HEADLESS = '1';
+  try {
+    assert.equal(sessionStart(b.rt, { session: 's0', cwd: b.cwd, client: 'test_client' }).context.some((line) => line.includes('summary of the week')), false);
+  } finally {
+    delete process.env.REINS_HEADLESS;
+  }
+  assert.equal(fs.existsSync(path.join(b.rt.stateDir, 'summaries')), false);
+  // The file: the first start of a session writes it and says where it is; the next start of the week does not.
+  const first = sessionStart(b.rt, { session: 's1', cwd: b.cwd, client: 'test_client' }).context.find((line) => line.includes('summary of the week'));
+  const file = path.join(b.rt.stateDir, 'summaries', `week-${new Date().toISOString().slice(0, 10)}.md`);
+  assert.ok(first?.includes(file));
+  assert.match(fs.readFileSync(file, 'utf8'), /^# reins: the week to /);
+  assert.equal(sessionStart(b.rt, { session: 's2', cwd: b.cwd, client: 'test_client' }).context.some((line) => line.includes('summary of the week')), false);
+  assert.equal(writeWeek(b.rt, real + 6 * DAY), null);
+  assert.match(writeWeek(b.rt, real + 8 * DAY) ?? '', /week-\d{4}-\d{2}-\d{2}\.md$/);
+  // The command writes it at once.
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const out = JSON.parse(spawnSync(process.execPath, [CLI, 'week'], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  assert.deepEqual([out.ok, out.file], [true, file]);
+  assert.match(out.text, /c0123456789/);
 });
 
 // ---- Cases of the review.
