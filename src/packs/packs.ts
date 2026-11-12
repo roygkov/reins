@@ -52,7 +52,8 @@ export type PackSettings = {
   name: string;
   // `env`: the environment variables of a read connector. A script of a task gets the variables
   // of the read connectors that its manifest names.
-  connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]> };
+  // network: the read connectors that need the network. files: the files of a connector under the home directory.
+  connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]>; network?: string[]; files?: Record<string, string[]> };
   envs?: { known?: string[]; production?: string[] };
   limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number };
   roles?: string[];
@@ -113,6 +114,8 @@ export type Merged = {
   queueKeepDays?: number;
   craft?: CraftSettings; // a number: the lowest pack that names it; the scenarios to leave alone: all that the packs name
   scenarioIdleDays?: number; // a scenario that nobody called for this long is switched off: the longest that a pack names
+  connectorNetwork: string[]; // the read connectors that need the network, from the organization pack
+  connectorFiles: Record<string, string[]>; // read connector -> its files under the home directory, from the organization pack
   connectorEnv: Record<string, string[]>; // read connector -> its environment variables, from the organization pack
 };
 
@@ -229,7 +232,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     else settings.name = value.name;
   }
 
-  const connectors = section(errors, value.connectors, 'connectors', ['read', 'write', 'env']);
+  const connectors = section(errors, value.connectors, 'connectors', ['read', 'write', 'env', 'network', 'files']);
   if (connectors !== null) {
     const read = names(errors, connectors.read, 'connectors.read');
     const write = names(errors, connectors.write, 'connectors.write');
@@ -255,6 +258,37 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
           }
         }
         settings.connectors.env = env;
+      }
+    }
+    // What a script of a pack reaches in the sandbox of the system: the network and the files of
+    // a connector. Only the organization says it, as for the variables.
+    if (connectors.network !== undefined) {
+      if (level !== 'organization') errors.push({ code: 'not_allowed', path: 'connectors.network' });
+      else {
+        const network = names(errors, connectors.network, 'connectors.network', read ?? []);
+        if (network !== undefined) settings.connectors.network = network;
+      }
+    }
+    if (connectors.files !== undefined) {
+      if (level !== 'organization') errors.push({ code: 'not_allowed', path: 'connectors.files' });
+      else if (!isObj(connectors.files)) errors.push({ code: 'not_object', path: 'connectors.files' });
+      else {
+        const all: Record<string, string[]> = {};
+        for (const [name, list] of Object.entries(connectors.files)) {
+          const at = `connectors.files.${name}`;
+          if (!(read ?? []).includes(name)) errors.push({ code: 'not_in_list', path: at });
+          else if (!Array.isArray(list)) errors.push({ code: 'not_array', path: at });
+          else {
+            const good: string[] = [];
+            list.forEach((item, i) => {
+              // A path under the home directory: `~/` and plain parts, no way up.
+              if (typeof item !== 'string' || !/^~\/[^\0\r\n"\\]{1,300}$/.test(item) || item.split('/').includes('..')) errors.push({ code: 'bad_name', path: `${at}[${i}]` });
+              else if (!good.includes(item)) good.push(item);
+            });
+            all[name] = good;
+          }
+        }
+        settings.connectors.files = all;
       }
     }
   }
@@ -646,6 +680,8 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   };
   if (s.tools !== undefined) m.tools = s.tools;
   if (s.connectors?.env !== undefined) m.connectorEnv = s.connectors.env;
+  if (s.connectors?.network !== undefined) m.connectorNetwork = s.connectors.network;
+  if (s.connectors?.files !== undefined) m.connectorFiles = s.connectors.files;
   for (const rule of s.rules ?? []) m.rules.push({ ...rule, level: pack.level });
   if (pack.note !== undefined) m.notes.push({ level: pack.level, text: pack.note });
   Object.assign(m.models, s.models ?? {});
@@ -723,7 +759,7 @@ export function closedContext(m: Merged): PackContext {
 }
 
 export function mergePacks(loaded: LoadedPack[]): Merged {
-  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {}, gate: {}, connectorEnv: {} };
+  const m: Merged = { context: {}, origin: {}, packs: [], scenarios: [], rejected: [], scriptFiles: {}, tools: {}, rules: [], notes: [], models: {}, gate: {}, connectorEnv: {}, connectorNetwork: [], connectorFiles: {} };
   const ordered = [...loaded].sort((a, b) => PACK_LEVELS.indexOf(a.level) - PACK_LEVELS.indexOf(b.level));
   const connected: LoadedPack[] = [];
   const allScripts = new Set<string>();

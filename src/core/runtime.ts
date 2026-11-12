@@ -4,6 +4,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { Journal, RowInput } from '../journal/writer.ts';
 import type { Merged } from '../packs/packs.ts';
@@ -13,7 +14,7 @@ import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
 import { patchSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
-import { runCollect } from './collect.ts';
+import { runCollect, type Sandbox } from './collect.ts';
 import { workState } from './work.ts';
 import { noteUse, scenarioOff } from './idle.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
@@ -39,6 +40,7 @@ export type Runtime = {
   runner?: string[]; // the command of the machine that starts a client for one task, with its arguments
   memoryCommit?: boolean; // the harness commits the directory of the memory records after a change
   runnerTimeoutMs?: number; // how long one run of the client can take
+  scriptSandbox?: boolean; // the scripts of the packs run in the sandbox of the system
   workDir?: string; // the directory where the client works: a script of a pack must not change it
   harnessDirs?: string[]; // the code of the harness and of the client adapter: the human decides each change
 };
@@ -235,6 +237,8 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
           timeoutMs: collect.timeout_s !== undefined ? collect.timeout_s * 1000 : (rt.collectTimeoutMs ?? DEFAULT_COLLECT_TIMEOUT_MS),
           maxBytes: collect.max_bytes ?? DEFAULT_COLLECT_BYTES,
           env: connectorEnv(rt, manifest),
+          // A collect script only reads: it writes into the temporary directories and nowhere else.
+          ...scriptSandbox(rt, manifest, []),
         });
   if (workBefore !== null && rt.workDir !== undefined) {
     if (workState(rt.workDir) !== workBefore) return { task: prepared({ type: 'collect_failed', reason: 'changed_work' }), collected: null };
@@ -252,6 +256,38 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
 // and no variable of another connector.
 function connectorEnv(rt: Runtime, manifest: Manifest): string[] {
   return (manifest.permissions.read ?? []).flatMap((name) => rt.merged.connectorEnv[name] ?? []);
+}
+
+// The sandbox of a script of the task, when the config asks for one. The network: only when the
+// manifest names a read connector that needs it. The files of the connectors that the manifest
+// does not name cannot be read. `writable`: where this script may write besides the temporary
+// directories.
+function scriptSandbox(rt: Runtime, manifest: Manifest | undefined, writable: string[], local = false): { sandbox: Sandbox } | Record<string, never> {
+  if (rt.scriptSandbox !== true) return {};
+  const reads = manifest?.permissions.read ?? [];
+  const home = os.homedir();
+  const denyRead = Object.entries(rt.merged.connectorFiles).filter(([name]) => !reads.includes(name)).flatMap(([, files]) => files.map((f) => path.join(home, f.slice(2))));
+  return { sandbox: { network: reads.some((name) => rt.merged.connectorNetwork.includes(name)), denyRead, writable, ...(local ? { local: true } : {}) } };
+}
+
+// Where a check script may write: the work that it checks. The path comes from a collect script,
+// so it is taken only when it is a work: the directory of the client, or the top of a repository.
+// The root of the system, the home directory and a directory above it are never a work.
+function checkedWork(rt: Runtime, task: Task): string[] {
+  const root = sourceRoot(rt, task);
+  if (root === null || !path.isAbsolute(root)) return [];
+  let dir: string;
+  let home: string;
+  try {
+    dir = fs.realpathSync(root);
+    home = fs.realpathSync(os.homedir());
+    if (!fs.statSync(dir).isDirectory()) return [];
+  } catch {
+    return [];
+  }
+  if (dir === '/' || home === dir || home.startsWith(`${dir}/`)) return [];
+  const own = rt.workDir !== undefined && path.resolve(rt.workDir) === root;
+  return own || fs.existsSync(path.join(dir, '.git')) ? [dir] : [];
 }
 
 // The directory of the work that a result of the task is about: the collect result that the
@@ -504,6 +540,9 @@ function scriptCheck(rt: Runtime, task: Task): Answer {
   const r = runCollect(file, { inputs: task.inputs, task: task.id, report: reportFile(rt, task.id), collected: fs.existsSync(collected) ? collected : null }, {
     outputs: ['result'], flags: [], timeoutMs: rt.checkScriptTimeoutMs ?? DEFAULT_CHECK_SCRIPT_MS, maxBytes: 64 * 1024,
     ...(task.manifest !== undefined ? { env: connectorEnv(rt, task.manifest) } : {}),
+    // A check runs the tests of the work: it writes into the directory of the work that it checks,
+    // and it reaches this machine (a local server of the tests, a container engine).
+    ...scriptSandbox(rt, task.manifest, checkedWork(rt, task), true),
   });
   if (!r.ok) return none('check_failed');
   const result = r.outputs.result;

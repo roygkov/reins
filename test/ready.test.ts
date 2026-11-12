@@ -6,10 +6,12 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { applyEvent, loadTask, openScenario, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
+import { runCollect, sandboxProfile } from '../src/core/collect.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { loadCases } from './cases.ts';
 
@@ -180,6 +182,129 @@ test('ready: a work that had a fingerprint and has none now does not keep the an
   const id = accepted(b);
   fs.rmSync(path.join(b.cwd, '.git'), { recursive: true, force: true });
   assert.equal(verifyWork(b.rt, id), false);
+});
+
+// ---- The sandbox of the system for the scripts of the packs.
+
+const MAC = process.platform === 'darwin' && fs.existsSync('/usr/bin/sandbox-exec');
+const state = (b: Box) => {
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, {});
+  assert.ok(opened.ok);
+  return [opened.task.state, opened.task.label];
+};
+
+test('sandbox: with the key of the config a collect script cannot write outside the temporary directories', { skip: !MAC }, () => {
+  // A place outside the temporary directories: beside this test. The test boxes lie in a temporary directory.
+  const probe = path.join(path.dirname(fileURLToPath(import.meta.url)), `sandbox-probe-${process.pid}.tmp`);
+  // The write fails inside the script; a write into the temporary directory works.
+  const script = `#!/bin/sh\ncat >/dev/null\necho x > "${probe}" 2>/dev/null\n[ -e "${probe}" ] && exit 6\necho x > "$TMPDIR/reins-sandbox-test.$$" || exit 5\nrm -f "$TMPDIR/reins-sandbox-test.$$"\nprintf '%s' '$OUT'\n`;
+  try {
+    const b = box({ collect: script });
+    b.rt.scriptSandbox = true;
+    assert.deepEqual(state(b), ['executing', undefined]);
+    assert.equal(fs.existsSync(probe), false);
+    // Without the key the same script writes the file.
+    assert.deepEqual(state(box({ collect: script })), ['closed', 'not_verified']);
+    assert.equal(fs.existsSync(probe), true);
+  } finally {
+    fs.rmSync(probe, { force: true });
+  }
+});
+
+test('sandbox: a check script runs in the sandbox too, and can write only into the work that it checks', { skip: !MAC }, () => {
+  const probe = path.join(path.dirname(fileURLToPath(import.meta.url)), `sandbox-check-${process.pid}.tmp`);
+  // The tests of a work write their output into the work: a place that git does not track. Any other place is closed.
+  const check = `#!/bin/sh\ncat >/dev/null\necho x > "${probe}" 2>/dev/null\n[ -e "${probe}" ] && exit 6\necho built > $WORK/.git/reins-check-output || exit 7\nprintf '%s' '{"outputs":{"result":"PASS"}}'\n`;
+  try {
+    const b = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check });
+    b.rt.scriptSandbox = true;
+    const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, {});
+    assert.ok(opened.ok);
+    const r = submitReport(b.rt, opened.task.id, 'done');
+    assert.ok('step' in r && r.answer !== undefined);
+    assert.equal(r.answer.result, 'PASS');
+    assert.equal(fs.existsSync(probe), false);
+    // A collect script that names the home directory as the work gives the check no place to write.
+    const home = process.env.HOME;
+    const wide = box({ done: { kind: 'command', check: 'tests', retries: 0, source: 'worktree' }, check: `#!/bin/sh\ncat >/dev/null\necho x > "${probe}" 2>/dev/null\n[ -e "${probe}" ] && exit 6\nprintf '%s' '{"outputs":{"result":"PASS"}}'\n`, collect: `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [], worktree: path.dirname(path.dirname(probe)) }, flags: { has_new_commits: true } })}'\n` });
+    wide.rt.scriptSandbox = true;
+    process.env.HOME = path.dirname(probe);
+    try {
+      const task = openScenario(wide.rt, 'change-review', { change_id: '7' }, {});
+      assert.ok(task.ok);
+      const answer = submitReport(wide.rt, task.task.id, 'done');
+      assert.ok('step' in answer && answer.answer !== undefined);
+      assert.equal(answer.answer.result, 'PASS');
+      assert.equal(fs.existsSync(probe), false, 'a directory above the home directory is no work');
+    } finally {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+    }
+  } finally {
+    fs.rmSync(probe, { force: true });
+  }
+});
+
+test('sandbox: the network is for a script whose manifest names a connector that needs it', { skip: !MAC }, async () => {
+  const net = await import('node:net');
+  const server = net.createServer();
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const script = `#!/bin/sh\ncat >/dev/null\n/usr/bin/nc -z -G 2 127.0.0.1 ${port} || exit 3\nprintf '%s' '$OUT'\n`;
+    const connectors = { read: ['code-host', 'tracker'], write: ['comment'] };
+    // No connector of the pack needs the network: the script has none.
+    const closed = box({ collect: script, organization: { connectors } });
+    closed.rt.scriptSandbox = true;
+    assert.deepEqual(state(closed), ['closed', 'not_verified']);
+    // The manifest names a connector that needs the network.
+    const open = box({ collect: script, organization: { connectors: { ...connectors, network: ['tracker'] } } });
+    open.rt.scriptSandbox = true;
+    assert.deepEqual(state(open), ['executing', undefined]);
+    // Without the sandbox the network is as the system gives it.
+    assert.deepEqual(state(box({ collect: script, organization: { connectors } })), ['executing', undefined]);
+  } finally {
+    server.close();
+  }
+});
+
+test('sandbox: the files of a connector are for a script whose manifest names the connector', { skip: !MAC }, () => {
+  const home = process.env.HOME;
+  const script = "#!/bin/sh\ncat >/dev/null\ncat \"$HOME/.vault/token\" >/dev/null 2>&1 || exit 4\nprintf '%s' '$OUT'\n";
+  const make = (files: Record<string, string[]>): Box => {
+    const b = box({ collect: script, organization: { connectors: { read: ['code-host', 'tracker', 'vault'], write: ['comment'], files } } });
+    fs.mkdirSync(path.join(b.root, '.vault'));
+    fs.writeFileSync(path.join(b.root, '.vault', 'token'), 'secret');
+    b.rt.scriptSandbox = true;
+    process.env.HOME = b.root;
+    return b;
+  };
+  try {
+    // The manifest of the review names `code-host` and `tracker`, not `vault`.
+    assert.deepEqual(state(make({ vault: ['~/.vault'] })), ['closed', 'not_verified']);
+    assert.deepEqual(state(make({ tracker: ['~/.vault'] })), ['executing', undefined]);
+  } finally {
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+  }
+});
+
+test('sandbox: a system with no sandbox tool runs no script, and the pack says what a connector needs', () => {
+  const r = runCollect('/bin/echo', { inputs: {} }, { outputs: [], flags: [], timeoutMs: 1000, maxBytes: 1000, sandbox: { network: false, denyRead: [], writable: [], tool: '/nonexistent/sandbox' } });
+  assert.deepEqual(r, { ok: false, reason: 'no_sandbox' });
+  const profile = sandboxProfile({ network: false, denyRead: ['/Users/x/.config/a "b"'], writable: ['/work/tree'] });
+  assert.match(profile, /^\(version 1\)\n\(allow default\)\n\(deny file-write\*\)\n\(allow file-write\* .*\(subpath "\/work\/tree"\)\)\n\(deny network\*\)\n\(deny file-read\* \(subpath "\/Users\/x\/\.config\/a \\"b\\""\)\)$/);
+  assert.equal(sandboxProfile({ network: true, denyRead: [], writable: [] }).includes('network'), false);
+  // A check reaches this machine and nothing farther.
+  const local = sandboxProfile({ network: false, denyRead: [], writable: [], local: true });
+  assert.match(local, /\(deny network\*\)\n\(allow network-outbound \(remote ip "localhost:\*"\) \(remote unix-socket\)\)/);
+  assert.equal(sandboxProfile({ network: true, denyRead: [], writable: [], local: true }).includes('localhost'), false);
+  const base = { pack: 1, level: 'organization', name: 'acme', connectors: { read: ['tracker'], write: ['comment'] } };
+  const errors = (connectors: Record<string, unknown>, level = 'organization') => validateSettings({ ...base, level, connectors: { ...base.connectors, ...connectors } }, level as 'organization').errors.map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ network: ['tracker'], files: { tracker: ['~/.config/tool'] } }), []);
+  assert.deepEqual(errors({ network: ['other'] }), ['not_in_list connectors.network[0]']);
+  assert.deepEqual(errors({ files: { other: ['~/x'], tracker: ['/etc/passwd', '~/../x', '~/ok'] } }), ['not_in_list connectors.files.other', 'bad_name connectors.files.tracker[0]', 'bad_name connectors.files.tracker[1]']);
+  assert.deepEqual(errors({ network: ['tracker'], files: {} }, 'person'), ['not_allowed connectors.network', 'not_allowed connectors.files']);
 });
 
 test('ready: a collect script that changes the work and then fails leaves the fact in the journal', () => {
