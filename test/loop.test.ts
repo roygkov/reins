@@ -200,6 +200,14 @@ test('loop: a subordinate executor starts only in a role and a count that the ma
   assert.deepEqual([first.outcome, first.task], ['allow', id]);
   assert.deepEqual([executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer' }).rule], ['executor.limit']);
   assert.deepEqual([executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'coder' }).outcome, executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'coder' }).rule], ['deny', 'executor.role']);
+  // Each refusal is a decision of the journal with its rule, the role and the parent task.
+  const refused = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision' || r.kind === 'policy.basis');
+  assert.deepEqual(refused.map((r) => [r.kind, r.data?.outcome ?? r.data?.rule, r.role, r.parent, r.executor]), [
+    ['policy.decision', 'deny', 'reviewer', id, 'sub'], ['policy.basis', 'executor.limit', 'reviewer', id, 'sub'],
+    ['policy.decision', 'deny', 'coder', id, 'sub'], ['policy.basis', 'executor.role', 'coder', id, 'sub'],
+    ['policy.decision', 'deny', 'coder', id, 'sub'], ['policy.basis', 'executor.role', 'coder', id, 'sub'],
+  ]);
+  for (const r of refused) assert.deepEqual(validateRow(r), []);
   executorReported(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer', size: 100 });
   assert.equal(executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer' }).outcome, 'allow', 'a place is free after the report');
   const rows = readJournal(b.rt.journal.file).filter((r) => r.kind.startsWith('executor.'));

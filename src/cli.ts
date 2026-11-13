@@ -38,7 +38,7 @@ import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
-import { eight, summarize } from './journal/metrics.ts';
+import { eight, ofProject, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
@@ -435,13 +435,28 @@ function main(args: string[]): Out {
   }
   if (command === 'status') {
     const rt = runtime();
-    const days = first !== undefined && /^[1-9][0-9]{0,2}$/.test(first) ? Number(first) : 7;
+    // `status [days] [project=here|<project>]`. The journal is one for the machine: without a
+    // project the counts are of all the projects.
+    const words = [first, ...rest].filter((w): w is string => w !== undefined);
+    const dayWords = words.filter((w) => /^[1-9][0-9]{0,2}$/.test(w));
+    const projectWords = words.filter((w) => w.startsWith('project='));
+    if (dayWords.length > 1 || projectWords.length > 1 || dayWords.length + projectWords.length !== words.length) throw new Stop('usage');
+    const days = dayWords[0] !== undefined ? Number(dayWords[0]) : 7;
+    const named = projectWords[0]?.slice(8);
+    if (named !== undefined && named !== 'here' && !/^p[0-9a-f]{8}$/.test(named)) throw new Stop('usage');
+    const project = named === 'here' ? rt.project : named;
+    const rows = (since: number): ReturnType<typeof readJournalSince> => {
+      const all = readJournalSince(rt.stateDir, since);
+      return project === undefined ? all : ofProject(all, project);
+    };
     return {
       ok: true,
       days,
-      metrics: summarize(readJournalSince(rt.stateDir, Date.now() - days * 24 * 60 * 60 * 1000), Date.now() - days * 24 * 60 * 60 * 1000),
+      project: project ?? 'all',
+      metrics: summarize(rows(Date.now() - days * 24 * 60 * 60 * 1000), Date.now() - days * 24 * 60 * 60 * 1000),
       // The eight numbers of the week and of the week before it.
-      eight: eight(readJournalSince(rt.stateDir, Date.now() - 14 * 24 * 60 * 60 * 1000)),
+      eight: eight(rows(Date.now() - 14 * 24 * 60 * 60 * 1000)),
+      // The open tasks are of the machine: a task does not name its project.
       open_tasks: openTasks(rt).length,
       packs: rt.merged.packs.map((p) => ({ level: p.level, name: p.name, connected: p.connected, errors: p.errors })),
       rejected: rt.merged.rejected,
@@ -628,7 +643,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'status [days]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'status [days] [project=here|<project>]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

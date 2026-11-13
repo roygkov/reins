@@ -10,16 +10,21 @@ export type Metrics = {
   checks: { PASS: number; FAIL: number; none: number };
   decisions: { allow: number; ask: number; defer: number; deny: number };
   protected_attempts: number;
+  protected: { ask: number; deny: number }; // the attempts at a protected place: a question to the human, or a refusal
   failures: number;
   shape_changes: number;
   memory: { written: number; vetoed: number; reads: number };
 };
 
+// The rows of one project. A row that an adapter writes before it knows the project (the
+// project `p0`: an input of a hook that cannot be read) belongs to no project.
+export const ofProject = (rows: JournalRow[], project: string): JournalRow[] => rows.filter((row) => row.project === project);
+
 // The counts of the rows from `since` (milliseconds) on. A row whose time cannot be read is skipped.
 export function summarize(rows: JournalRow[], since = 0): Metrics {
   const m: Metrics = {
     tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
-    decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, failures: 0, shape_changes: 0,
+    decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0 },
   };
   const scenario = (name: string): Metrics['scenarios'][string] => (m.scenarios[name] ??= { opened: 0, accepted: 0, returns: 0 });
@@ -59,6 +64,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
       }
       case 'policy.protected_attempt':
         m.protected_attempts += 1;
+        if (data.outcome === 'ask' || data.outcome === 'deny') m.protected[data.outcome] += 1;
         break;
       case 'harness.failure':
         m.failures += 1;

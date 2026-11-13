@@ -488,3 +488,20 @@ test('cli: a value of a known form opens the scenario of that form without its n
   const several = reins(two, ['match', 'CH-7']).json;
   assert.deepEqual([several.ok, several.error, several.scenarios], [false, 'several', ['change-review', 'draft-message']]);
 });
+
+test('cli: the status of one project counts only the rows of that project', () => {
+  const b = box();
+  reins(b, ['open', 'change-review', 'change_id=7']);
+  const all = reins(b, ['status']).json;
+  assert.equal(all.project, 'all');
+  assert.ok(all.metrics.tasks.opened >= 1);
+  const here = reins(b, ['status', 'project=here']).json;
+  assert.match(here.project, /^p[0-9a-f]{8}$/);
+  assert.equal(here.metrics.tasks.opened, all.metrics.tasks.opened);
+  const other = reins(b, ['status', '30', 'project=p0a0a0a0a']).json;
+  assert.deepEqual([other.days, other.project, other.metrics.tasks.opened, other.eight.verified_share.n], [30, 'p0a0a0a0a', 0, 0]);
+  assert.equal(reins(b, ['status', 'project=a b']).json.error, 'usage');
+  assert.equal(reins(b, ['status', 'nothing']).json.error, 'usage');
+  // A name that is not an identifier of a project is a wrong call, not a count of zero.
+  assert.equal(reins(b, ['status', 'project=ums']).json.error, 'usage');
+});

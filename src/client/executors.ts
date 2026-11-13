@@ -55,13 +55,26 @@ function row(rt: Runtime, kind: 'executor.started' | 'executor.report_received',
   });
 }
 
+// A refusal is a decision of the journal, as the refusal of an action is: the rule, the role and
+// the parent task. Without the row nobody sees how often a subordinate did not start.
+function refused(rt: Runtime, parent: Task, role: string, session: string | undefined, rule: string): ExecutorReply {
+  const head = {
+    project: rt.project, task: parent.id, parent: parent.id, executor: 'sub' as const, role,
+    ...(session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}),
+    ...(parent.scenario !== undefined ? { scenario: parent.scenario, scenario_v: parent.version ?? 1 } : {}),
+  };
+  rt.journal.write({ kind: 'policy.decision', ...head, data: { outcome: 'deny', action_kind: 'unknown', env: 'unknown' } });
+  rt.journal.write({ kind: 'policy.basis', ...head, data: { layer: 'core', rule } });
+  return { outcome: 'deny', rule, task: parent.id };
+}
+
 export function executorStarted(rt: Runtime, e: ExecutorEvent, now: number = Date.now()): ExecutorReply {
   const parent = parentOf(rt, e.session);
   const role = roleOf(e.role);
   if (parent === null) return { outcome: 'deny', rule: 'executor.busy', task: '' };
   // A scenario task that does not execute (it is checked, it waits for the human, it publishes)
   // starts no executor: the session is still in the scenario, so the free task does not answer.
-  if (parent.state !== 'executing') return { outcome: 'deny', rule: 'executor.state', task: parent.id };
+  if (parent.state !== 'executing') return refused(rt, parent, role, e.session, 'executor.state');
   const rule = withSession(rt, e.session, (file) => {
     const running = (file.executors ?? []).filter((x) => now - x.at <= STALE_MS);
     if (parent.manifest !== undefined) {
@@ -76,7 +89,7 @@ export function executorStarted(rt: Runtime, e: ExecutorEvent, now: number = Dat
     }
     return { next: { ...file, executors: [...running, { role, task: parent.id, at: now }] }, result: 'executor.allowed' };
   });
-  if (rule !== 'executor.allowed') return { outcome: 'deny', rule, task: parent.id };
+  if (rule !== 'executor.allowed') return refused(rt, parent, role, e.session, rule);
   row(rt, 'executor.started', parent, parent.id, role, e.session);
   return { outcome: 'allow', rule, task: parent.id };
 }
