@@ -12,6 +12,7 @@
 - `docs/spec/harness-<часть>.*`: детали по частям модели.
 - `docs/spec/harness-instance-*.*`: пример экземпляра. В модель не входит.
 - `tools/gen_harness_diagrams.py`: генератор всех файлов `.drawio`.
+- `tools/mcp_share.py`: замер доли ответов MCP в транскриптах Claude Code. Запуск: `python3 -I tools/mcp_share.py <дни>`.
 
 ## Код
 
