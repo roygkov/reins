@@ -58,6 +58,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       if (typeof value.executor === 'string' && value.executor !== '') call.sub = value.executor;
       if (value.headless === true) call.headless = true;
       if (head.event === 'after') {
+        if (value.interrupted === true) call.interrupted = true;
         // The size of the output of the tool, when the client gives it.
         if (typeof value.output_size === 'number' && Number.isInteger(value.output_size) && value.output_size >= 0) call.output = value.output_size;
         const done = afterAction(rt, call, tools, value.asked !== false, value.failed === true);

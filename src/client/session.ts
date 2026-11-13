@@ -240,19 +240,25 @@ export function settleQuestions(rt: Runtime, session: string | undefined, who: '
 }
 
 // A request of the human: the free task of the request before it ends, a new one opens.
-export function humanRequest(rt: Runtime, e: SessionEvent): { task: string } {
+// `long`: the count of requests of a session that reached the count of the packs, or a multiple of
+// it. The client tells the human to write the state and to start a new session: a long session
+// reads its whole history again at every turn. A run without a window has no human to tell.
+export function humanRequest(rt: Runtime, e: SessionEvent): { task: string; long?: number } {
   settleQuestions(rt, e.session);
   // The state of the work tree at the request: at the stop it says whether the request changed the work.
   const work = workState(e.cwd);
   // The count of requests and the new task change in one step under the lock of the session file:
   // two request events of one session must not lose a count.
-  const { before, task } = withSession(rt, e.session, (file) => {
+  const { before, task, requests } = withSession(rt, e.session, (file) => {
     const opened = openFreeTask(rt);
-    return { next: { ...file, task: opened.id, work, requests: (file.requests ?? 0) + 1 }, result: { before: file.task, task: opened.id } };
+    const requests = (file.requests ?? 0) + 1;
+    return { next: { ...file, task: opened.id, work, requests }, result: { before: file.task, task: opened.id, requests } };
   });
   if (typeof before === 'string' && loadTask(rt, before)?.state === 'executing') applyEvent(rt, before, { type: 'expire' }, 'harness');
   noteDirectory(rt, e.cwd, e.session);
-  return { task };
+  const max = rt.merged.context.maxSessionRequests;
+  const long = max !== undefined && max > 0 && e.headless !== true && requests % max === 0 ? requests : undefined;
+  return { task, ...(long !== undefined ? { long } : {}) };
 }
 
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result

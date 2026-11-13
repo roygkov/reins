@@ -57,7 +57,7 @@ export type PackSettings = {
   // network: the read connectors that need the network. files: the files of a connector under the home directory.
   connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]>; network?: string[]; files?: Record<string, string[]> };
   envs?: { known?: string[]; production?: string[] };
-  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number; probes?: number };
+  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number; probes?: number; tool_failures?: number; session_requests?: number };
   roles?: string[];
   checks?: string[];
   memory?: { types?: string[]; veto_days?: number; keep_days?: number; case_end?: string[] };
@@ -306,7 +306,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     settings.envs = { ...(known !== undefined && { known }), ...(production !== undefined && { production }) };
   }
 
-  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes', 'probes']);
+  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes', 'probes', 'tool_failures', 'session_requests']);
   if (limits !== null) {
     const out: NonNullable<PackSettings['limits']> = {};
     if (limits.level !== undefined) {
@@ -325,6 +325,12 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     // The runs of the done check of one task before its report: a check costs time and money.
     const probes = limit(errors, limits.probes, 'limits.probes');
     if (probes !== undefined) out.probes = probes;
+    // The failures of one tool of a connector in a row before its next call asks the human.
+    const toolFailures = limit(errors, limits.tool_failures, 'limits.tool_failures');
+    if (toolFailures !== undefined) out.tool_failures = toolFailures;
+    // The requests of one session before the harness says to write the state and to start a new session.
+    const sessionRequests = limit(errors, limits.session_requests, 'limits.session_requests');
+    if (sessionRequests !== undefined) out.session_requests = sessionRequests;
     if (tokens !== undefined) out.tokens = tokens;
     if (writes !== undefined) out.writes = writes;
     if (executors !== undefined) out.executors = executors;
@@ -847,7 +853,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   narrow('envs', s.envs?.known);
   narrow('roles', s.roles);
 
-  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges' | 'maxProbes', value: number | undefined): void => {
+  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges' | 'maxProbes' | 'maxToolFailures' | 'maxSessionRequests', value: number | undefined): void => {
     if (value === undefined) return;
     const before = c[key];
     if (before === undefined || value < before) {
@@ -861,6 +867,8 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   lower('maxReads', s.limits?.reads);
   lower('maxFreeChanges', s.limits?.free_changes);
   lower('maxProbes', s.limits?.probes);
+  lower('maxToolFailures', s.limits?.tool_failures);
+  lower('maxSessionRequests', s.limits?.session_requests);
   const level = s.limits?.level;
   if (level !== undefined && (c.maxLevel === undefined || rank(level) < rank(c.maxLevel))) {
     c.maxLevel = level;

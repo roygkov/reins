@@ -68,6 +68,8 @@ function readEvent(): ToolCall | null {
   // A tool that the human broke off says nothing about the answer of the human.
   interrupted = value.hook_event_name === 'PostToolUseFailure' && value.is_interrupt === true;
   failed = value.hook_event_name === 'PostToolUseFailure' && value.is_interrupt !== true;
+  // A call that the human broke off is neither a failure nor a run that worked.
+  if (interrupted) call.interrupted = true;
   // A run without a window is named by the command that starts it: nobody answers a question there.
   if (process.env.REINS_HEADLESS === '1') call.headless = true;
   return call;
@@ -288,7 +290,13 @@ function session(mode: string): void {
     if (mode === 'session-start') {
       const { context } = sessionStart(rt, e);
       process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context.join('\n') } }));
-    } else if (mode === 'prompt') humanRequest(rt, e);
+    } else if (mode === 'prompt') {
+      const asked = humanRequest(rt, e);
+      // A long session: the words go to the agent with the request, and the agent says them to the human.
+      if (asked.long !== undefined) {
+        process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: `reins: this session has ${asked.long} requests. A long session reads its whole history again at every turn. At the end of your answer say to the human in one line: write the state with the scenario wrapup and start a new session for the next task.` } }));
+      }
+    }
     else if (mode === 'stop') {
       // The label of the result goes to the human when the request changed the work tree. A request
       // that changed nothing is a question: it has no result to label.

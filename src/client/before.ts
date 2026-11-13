@@ -15,7 +15,7 @@ import { decide, grantKey, plainValue, type Action, type Decision, type Envelope
 import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, mutateTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
-import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
+import { currentScenario, patchSession, readSession, withSession } from '../core/sessions.ts';
 import { touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
 import { guardPattern, inputForm } from '../contracts/manifest.ts';
@@ -31,7 +31,7 @@ import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '..
 // `subId`: the identifier of the subordinate executor that makes the call, when the client gives one (`sub` is its role).
 // `callId`: the identifier that the client gives to one call of a tool, the same before and after it.
 // `named`: the name of the tool for the journal, set by `beforeAction` for a tool that is not the client's own.
-export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; output?: number; headless?: boolean; unshown?: boolean; named?: string };
+export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; output?: number; interrupted?: boolean; headless?: boolean; unshown?: boolean; named?: string };
 
 // What a question keeps while it waits: whose it is, and whether a human sees it.
 // The project is kept with the question: a command `cd <dir> && ...` moves the session, and the
@@ -559,7 +559,12 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
     ]);
     return { outcome: 'allow', rule: 'paused', layer: 'core', envelope: 'none' };
   }
-  if (action.via === 'tool' && action.kind === 'write') {
+  // A tool of a connector that failed several times in a row: the next call is a question. A
+  // retry sends the whole context again, so the human decides whether one more try is worth it.
+  // The envelope of a task does not take this question away.
+  const maxFails = rt.merged.context.maxToolFailures;
+  const tripped = maxFails !== undefined && !Object.hasOwn(clientTools, call.tool) && (readSession(rt, call.session)?.fails?.[call.tool] ?? 0) >= maxFails && pausedUntil(rt) === null;
+  if (action.via === 'tool' && action.kind === 'write' && !tripped) {
     const key = grantKey(action.name, action.target, action.env.name);
     const id = taskFor(rt, key, call.session);
     const decision = id === undefined ? null : decideAction(rt, id, action, layers, subOf(rt, call, id), call.unshown === true);
@@ -601,6 +606,9 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
     && (contract.state === 'executing' || contract.state === 'publishing') && !(contract.manifest?.permissions.read ?? []).includes(read.connector) && !(contract.extraReads ?? []).includes(read.connector) && pausedUntil(rt) === null) {
     decision = { ...decision, outcome: 'ask', basis: { layer: 'core', rule: 'scenario.read-scope' } };
   }
+  // The question of the circuit breaker stands in place of an allow and of a plain question: the
+  // human reads why this call asks. A refusal and a deferral stay.
+  if (tripped && (decision.outcome === 'allow' || decision.outcome === 'ask')) decision = { ...decision, outcome: 'ask', basis: { layer: 'core', rule: 'default.tool-failures' } };
   const maxReads = rt.merged.context.maxReads;
   if (maxReads !== undefined && read.connector !== undefined && action.kind === 'read' && decision.outcome === 'allow') {
     // The task of the scenario that the session holds, else the free task of the session.
@@ -716,6 +724,18 @@ function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: bo
   // The tools of the client itself fail all the time (a command with an exit code, a file that is
   // not there): that is the work, not a fault of a tool.
   if (failed && !Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_failed', data: { tool: call.tool } }]);
+  // The failures of one tool of a connector in a row (the circuit breaker): a failure adds one, a
+  // run that worked starts the count again. The count lives with the session: the free task of a
+  // session changes at every request. A call that the human broke off says nothing.
+  if (rt.merged.context.maxToolFailures !== undefined && call.session !== undefined && call.interrupted !== true && !Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool)) {
+    withSession(rt, call.session, (file) => {
+      const fails = { ...(file.fails ?? {}) };
+      if (failed) fails[call.tool] = (fails[call.tool] ?? 0) + 1;
+      else if (fails[call.tool] === undefined) return { next: null, result: undefined };
+      else delete fails[call.tool];
+      return { next: { ...file, fails }, result: undefined };
+    });
+  }
   // The size of what a tool of a connector gave back: it shows which connector fills the context.
   // Only the number is kept, never the output. The tools of the client itself give no row.
   if (!failed && call.output !== undefined && Number.isInteger(call.output) && call.output >= 0 && !Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_output', data: { tool: call.tool, size: call.output } }]);

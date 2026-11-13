@@ -67,6 +67,8 @@ export type PackContext = {
   maxTokens?: number;
   maxReads?: number; // the reads of one task through connectors
   maxProbes?: number; // the runs of the done check of one task before its report
+  maxToolFailures?: number; // the failures of one connector tool in a row before its next call asks the human
+  maxSessionRequests?: number; // the requests of one session before the harness says to start a new one
   maxFreeChanges?: number; // the changes of a free task before the offer of a contract
   maxWriteLimit?: number;
   maxExecutors?: number;

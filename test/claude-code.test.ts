@@ -543,3 +543,71 @@ test('claude-code: the size of the output of a connector tool is a row of the jo
   assert.deepEqual(rows.map((r) => [r.data.tool, r.data.size]), [['mcp__tracker__get_issue', Buffer.byteLength(JSON.stringify({ text: 'x'.repeat(1000), secret: 'do not keep me' }))], ['mcp__tracker__get_issue', 22]]);
   assert.ok(!fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').includes('do not keep me'));
 });
+
+const withLimits = (b: Box, limits: Record<string, number>): void => {
+  const file = path.join(b.root, 'packs/organization/pack.json');
+  const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...value, limits: { ...value.limits, ...limits } }));
+};
+
+test('claude-code: a tool of a connector that failed twice in a row asks the human before the next call', () => {
+  const b = box();
+  withLimits(b, { tool_failures: 2 });
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const input = { id: '7' };
+  const fail = (tool: string): void => void run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: tool, tool_input: input, error: 'boom' }));
+  const ok = (tool: string): void => void run(HOOK, b, ['post'], hookEvent(b, 'PostToolUse', { tool_name: tool, tool_input: input }));
+  const before = (tool: string): Out => run(HOOK, b, ['pre'], hookEvent(b, 'PreToolUse', { tool_name: tool, tool_input: input }));
+  const tool = 'mcp__tracker__get_issue';
+  // One failure is no pattern; a success between two failures starts the count again.
+  fail(tool);
+  assert.equal(before(tool).stdout, '');
+  ok(tool);
+  fail(tool);
+  assert.equal(before(tool).stdout, '');
+  // Two failures in a row: the next call is a question, with its own rule.
+  fail(tool);
+  const asked = before(tool).json.hookSpecificOutput;
+  assert.equal(asked.permissionDecision, 'ask');
+  assert.match(asked.permissionDecisionReason, /default\.tool-failures/);
+  // Another tool of the connector is not touched.
+  assert.equal(before('mcp__tracker__get_list').stdout, '');
+  // The human said yes and broke the call off: that is no run that worked, the question stays.
+  run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: tool, tool_input: input, error: 'stopped', is_interrupt: true }));
+  assert.match(before(tool).json.hookSpecificOutput.permissionDecisionReason, /default\.tool-failures/);
+  // A write tool asks with the same rule, also where a plain write would ask anyway.
+  const write = 'mcp__tracker__add_comment';
+  fail(write);
+  fail(write);
+  assert.match(before(write).json.hookSpecificOutput.permissionDecisionReason, /default\.tool-failures/);
+  // The human said yes and the tool worked: the count is gone.
+  ok(tool);
+  assert.equal(before(tool).stdout, '');
+  // A tool of the client itself fails as a part of the work: it is not counted.
+  for (let i = 0; i < 4; i += 1) run(HOOK, b, ['post'], hookEvent(b, 'PostToolUseFailure', { tool_name: 'Read', tool_input: { file_path: path.join(b.cwd, 'none.txt') }, error: 'no file' }));
+  assert.equal(run(HOOK, b, ['pre'], hookEvent(b, 'PreToolUse', { tool_name: 'Read', tool_input: { file_path: path.join(b.cwd, 'a.txt') } })).stdout, '');
+  // Without the count of the packs nothing asks.
+  const plain = box();
+  run(HOOK, plain, ['prompt'], hookEvent(plain, 'UserPromptSubmit'));
+  for (let i = 0; i < 3; i += 1) run(HOOK, plain, ['post'], hookEvent(plain, 'PostToolUseFailure', { tool_name: tool, tool_input: input, error: 'boom' }));
+  assert.equal(run(HOOK, plain, ['pre'], hookEvent(plain, 'PreToolUse', { tool_name: tool, tool_input: input })).stdout, '');
+});
+
+test('claude-code: a long session is told to write its state and to start a new one, at the count of the packs and at each multiple of it', () => {
+  const b = box();
+  withLimits(b, { session_requests: 3 });
+  const said = (): string => run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit')).stdout;
+  const out = [said(), said(), said(), said(), said(), said()];
+  assert.deepEqual(out.map((o) => o !== ''), [false, false, true, false, false, true]);
+  const third = JSON.parse(out[2] ?? '{}').hookSpecificOutput;
+  assert.equal(third.hookEventName, 'UserPromptSubmit');
+  assert.match(third.additionalContext, /3 requests/);
+  assert.match(third.additionalContext, /wrapup/);
+  // A run without a window has no human to tell.
+  const quiet = box();
+  withLimits(quiet, { session_requests: 1 });
+  assert.equal(run(HOOK, quiet, ['prompt'], hookEvent(quiet, 'UserPromptSubmit'), { REINS_HEADLESS: '1' }).stdout, '');
+  // Without the count of the packs nothing is said.
+  const plain = box();
+  assert.equal(run(HOOK, plain, ['prompt'], hookEvent(plain, 'UserPromptSubmit')).stdout, '');
+});
