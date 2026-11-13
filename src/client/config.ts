@@ -16,7 +16,7 @@ import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 // cache has no core beside it: its entry loads the adapter from this directory.
 // `runner`: the command that starts a client without a window, as a list of words; `{task}` and
 // `{prompt}` in a word are filled in, and `{model}` with the model of the level of the task. `runner_timeout_s`: the time limit of one run.
-const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'script_sandbox', 'repo_packs', 'runner', 'runner_timeout_s', 'runner_parallel', 'notify', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'script_sandbox', 'repo_packs', 'runner', 'runner_timeout_s', 'check_timeout_s', 'runner_parallel', 'notify', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -28,7 +28,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; runnerParallel?: number } {
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; checkScriptTimeoutMs?: number; runnerParallel?: number } {
   const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
   let text: string;
   try {
@@ -66,12 +66,16 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   // The notice is a command of the same form: a list of words, `{text}` is the text of the notice.
   if (value.notify !== undefined && (!Array.isArray(value.notify) || value.notify.length === 0 || value.notify.some((w) => typeof w !== 'string' || w === ''))) throw bad;
   if (value.runner_timeout_s !== undefined && (typeof value.runner_timeout_s !== 'number' || !Number.isInteger(value.runner_timeout_s) || value.runner_timeout_s <= 0)) throw bad;
+  // The time limit of a check script of a pack, in seconds: the tests of a large repository take
+  // longer than the default. At most one day.
+  if (value.check_timeout_s !== undefined && (typeof value.check_timeout_s !== 'number' || !Number.isInteger(value.check_timeout_s) || value.check_timeout_s < 1 || value.check_timeout_s > 86_400)) throw bad;
   // How many clients the schedule or an event runs at one time, each in its own work tree.
   if (value.runner_parallel !== undefined && (typeof value.runner_parallel !== 'number' || !Number.isInteger(value.runner_parallel) || value.runner_parallel < 1 || value.runner_parallel > 8)) throw bad;
-  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; runnerParallel?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; checkScriptTimeoutMs?: number; runnerParallel?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
   if (Array.isArray(value.runner)) out.runner = value.runner as string[];
   if (Array.isArray(value.notify)) out.notify = value.notify as string[];
   if (typeof value.runner_timeout_s === 'number') out.runnerTimeoutMs = value.runner_timeout_s * 1000;
+  if (typeof value.check_timeout_s === 'number') out.checkScriptTimeoutMs = value.check_timeout_s * 1000;
   if (typeof value.runner_parallel === 'number') out.runnerParallel = value.runner_parallel;
   if (typeof value.memory_dir === 'string') out.memoryDir = value.memory_dir;
   if (value.memory_commit === true) out.memoryCommit = true;
@@ -118,6 +122,7 @@ export function loadRuntime(cwd: string = process.cwd()): Runtime {
   if (config.runner !== undefined) rt.runner = config.runner;
   if (config.notify !== undefined) rt.notify = config.notify;
   if (config.runnerTimeoutMs !== undefined) rt.runnerTimeoutMs = config.runnerTimeoutMs;
+  if (config.checkScriptTimeoutMs !== undefined) rt.checkScriptTimeoutMs = config.checkScriptTimeoutMs;
   if (config.runnerParallel !== undefined) rt.runnerParallel = config.runnerParallel;
   return rt;
 }

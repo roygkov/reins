@@ -505,3 +505,41 @@ test('cli: the status of one project counts only the rows of that project', () =
   // A name that is not an identifier of a project is a wrong call, not a count of zero.
   assert.equal(reins(b, ['status', 'project=ums']).json.error, 'usage');
 });
+
+test('cli: a check script that gives no answer says why: the exit code and the end of its error text', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 4 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  fs.writeFileSync(check, '#!/bin/sh\ncat >/dev/null\necho "the repository is not an absolute path" >&2\nexit 2\n', { mode: 0o755 });
+  const failed = reins(b, ['report', id, '-'], 'green').json.answer;
+  assert.deepEqual([failed.result, failed.reason, failed.why], ['none', 'check_failed', [{ name: 'tests', cause: 'exit', exit: 2, stderr: 'the repository is not an absolute path' }]]);
+  // An answer that is not the form of a result: the cause is named, there is no exit code.
+  fs.writeFileSync(check, '#!/bin/sh\ncat >/dev/null\necho PASS\n', { mode: 0o755 });
+  assert.deepEqual(reins(b, ['report', id, '-'], 'green').json.answer.why, [{ name: 'tests', cause: 'bad_json' }]);
+  // A result that is neither PASS nor FAIL.
+  fs.writeFileSync(check, '#!/bin/sh\ncat >/dev/null\nprintf \'{"outputs":{"result":"maybe"},"flags":{}}\'\n', { mode: 0o755 });
+  assert.deepEqual(reins(b, ['report', id, '-'], 'green').json.answer.why, [{ name: 'tests', cause: 'bad_result' }]);
+  // Only the end of a long error text is kept.
+  fs.writeFileSync(check, '#!/bin/sh\ncat >/dev/null\ni=0; while [ $i -lt 400 ]; do echo "line $i of the error text" >&2; i=$((i+1)); done\nexit 1\n', { mode: 0o755 });
+  const long = reins(b, ['report', id, '-'], 'green').json.answer.why[0];
+  assert.ok(long.stderr.length <= 2000 && long.stderr.endsWith('line 399 of the error text'), long.stderr.slice(-60));
+  // The journal has the cause as a code, never the text.
+  const rows = fs.readFileSync(path.join(b.root, 'state/journal.jsonl'), 'utf8').split('\n').filter((l) => l.includes('check.no_answer')).map((l) => JSON.parse(l).data);
+  assert.deepEqual(rows.map((d) => [d.reason, d.cause, d.stderr]), [['check_failed', 'exit', undefined], ['check_failed', 'bad_json', undefined], ['check_failed', 'bad_result', undefined], ['check_failed', 'exit', undefined]]);
+});
+
+test('cli: the config gives the time limit of a check script, and the answer names the limit', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  fs.writeFileSync(check, '#!/bin/sh\ncat >/dev/null\nsleep 20\n', { mode: 0o755 });
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, check_timeout_s: 1 }));
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  assert.deepEqual(reins(b, ['report', id, '-'], 'green').json.answer.why, [{ name: 'tests', cause: 'timeout', limit_s: 1 }]);
+  for (const bad of [0, -5, 1.5, '60', 86_401]) {
+    fs.writeFileSync(b.config, JSON.stringify({ ...config, check_timeout_s: bad }));
+    assert.equal(reins(b, ['status']).json.error, 'bad_config', String(bad));
+  }
+});

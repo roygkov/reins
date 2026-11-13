@@ -13,10 +13,30 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isObj } from '../contracts/shape.ts';
 
+// What the supervisor says about a script that failed: the last line of its error output.
+const TAIL = 2000;
+function noteOf(text: string | null): { exit?: number; stderr?: string } {
+  const line = (text ?? '').trimEnd().split('\n').at(-1) ?? '';
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return {};
+  }
+  if (!isObj(value)) return {};
+  const out: { exit?: number; stderr?: string } = {};
+  if (typeof value.exit === 'number' && Number.isInteger(value.exit)) out.exit = value.exit;
+  // Characters that are not text are dropped: the end of the text goes to the agent as it is.
+  const tail = typeof value.stderr === 'string' ? value.stderr.replace(/[^\P{C}\n\t]/gu, '').trim().slice(-TAIL) : '';
+  if (tail !== '') out.stderr = tail;
+  return out;
+}
+
 export type CollectReason = 'exit' | 'timeout' | 'too_large' | 'bad_json' | 'bad_shape' | 'missing_output' | 'missing_flag' | 'no_sandbox';
 export type CollectResult =
   | { ok: true; outputs: Record<string, unknown>; flags: Record<string, boolean>; bytes: number }
-  | { ok: false; reason: CollectReason };
+  // `exit`, `stderr`: the exit code of the script and the end of its error text, when the script ran.
+  | { ok: false; reason: CollectReason; exit?: number; stderr?: string };
 
 // The sandbox of the system for a script. `network`: the script reaches the network. `denyRead`:
 // paths that the script cannot read (the files of the connectors that its manifest does not
@@ -91,9 +111,9 @@ export function runCollect(file: string, input: { inputs: Record<string, string 
     if (code === 'ENOBUFS') return { ok: false, reason: 'too_large' };
     return { ok: false, reason: 'exit' };
   }
-  if (r.status === 124) return { ok: false, reason: 'timeout' };
-  if (r.status === 125) return { ok: false, reason: 'too_large' };
-  if (r.status !== 0) return { ok: false, reason: 'exit' };
+  if (r.status === 124) return { ok: false, reason: 'timeout', ...noteOf(r.stderr) };
+  if (r.status === 125) return { ok: false, reason: 'too_large', ...noteOf(r.stderr) };
+  if (r.status !== 0) return { ok: false, reason: 'exit', ...noteOf(r.stderr) };
 
   let value: unknown;
   try {
