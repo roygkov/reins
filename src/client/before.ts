@@ -34,7 +34,10 @@ import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '..
 export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; headless?: boolean; unshown?: boolean; named?: string };
 
 // What a question keeps while it waits: whose it is, and whether a human sees it.
-const asker = (call: ToolCall): Record<string, unknown> => ({
+// The project is kept with the question: a command `cd <dir> && ...` moves the session, and the
+// answer then comes from another directory. The answer belongs to the project of its question.
+const asker = (call: ToolCall, project?: string): Record<string, unknown> => ({
+  ...(project !== undefined ? { project } : {}),
   ...(call.session !== undefined ? { session: call.session } : {}), ...(call.subId !== undefined || call.sub !== undefined ? { sub: call.subId ?? call.sub } : {}), ...(call.unshown === true ? { shown: false } : {}),
 });
 
@@ -461,7 +464,7 @@ export function beforeAction(now: Runtime, call: ToolCall, clientTools: ClientTo
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // The session is kept with the question: at the end of the turn a question without an answer is the "no" of the human.
     // The rule that asked is kept too: the answer of the human is an answer to this rule.
-    fs.writeFileSync(file, JSON.stringify({ ask: true, rule: r.rule, ...asker(call) }));
+    fs.writeFileSync(file, JSON.stringify({ ask: true, rule: r.rule, ...asker(call, rt.project) }));
   }
   return r;
 }
@@ -539,7 +542,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
       if (decision.outcome === 'ask' && decision.envelope === 'confirm') {
         const file = pendingFile(rt, call);
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify({ task: id, key, ...asker(call) }));
+        fs.writeFileSync(file, JSON.stringify({ task: id, key, ...asker(call, rt.project) }));
       }
       return queued(rt, call, clientTools, action, read.command, reply(decision, { task: id, grant: key }));
     }
@@ -680,6 +683,8 @@ function grew(rt: Runtime, call: ToolCall, clientTools: ClientTools): boolean {
   return offer;
 }
 
+const PROJECT_ID = /^p[0-9a-f]{8}$/;
+
 function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: boolean, failed: boolean): { confirmed: boolean } {
   // A tool that failed is a fact for the craft: the name of the tool, never the text of the error.
   // The tools of the client itself fail all the time (a command with an exit code, a file that is
@@ -709,6 +714,8 @@ function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: bo
   }
   if (pending === null || typeof pending !== 'object') return { confirmed: false };
   const { task, key } = pending as { task?: unknown; key?: unknown };
+  const askedIn = (pending as { project?: unknown }).project;
+  if (typeof askedIn === 'string' && PROJECT_ID.test(askedIn)) rt = { ...rt, project: askedIn };
   if (typeof task !== 'string' || typeof key !== 'string') {
     // A question about this one action: the human said "yes". The fact goes to the journal, with the rule that asked.
     const rule = (pending as { rule?: unknown }).rule;

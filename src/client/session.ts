@@ -208,11 +208,11 @@ export function settleQuestions(rt: Runtime, session: string | undefined, who: '
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
     const file = path.join(dir, name);
-    let asked: { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown; rule?: unknown };
+    let asked: { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown; rule?: unknown; project?: unknown };
     try {
       const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (value === null || typeof value !== 'object') continue;
-      asked = value as { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown; rule?: unknown };
+      asked = value as { session?: unknown; task?: unknown; sub?: unknown; shown?: unknown; rule?: unknown; project?: unknown };
     } catch {
       continue;
     }
@@ -231,7 +231,9 @@ export function settleQuestions(rt: Runtime, session: string | undefined, who: '
       continue;
     }
     if (!seen || task === undefined) continue;
-    rt.journal.write({ kind: 'task.human_decision', project: rt.project, task, ...(/^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}), data: { decision: 'refused', ...(typeof asked.rule === 'string' && RULE_NAME.test(asked.rule) ? { rule: asked.rule } : {}) } });
+    // The answer belongs to the project of its question: the session may have changed its directory since.
+    const project = typeof asked.project === 'string' && /^p[0-9a-f]{8}$/.test(asked.project) ? asked.project : rt.project;
+    rt.journal.write({ kind: 'task.human_decision', project, task, ...(/^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}), data: { decision: 'refused', ...(typeof asked.rule === 'string' && RULE_NAME.test(asked.rule) ? { rule: asked.rule } : {}) } });
     settled += 1;
   }
   return settled;

@@ -505,3 +505,27 @@ test('claude-code: an adapter that loads and breaks outside its guards is a fail
   assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'ask');
   assert.deepEqual(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').map((r) => r.data?.event), ['run']);
 });
+
+test('claude-code: the answer of the human belongs to the project of the question, also after the session changed its directory', () => {
+  const b = box();
+  const other = path.join(b.root, 'other');
+  fs.mkdirSync(other, { recursive: true });
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const input = { change: '7', body: 'x' };
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', input)), 'ask');
+  // A command `cd <other> && ...` moved the session: the hook after the tool runs in the other directory.
+  run(HOOK, b, ['post'], JSON.stringify({ session_id: 'abc', cwd: other, hook_event_name: 'PostToolUse', permission_mode: 'default', tool_name: 'mcp__tracker__add_comment', tool_input: input }));
+  // A second question gets no answer, and the end of the turn comes in the other directory too.
+  assert.equal(decision(pre(b, 'mcp__tracker__add_comment', { change: '8', body: 'y' })), 'ask');
+  run(HOOK, b, ['stop'], JSON.stringify({ session_id: 'abc', cwd: other, hook_event_name: 'Stop', permission_mode: 'default' }));
+  // A question asked in the other directory: it shows that the other directory is another project.
+  run(HOOK, b, ['pre'], JSON.stringify({ session_id: 'abc', cwd: other, hook_event_name: 'PreToolUse', permission_mode: 'default', tool_name: 'mcp__tracker__add_comment', tool_input: { change: '9', body: 'z' } }));
+  const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+  const asked = rows.filter((r) => r.kind === 'policy.decision' && r.data.outcome === 'ask').map((r) => r.project);
+  const answers = rows.filter((r) => r.kind === 'task.human_decision').map((r) => [r.data.decision, r.project]);
+  assert.equal(asked.length, 3);
+  assert.equal(asked[0], asked[1]);
+  assert.notEqual(asked[2], asked[0], 'the other directory is another project');
+  assert.deepEqual(answers, [['answered', asked[0]], ['refused', asked[0]]]);
+  assert.notEqual(rows.filter((r) => r.kind === 'task.human_decision').length, 0);
+});
