@@ -14,6 +14,8 @@
 //   reins fire <event> [name=value]      opens the tasks of the scenarios that wait for this event
 //   reins fire run <event> [name=value]  the same, and starts the client of the machine for every task
 //   reins queue [approve|reject <id>]    the actions that a rule deferred; the human answers
+//   reins metrics [days=N] [step=day|week] [project=here|<project>]
+//                                        the eight numbers by day or by week, for a dashboard
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
 
@@ -38,7 +40,7 @@ import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
-import { eight, ofProject, summarize } from './journal/metrics.ts';
+import { EIGHT, eight, ofProject, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
@@ -462,6 +464,29 @@ function main(args: string[]): Out {
       rejected: rt.merged.rejected,
     };
   }
+  // The series of the eight numbers: the interface of the metrics for a program outside the
+  // harness. The form has a version (`metrics: 1`); a change of the form raises it. The buckets
+  // are days or weeks of UTC; the last one ends at the end of the day of today.
+  if (command === 'metrics') {
+    const rt = runtime();
+    const words = [first, ...rest].filter((w): w is string => w !== undefined);
+    const value = (key: string): string | undefined => words.find((w) => w.startsWith(`${key}=`))?.slice(key.length + 1);
+    if (words.some((w) => !/^(days|step|project)=/.test(w)) || new Set(words.map((w) => w.split('=')[0])).size !== words.length) throw new Stop('usage');
+    const daysWord = value('days') ?? '14';
+    if (!/^[1-9][0-9]{0,2}$/.test(daysWord) || Number(daysWord) > 366) throw new Stop('usage');
+    const step = value('step') ?? 'day';
+    if (step !== 'day' && step !== 'week') throw new Stop('usage');
+    const named = value('project');
+    if (named !== undefined && named !== 'here' && !/^p[0-9a-f]{8}$/.test(named)) throw new Stop('usage');
+    const project = named === 'here' ? rt.project : named;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const stepMs = step === 'day' ? DAY_MS : 7 * DAY_MS;
+    const to = Math.floor(Date.now() / DAY_MS) * DAY_MS + DAY_MS;
+    const from = to - Math.ceil((Number(daysWord) * DAY_MS) / stepMs) * stepMs;
+    const all = readJournalSince(rt.stateDir, from);
+    const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs);
+    return { ok: true, metrics: 1, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], points };
+  }
   if (command === 'memory') {
     const rt = runtime();
     if (first === undefined) {
@@ -643,7 +668,7 @@ function main(args: string[]): Out {
     return view(rt, r.task);
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'status [days] [project=here|<project>]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

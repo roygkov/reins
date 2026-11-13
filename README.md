@@ -49,6 +49,7 @@
     reins stop <задача>
     reins tasks
     reins status [days] [project=here|<project>]
+    reins metrics [days=N] [step=day|week] [project=here|<project>]
     reins memory
     reins craft
     reins sweep

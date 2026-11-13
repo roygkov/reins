@@ -160,6 +160,26 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
   };
 }
 
+// The eight numbers for each bucket of `step` milliseconds from `from` to `to`, by the formulas of
+// the week: a dashboard and the summary of the week never show two different numbers.
+// `from` and `to` of a point are the bounds of its bucket; a row at `to` belongs to the next bucket.
+export type Point = { from: string; to: string } & Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }>;
+export function series(rows: JournalRow[], from: number, to: number, step: number): Point[] {
+  // Each row goes to its bucket once: a long series does not read the whole journal for every bucket.
+  const count = Math.max(0, Math.ceil((to - from) / step));
+  const buckets: JournalRow[][] = Array.from({ length: count }, () => []);
+  for (const row of rows) {
+    const time = Date.parse(row.ts);
+    if (Number.isNaN(time) || time < from || time >= to) continue;
+    buckets[Math.floor((time - from) / step)]?.push(row);
+  }
+  return buckets.map((bucket, i) => {
+    const start = from + i * step;
+    const end = Math.min(start + step, to);
+    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end) };
+  });
+}
+
 export function eight(rows: JournalRow[], now: number = Date.now(), days = 7): Eight {
   const span = days * 24 * 60 * 60 * 1000;
   const last = period(rows, now - span, now + 1);

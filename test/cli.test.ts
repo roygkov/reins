@@ -543,3 +543,26 @@ test('cli: the config gives the time limit of a check script, and the answer nam
     assert.equal(reins(b, ['status']).json.error, 'bad_config', String(bad));
   }
 });
+
+test('cli: the metrics are a series of the eight numbers by day or by week, in a form with a version', () => {
+  const b = box();
+  reins(b, ['open', 'change-review', 'change_id=7']);
+  const before = Date.now();
+  const r = reins(b, ['metrics']);
+  assert.equal(r.code, 0, r.stdout);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 1, 'day', 'all', 14]);
+  assert.deepEqual(r.json.names, ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']);
+  // The buckets follow one another without a gap; the last one ends at the end of the day of today.
+  const points = r.json.points as { from: string; to: string }[];
+  for (let i = 1; i < points.length; i += 1) assert.equal(points[i]?.from, points[i - 1]?.to);
+  assert.equal(points.at(-1)?.to.slice(11), '00:00:00.000Z');
+  const end = Date.parse(points.at(-1)?.to ?? '');
+  assert.ok(end > before && end - before <= 24 * 60 * 60 * 1000);
+  assert.deepEqual([r.json.from, r.json.to], [points[0]?.from, points.at(-1)?.to]);
+  const weeks = reins(b, ['metrics', 'days=15', 'step=week', 'project=here']).json;
+  assert.deepEqual([weeks.points.length, weeks.step], [3, 'week']);
+  assert.match(weeks.project, /^p[0-9a-f]{8}$/);
+  for (const bad of [['days=0'], ['days=367'], ['step=month'], ['days=3', 'days=4'], ['project=ums'], ['14'], ['format=csv']]) {
+    assert.equal(reins(b, ['metrics', ...bad]).json.error, 'usage', bad.join(' '));
+  }
+});

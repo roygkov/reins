@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { JournalRow } from '../src/contracts/journal.ts';
-import { eight, ofProject, summarize } from '../src/journal/metrics.ts';
+import { EIGHT, eight, ofProject, series, summarize } from '../src/journal/metrics.ts';
 
 const NOW = Date.parse('2026-11-13T12:00:00Z');
 const row = (kind: string, data: Record<string, unknown>, more: Record<string, unknown> = {}): JournalRow =>
@@ -36,4 +36,32 @@ test('metrics: the counts of one project leave out the rows of the other project
   assert.equal(summarize(ofProject(rows, 'p1a2b3c4')).tasks.opened, 1);
   assert.equal(eight(ofProject(rows, 'p1a2b3c4'), NOW).verified_share.n, 0);
   assert.equal(eight(rows, NOW).verified_share.n, 1);
+});
+
+const DAY = 24 * 60 * 60 * 1000;
+const at = (iso: string, kind: string, data: Record<string, unknown>, more: Record<string, unknown> = {}): JournalRow =>
+  ({ ts: iso, v: 1, kind, project: 'p1a2b3c4', ...more, data }) as JournalRow;
+
+test('metrics: a series gives the eight numbers for each day, by the same formulas as the week', () => {
+  const rows = [
+    at('2026-11-11T10:00:00.000Z', 'task.closed', { label: 'verified_result' }, { scenario: 's' }),
+    at('2026-11-11T23:59:59.000Z', 'task.closed', { label: 'verified_form' }, { scenario: 's' }),
+    at('2026-11-13T00:00:00.000Z', 'task.closed', { label: 'verified_result' }, { scenario: 's' }),
+    at('2026-11-13T08:00:00.000Z', 'harness.failure', { where: 'pack' }),
+  ];
+  const from = Date.parse('2026-11-11T00:00:00Z');
+  const points = series(rows, from, from + 3 * DAY, DAY);
+  assert.deepEqual(points.map((p) => [p.from, p.to]), [
+    ['2026-11-11T00:00:00.000Z', '2026-11-12T00:00:00.000Z'],
+    ['2026-11-12T00:00:00.000Z', '2026-11-13T00:00:00.000Z'],
+    ['2026-11-13T00:00:00.000Z', '2026-11-14T00:00:00.000Z'],
+  ]);
+  assert.deepEqual(points.map((p) => [p.verified_share.value, p.verified_share.n]), [[0.5, 2], [null, 0], [1, 1]]);
+  assert.deepEqual(points[0]?.verified_share.parts, { verified_result: 1, verified_form: 1 });
+  assert.deepEqual(points.map((p) => p.harness_failures.value), [0, 0, 1]);
+  for (const p of points) assert.deepEqual(Object.keys(p).slice(2), [...EIGHT]);
+  // One bucket over the whole span gives what the week gives for the same rows.
+  const [all] = series(rows, from, from + 7 * DAY, 7 * DAY);
+  const week = eight(rows, from + 7 * DAY - 1);
+  for (const name of EIGHT) assert.deepEqual([all?.[name].value, all?.[name].n], [week[name].value, week[name].n], name);
 });
