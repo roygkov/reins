@@ -42,6 +42,7 @@ export type MemoryRecord = {
   rejected?: string;
   revisit?: string;
   supersedes?: string;
+  repeats?: string; // of a pitfall: the record of the same pitfall that somebody hit before
   source?: string; // the id of the record in the store that it was imported from
   history: { at: string; state: RecordState }[];
   uses: number; // how many reports cited the record; from the working state
@@ -62,6 +63,7 @@ export type NewRecord = {
   verified?: string; // for an imported record: the time of the import, so its term starts then
   root?: string; // the directory that the paths are relative to: gives the record its anchor
   because?: string; rejected?: string; revisit?: string; supersedes?: string; source?: string; created?: string;
+  repeats?: string; // of a pitfall: the id of the record of the same pitfall, hit again
   next?: string; status?: string; // of a case
   unverified?: string; // of a state; a state has `next` too
 };
@@ -86,7 +88,7 @@ const ID = /^m[0-9a-f]{10}$/;
 const STATES: readonly string[] = ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'];
 const MAX_STEP = 500; // characters of a next step and of an outer status of a case
 const MAX_STATE_PART = 1000; // characters of the next steps and of the unverified things of a state
-const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'scenario', 'veto_until', 'verified', 'supersedes', 'scope', 'wrong', 'carried', 'carried_day'] as const;
+const PLAIN = ['id', 'type', 'state', 'project', 'by', 'created', 'task', 'scenario', 'veto_until', 'verified', 'supersedes', 'repeats', 'scope', 'wrong', 'carried', 'carried_day'] as const;
 const ENCODED = ['paths', 'anchor', 'anchors', 'because', 'rejected', 'revisit', 'source', 'history', 'next', 'status', 'unverified'] as const;
 
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
@@ -360,6 +362,10 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
   if (input.supersedes !== undefined && type !== 'decision') return { ok: false, error: 'bad_type' };
   const before = input.supersedes === undefined ? undefined : stored(rt).find((r) => r.id === input.supersedes && r.type === 'decision' && r.state !== 'vetoed');
   if (input.supersedes !== undefined && before === undefined) return { ok: false, error: 'unknown_record' };
+  // A pitfall that somebody hit again names the record of the first time: the memory did not stop the repeat.
+  if (input.repeats !== undefined && type !== 'pitfall') return { ok: false, error: 'bad_type' };
+  const again = input.repeats === undefined ? undefined : stored(rt).find((r) => r.id === input.repeats && r.type === 'pitfall' && r.state !== 'vetoed');
+  if (input.repeats !== undefined && again === undefined) return { ok: false, error: 'unknown_record' };
 
   const created = input.created !== undefined && !Number.isNaN(Date.parse(input.created)) ? new Date(input.created).toISOString() : new Date(now).toISOString();
   const state: RecordState = pending ? 'pending' : 'active';
@@ -384,6 +390,7 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     if (value !== undefined && value.trim() !== '') record[key] = scrub(value.trim());
   }
   if (input.root !== undefined && path.isAbsolute(input.root)) Object.assign(record, tie(input.root, input.paths));
+  if (again !== undefined) record.repeats = again.id;
   if (before !== undefined) {
     record.supersedes = before.id;
     write(rt, { ...before, state: 'replaced', history: [...before.history, { at: new Date(now).toISOString(), state: 'replaced' }] });
@@ -397,7 +404,7 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     }
   }
   write(rt, record);
-  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(record.task !== undefined ? { task: record.task } : {}), data: { record: record.id, type, state: record.state } });
+  rt.journal.write({ kind: 'memory.record_changed', project: rt.project, ...(record.task !== undefined ? { task: record.task } : {}), data: { record: record.id, type, state: record.state, ...(record.repeats !== undefined ? { repeats: record.repeats } : {}) } });
   return { ok: true, record };
 }
 

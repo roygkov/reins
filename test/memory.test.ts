@@ -90,6 +90,23 @@ test('memory: a veto removes the record from use for ever', () => {
   assert.equal(vetoRecord(b.rt, 'mffffffffff'), false);
 });
 
+test('memory: a pitfall that somebody hit again names the record of the first time', () => {
+  const b = box();
+  const task = scenario(b);
+  const first = addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: [], task, by: 'agent' }, T0);
+  assert.ok(first.ok);
+  const again = addRecord(b.rt, { type: 'pitfall', text: `${TEXT} Hit again.`, paths: [], task, by: 'agent', repeats: first.record.id }, T0 + 1000);
+  assert.ok(again.ok);
+  assert.equal(again.record.repeats, first.record.id);
+  // The record keeps the name on the disk, and the row of the journal carries it.
+  assert.equal(listRecords(b.rt, T0 + 2000).find((r) => r.id === again.record.id)?.repeats, first.record.id);
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.record_changed');
+  assert.deepEqual(rows.map((r) => r.data?.repeats), [undefined, first.record.id]);
+  // Only a pitfall repeats, and only a pitfall that is in the memory.
+  assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: TEXT, paths: [], task, by: 'agent', repeats: 'mffffffffff' }, T0), { ok: false, error: 'unknown_record' });
+  assert.deepEqual(addRecord(b.rt, { type: 'decision', text: TEXT, paths: [], by: 'human', because: 'a reason', repeats: first.record.id }, T0), { ok: false, error: 'bad_type' });
+});
+
 test('memory: the agent writes only what the manifest of its task allows', () => {
   const b = box();
   const task = scenario(b);

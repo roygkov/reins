@@ -58,3 +58,29 @@ test('measures: a result that the human said was wrong is counted by the label t
   const m = summarize([row('task.result_disputed', { label: 'verified_result' }), row('task.result_disputed', { label: 'verified_form' }), row('task.result_disputed', { label: 'verified_result' })]);
   assert.deepEqual(m.disputed, { verified_result: 2, verified_form: 1 });
 });
+
+test('measures: the questions that the human saw fall on the opened tasks', () => {
+  const rows = [
+    row('task.opened', {}), row('task.opened', {}, { task: 't000002' }), row('task.opened', {}, { task: 't000003' }), row('task.opened', {}, { task: 't000004' }),
+    row('policy.decision', { outcome: 'ask', action_kind: 'write', env: 'work' }), row('policy.basis', { layer: 'core', rule: 'default.write' }),
+    row('policy.protected_attempt', { rule: 'protect.harness', outcome: 'ask' }),
+    row('policy.protected_attempt', { rule: 'protect.harness', outcome: 'ask', unshown: 1 }),
+    row('policy.protected_attempt', { rule: 'protect.state', outcome: 'deny' }),
+    row('policy.decision', { outcome: 'allow', action_kind: 'read', env: 'local' }),
+  ];
+  assert.deepEqual(summarize(rows).asks, { shown: 2, per_task: 0.5 });
+  assert.deepEqual(summarize([]).asks, { shown: 0, per_task: null });
+});
+
+test('measures: a pitfall that names an older record of the same pitfall is a repeat', () => {
+  const m = summarize([
+    row('memory.record_changed', { record: 'm0000000001', type: 'pitfall', state: 'pending' }),
+    row('memory.record_changed', { record: 'm0000000002', type: 'pitfall', state: 'pending', repeats: 'm0000000001' }),
+    row('memory.record_changed', { record: 'm0000000003', type: 'pitfall', state: 'active', repeats: 'm0000000001' }),
+    // A veto, a mark and a record of another type are not a written pitfall.
+    row('memory.record_changed', { record: 'm0000000002', type: 'pitfall', state: 'vetoed' }),
+    row('memory.record_changed', { record: 'm0000000001', type: 'pitfall', state: 'active', wrong: 1 }),
+    row('memory.record_changed', { record: 'm0000000004', type: 'state', state: 'active' }),
+  ]);
+  assert.deepEqual(m.pitfalls, { written: 3, repeats: 2 });
+});

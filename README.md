@@ -50,6 +50,7 @@
     reins finish <задача>
     reins stop <задача>
     reins dispute <задача>
+    reins probes
     reins tasks
     reins status [days] [project=here|<project>]
     reins metrics [days=N] [step=day|week] [project=here|<project>]

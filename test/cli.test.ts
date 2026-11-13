@@ -575,6 +575,32 @@ test('cli: the human says that the result of a closed task was wrong, and the jo
   assert.deepEqual(reins(b, ['status']).json.metrics.disputed, { not_verified: 1 });
 });
 
+test('cli: the barrier is asked about the commands with a known answer of a pack', () => {
+  const b = box();
+  // No file: nothing to ask.
+  assert.deepEqual(reins(b, ['probes']).json, { ok: true, n: 0, bad: 0, misses: [], noise: [] });
+  const file = path.join(b.root, 'person/gate-probes.json');
+  fs.writeFileSync(file, JSON.stringify([
+    { command: 'ls -la', expect: 'pass' },
+    { command: 'git reset --hard', expect: 'ask', note: 'the work of the human is lost' },
+    { command: 'cat {state}/journal.jsonl', expect: 'ask' },
+    // The barrier is softer than this probe wants: a miss.
+    { command: 'ls -la', expect: 'ask', note: 'a miss for the test' },
+    // The barrier is stricter than this probe wants: a noise.
+    { command: 'git reset --hard', expect: 'pass' },
+    { command: '', expect: 'ask' }, { command: 'ls', expect: 'maybe' }, 'not a probe',
+  ]));
+  const r = reins(b, ['probes']).json;
+  assert.deepEqual([r.ok, r.n, r.bad], [true, 5, 3]);
+  assert.deepEqual(r.misses, [{ pack: 'person', n: 4, expect: 'ask', got: 'allow', note: 'a miss for the test' }]);
+  assert.deepEqual(r.noise.map((f: { pack: string; n: number; expect: string; got: string }) => [f.pack, f.n, f.expect, f.got]), [['person', 5, 'pass', 'ask']]);
+  // The summary has the counts only.
+  assert.deepEqual(reins(b, ['status']).json.barrier, { n: 5, bad: 3, misses: 1, noise: 1 });
+  // A file that is no list is one bad file.
+  fs.writeFileSync(file, '{}');
+  assert.deepEqual(reins(b, ['probes']).json, { ok: true, n: 0, bad: 1, misses: [], noise: [] });
+});
+
 test('cli: the config gives the time limit of a check script, and the answer names the limit', () => {
   const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
   const check = path.join(b.root, 'project/check/tests.sh');
@@ -596,7 +622,9 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 1, 'day', 'all', 14]);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 2, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'check_ms_p50', 'context_bytes', 'disputed', 'pitfall_repeats']);
+  assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
   assert.deepEqual(r.json.names, ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']);
   // The buckets follow one another without a gap; the last one ends at the end of the day of today.
   const points = r.json.points as { from: string; to: string }[];

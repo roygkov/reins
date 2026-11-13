@@ -8,6 +8,7 @@
 //   reins finish <task>                  ends the publication of an accepted result, closes the task
 //   reins stop <task>                    the human stops a task in any open state
 //   reins dispute <task>                 the human says that the result of a closed task was wrong
+//   reins probes                         asks the barrier about the commands with a known answer of the packs
 //   reins tasks                          the tasks that are not closed
 //   reins tick                           opens the tasks of the scenarios whose schedule came
 //   reins tick run                       the same, and starts the client of the machine for each task
@@ -25,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigError, loadRuntime } from './client/config.ts';
+import { runProbes } from './client/probes.ts';
 import { runTask, runTasks } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
 import { sessionOfDirectory } from './core/sessions.ts';
@@ -42,7 +44,7 @@ import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
-import { EIGHT, eight, ofProject, series, summarize } from './journal/metrics.ts';
+import { EIGHT, MEASURES, eight, ofProject, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
@@ -463,6 +465,8 @@ function main(args: string[]): Out {
       days,
       project: project ?? 'all',
       metrics: summarize(rows(Date.now() - days * 24 * 60 * 60 * 1000), Date.now() - days * 24 * 60 * 60 * 1000),
+      // The barrier against the commands with a known answer that the packs hold: counts only.
+      barrier: (({ n, bad, misses, noise }) => ({ n, bad, misses: misses.length, noise: noise.length }))(runProbes(rt, process.cwd())),
       // The eight numbers of the week and of the week before it.
       eight: eight(rows(Date.now() - 14 * 24 * 60 * 60 * 1000)),
       // The open tasks are of the machine: a task does not name its project.
@@ -492,7 +496,8 @@ function main(args: string[]): Out {
     const from = to - Math.ceil((Number(daysWord) * DAY_MS) / stepMs) * stepMs;
     const all = readJournalSince(rt.stateDir, from);
     const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs);
-    return { ok: true, metrics: 1, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], points };
+    // The form 2: each point carries `measures` besides the eight numbers; `measures` names them.
+    return { ok: true, metrics: 2, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], points };
   }
   if (command === 'memory') {
     const rt = runtime();
@@ -590,7 +595,7 @@ function main(args: string[]): Out {
       const [type, text, ...more] = first === 'add' ? rest : ['decision', ...rest];
       const value = (name: string): string | undefined => more.find((m) => m.startsWith(`${name}=`))?.slice(name.length + 1);
       const input: Parameters<typeof addRecord>[1] = { type: type ?? '', text: text ?? '', paths: more.filter((m) => m.startsWith('path=')).map((m) => m.slice(5)), by: first === 'add' ? 'agent' : 'human' };
-      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes', 'next', 'status', 'unverified'] as const) {
+      for (const key of ['task', 'because', 'rejected', 'revisit', 'supersedes', 'repeats', 'next', 'status', 'unverified'] as const) {
         const v = value(key);
         if (v !== undefined) input[key] = v;
       }
@@ -641,6 +646,9 @@ function main(args: string[]): Out {
   }
   // The word of the human: a task ends here, whatever its state. A client with the hook asks
   // the human before it runs this command.
+  // The barrier against the commands with a known answer that the packs hold: each command whose
+  // answer is not the expected one, by the pack and the place in its file.
+  if (command === 'probes' && first === undefined) return { ok: true, ...runProbes(runtime(), process.cwd()) };
   // The word of the human: the result of a closed task was wrong. The journal has it once for a task.
   if (command === 'dispute' && first !== undefined && rest.length === 0) {
     const r = disputeResult(runtime(), first);
@@ -696,7 +704,7 @@ function main(args: string[]): Out {
     return { ok: true, task: r.task.id, state: r.task.state, probe: true, answer: r.answer, checks_left: r.left, returns_left: Math.max(0, (r.task.manifest?.done.retries ?? 0) - r.task.returns) };
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

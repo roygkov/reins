@@ -271,6 +271,36 @@ function gateConfig(rt: Runtime, cwd: string): GateConfig {
   return out;
 }
 
+// What the harness itself guards in a shell command, before the policy: a place of the harness
+// that the command changes or names, and a command that is the word of the human. null: nothing.
+// `refused`: the gate refuses the command already: a refusal of the gate stays a refusal, the
+// question about a path of the harness does not soften it.
+function commandGuard(rt: Runtime, command: string, cwd: string, refused: boolean): { outcome: 'deny' | 'ask'; rule: string } | null {
+  if (refused) return null;
+  // `reins stop` is the word of the human. The agent can type the command, so the client asks.
+  // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
+  const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire\s+run)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+  // The parse of the command says which places it changes: a change of the state, of the memory
+  // or of the config is refused, as for a file tool. The match of the text is the second barrier.
+  const places = placesGuard(rt, command, cwd);
+  if (places?.outcome === 'deny') return places;
+  // A refusal of a place comes first: a question about the open of a scenario must not let a
+  // write into the state pass with one "yes".
+  const named = human ?? (opensHumanScenario(rt, command) ? 'protect.human-command' : null) ?? places?.rule ?? namedInCommand(rt, command);
+  return named === null ? null : { outcome: 'ask', rule: named };
+}
+
+// The answer of the barrier to one shell command, with no task and no journal: the gate of the
+// rules and the guard of the harness itself. A set of commands with a known answer measures the
+// barrier: a command that passes where a question is due, a question where none is due.
+export function probeCommand(rt: Runtime, command: string, cwd: string): { outcome: 'allow' | 'ask' | 'deny'; rule?: string } {
+  const shell = shellAction(command, cwd, gateConfig(rt, cwd));
+  const guard = commandGuard(rt, command, cwd, shell.result?.decision === 'deny');
+  if (guard !== null) return guard;
+  if (shell.result === null) return { outcome: 'allow' };
+  return { outcome: shell.result.decision === 'deny' ? 'deny' : shell.result.decision === 'ask' ? 'ask' : 'allow', rule: shell.result.id };
+}
+
 // `connector`: the read connector that a read tool names in the table of the pack.
 type Read = { action: Action; layers: LayerDecision[]; command?: string; connector?: string } | { guard: { outcome: 'deny' | 'ask'; rule: string } };
 
@@ -310,20 +340,8 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     const command = call.input[own.command];
     if (typeof command !== 'string') return { action: UNKNOWN, layers: [] };
     const shell = shellAction(command, call.cwd, gateConfig(rt, call.cwd));
-    // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
-    // `reins stop` is the word of the human. The agent can type the command, so the client asks.
-    // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire\s+run)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
-    if (shell.result?.decision !== 'deny') {
-      // The parse of the command says which places it changes: a change of the state, of the memory
-      // or of the config is refused, as for a file tool. The match of the text is the second barrier.
-      const places = placesGuard(rt, command, call.cwd);
-      if (places?.outcome === 'deny') return { guard: places };
-      // A refusal of a place comes first: a question about the open of a scenario must not let a
-      // write into the state pass with one "yes".
-      const named = human ?? (opensHumanScenario(rt, command) ? 'protect.human-command' : null) ?? places?.rule ?? namedInCommand(rt, command);
-      if (named !== null) return { guard: { outcome: 'ask', rule: named } };
-    }
+    const guard = commandGuard(rt, command, call.cwd, shell.result?.decision === 'deny');
+    if (guard !== null) return { guard };
     return { action: shell.action, layers: shell.layers, command };
   }
   const rule = packRule(rt.merged.tools, call.tool);

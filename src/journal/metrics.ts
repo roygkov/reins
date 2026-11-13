@@ -28,6 +28,12 @@ export type Metrics = {
   context: Record<string, { n: number; bytes: number }>;
   // The results that a human said were wrong, by the label that the result had.
   disputed: Record<string, number>;
+  // The questions that the human saw, and how many fall on one opened task: the attention of the
+  // human that one piece of work costs.
+  asks: { shown: number; per_task: number | null };
+  // The pitfalls that were written, and how many of them name an older record of the same
+  // pitfall: the memory had it, and somebody hit it again.
+  pitfalls: { written: number; repeats: number };
 };
 export type Spread = { n: number; p50: number | null; p95: number | null; max: number | null };
 
@@ -51,6 +57,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     memory: { written: 0, vetoed: 0, reads: 0 },
     tool_output: {},
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
+    asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
   };
   const asked = new Map<string, { asked: number; yes: number }>();
   const question = (rule: string): { asked: number; yes: number } => asked.get(rule) ?? (asked.set(rule, { asked: 0, yes: 0 }), asked.get(rule) as { asked: number; yes: number });
@@ -106,8 +113,10 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         if (o === 'allow' || o === 'ask' || o === 'defer' || o === 'deny') m.decisions[o] += 1;
         if (typeof data.ms === 'number') hookMs.push(data.ms);
         // A question that no human saw is not a question to the human.
-        if (o === 'ask' && data.unshown !== 1) waiting.add(place(row));
-        else waiting.delete(place(row));
+        if (o === 'ask' && data.unshown !== 1) {
+          waiting.add(place(row));
+          m.asks.shown += 1;
+        } else waiting.delete(place(row));
         break;
       }
       case 'policy.basis':
@@ -117,6 +126,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         m.protected_attempts += 1;
         if (data.outcome === 'ask' || data.outcome === 'deny') m.protected[data.outcome] += 1;
         if (typeof data.ms === 'number') hookMs.push(data.ms);
+        if (data.outcome === 'ask' && data.unshown !== 1) m.asks.shown += 1;
         if (data.outcome === 'ask' && data.unshown !== 1 && typeof data.rule === 'string') question(data.rule).asked += 1;
         break;
       case 'task.human_decision':
@@ -144,6 +154,11 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
       case 'memory.record_changed':
         // The file of a removed record that went away past its term is no second veto.
         if (data.gone !== undefined) break;
+        // A pitfall that is written: a new record, not a step, a share or a mark on an old one.
+        if (data.type === 'pitfall' && (data.state === 'active' || data.state === 'pending') && data.scope === undefined && data.wrong === undefined && data.restored === undefined) {
+          m.pitfalls.written += 1;
+          if (typeof data.repeats === 'string') m.pitfalls.repeats += 1;
+        }
         if (data.state === 'vetoed') m.memory.vetoed += 1;
         // A share and a mark "this was wrong" change a record that was written before.
         // A step and the end of a case change a record that was written before, too.
@@ -168,6 +183,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
   for (const results of answers.values()) if (results.has('PASS') && results.has('FAIL')) m.unstable_checks += 1;
   for (const [rule, at] of [...asked].sort((a, b) => b[1].asked - a[1].asked || a[0].localeCompare(b[0]))) m.questions[rule] = at;
   m.timing = { hook_ms: spread(hookMs), check_ms: spread(checkMs) };
+  m.asks.per_task = m.tasks.opened === 0 ? null : Math.round((m.asks.shown / m.tasks.opened) * 100) / 100;
   return m;
 }
 
@@ -243,7 +259,26 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // The eight numbers for each bucket of `step` milliseconds from `from` to `to`, by the formulas of
 // the week: a dashboard and the summary of the week never show two different numbers.
 // `from` and `to` of a point are the bounds of its bucket; a row at `to` belongs to the next bucket.
-export type Point = { from: string; to: string } & Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }>;
+// The measures of the harness itself for one period, as plain numbers for a series: the questions
+// that fall on one task, the time of a decision of the hook (the middle and the tail), the time
+// of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
+// the pitfalls that somebody hit again. A measure without rows has no value.
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'check_ms_p50', 'context_bytes', 'disputed', 'pitfall_repeats'] as const;
+export type Measures = Record<(typeof MEASURES)[number], number | null>;
+export function measures(rows: JournalRow[]): Measures {
+  const m = summarize(rows);
+  return {
+    asks_per_task: m.asks.per_task,
+    hook_ms_p50: m.timing.hook_ms.p50,
+    hook_ms_p95: m.timing.hook_ms.p95,
+    check_ms_p50: m.timing.check_ms.p50,
+    context_bytes: Object.values(m.context).reduce((sum, at) => sum + at.bytes, 0),
+    disputed: Object.values(m.disputed).reduce((sum, n) => sum + n, 0),
+    pitfall_repeats: m.pitfalls.repeats,
+  };
+}
+
+export type Point = { from: string; to: string; measures: Measures } & Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }>;
 export function series(rows: JournalRow[], from: number, to: number, step: number): Point[] {
   // Each row goes to its bucket once: a long series does not read the whole journal for every bucket.
   const count = Math.max(0, Math.ceil((to - from) / step));
@@ -256,7 +291,7 @@ export function series(rows: JournalRow[], from: number, to: number, step: numbe
   return buckets.map((bucket, i) => {
     const start = from + i * step;
     const end = Math.min(start + step, to);
-    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end) };
+    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end), measures: measures(bucket) };
   });
 }
 
