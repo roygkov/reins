@@ -15,6 +15,9 @@ export type Metrics = {
   failures: number;
   shape_changes: number;
   memory: { written: number; vetoed: number; reads: number };
+  // What the tools of the connectors gave back: the calls and the bytes of each tool, the largest
+  // sum first. The tools of the client itself write no row, so they are not here.
+  tool_output: Record<string, { n: number; bytes: number }>;
 };
 
 // The rows of one project. A row that an adapter writes before it knows the project (the
@@ -28,7 +31,9 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     unstable_checks: 0,
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0 },
+    tool_output: {},
   };
+  const outputs = new Map<string, { n: number; bytes: number }>();
   const answers = new Map<string, Set<string>>();
   const scenario = (name: string): Metrics['scenarios'][string] => (m.scenarios[name] ??= { opened: 0, accepted: 0, returns: 0 });
   for (const row of rows) {
@@ -95,10 +100,18 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
       case 'memory.read':
         m.memory.reads += 1;
         break;
+      case 'executor.tool_output': {
+        // A row without a name or without a size says nothing about a tool.
+        if (typeof data.tool !== 'string' || typeof data.size !== 'number') break;
+        const at = outputs.get(data.tool) ?? { n: 0, bytes: 0 };
+        outputs.set(data.tool, { n: at.n + 1, bytes: at.bytes + data.size });
+        break;
+      }
       default:
         break;
     }
   }
+  for (const [tool, at] of [...outputs].sort((a, b) => b[1].bytes - a[1].bytes || a[0].localeCompare(b[0]))) m.tool_output[tool] = at;
   for (const results of answers.values()) if (results.has('PASS') && results.has('FAIL')) m.unstable_checks += 1;
   return m;
 }

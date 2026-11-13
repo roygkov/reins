@@ -31,6 +31,18 @@ test('metrics: a refusal at a protected place is counted apart from a question a
   assert.deepEqual([m.protected_attempts, m.protected], [3, { ask: 1, deny: 2 }]);
 });
 
+test('metrics: the summary gives the calls and the bytes of each connector tool, the largest sum first', () => {
+  const out = (tool: unknown, size: unknown, more: Record<string, unknown> = {}): JournalRow => row('executor.tool_output', { tool, size }, more);
+  const old = { ts: new Date(NOW - 10 * 24 * 60 * 60 * 1000).toISOString() };
+  const rows = [out('mcp__a__get', 100), out('mcp__b__query', 700), out('mcp__a__get', 50), out('mcp__c__list', 150), out('mcp__b__query', 9000, old), out('mcp__a__get', 'big'), out(undefined, 5)];
+  const m = summarize(rows, NOW - 7 * 24 * 60 * 60 * 1000);
+  // The row before the period and the rows without a name or a size are not counted.
+  assert.deepEqual(m.tool_output, { mcp__b__query: { n: 1, bytes: 700 }, mcp__a__get: { n: 2, bytes: 150 }, mcp__c__list: { n: 1, bytes: 150 } });
+  // Equal sums come in the order of the names.
+  assert.deepEqual(Object.keys(m.tool_output), ['mcp__b__query', 'mcp__a__get', 'mcp__c__list']);
+  assert.deepEqual(summarize([]).tool_output, {});
+});
+
 test('metrics: the counts of one project leave out the rows of the other projects', () => {
   const rows = [row('task.opened', {}), row('task.opened', {}, { project: 'p9z9z9z9' }), row('task.closed', { label: 'verified_result' }, { scenario: 's', project: 'p9z9z9z9' })];
   assert.equal(summarize(ofProject(rows, 'p1a2b3c4')).tasks.opened, 1);
