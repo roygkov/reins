@@ -529,3 +529,17 @@ test('claude-code: the answer of the human belongs to the project of the questio
   assert.deepEqual(answers, [['answered', asked[0]], ['refused', asked[0]]]);
   assert.notEqual(rows.filter((r) => r.kind === 'task.human_decision').length, 0);
 });
+
+test('claude-code: the size of the output of a connector tool is a row of the journal, never the output itself', () => {
+  const b = box();
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  const after = (tool: string, response: unknown): void => void run(HOOK, b, ['post'], hookEvent(b, 'PostToolUse', { tool_name: tool, tool_input: { id: '7' }, ...(response !== undefined ? { tool_response: response } : {}) }));
+  after('mcp__tracker__get_issue', { text: 'x'.repeat(1000), secret: 'do not keep me' });
+  after('mcp__tracker__get_issue', 'plain text of 22 bytes');
+  // A tool of the client itself (a shell, a file read) and a call without an output give no row.
+  after('Bash', { stdout: 'y'.repeat(500) });
+  after('mcp__tracker__get_issue', undefined);
+  const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l)).filter((r) => r.kind === 'executor.tool_output');
+  assert.deepEqual(rows.map((r) => [r.data.tool, r.data.size]), [['mcp__tracker__get_issue', Buffer.byteLength(JSON.stringify({ text: 'x'.repeat(1000), secret: 'do not keep me' }))], ['mcp__tracker__get_issue', 22]]);
+  assert.ok(!fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').includes('do not keep me'));
+});

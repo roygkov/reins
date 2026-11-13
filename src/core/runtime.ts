@@ -694,12 +694,12 @@ const DEFAULT_CHECK_SCRIPT_MS = 5 * 60_000;
 // A check of the kinds "command", "artifact" and "external state": a script of a pack decides.
 // The script gets the task, its inputs and the paths of the report and of the collected results,
 // and prints one result: PASS or FAIL. A script that is missing or fails gives no answer.
-function scriptCheck(rt: Runtime, task: Task): Answer {
+function scriptCheck(rt: Runtime, task: Task, report: string = reportFile(rt, task.id)): Answer {
   const names = checkNames(task);
   if (names.length === 0) return { result: 'none', reason: 'no_check', n: 0, faults: [] };
   // Every part runs, also after a part that failed: a red answer names each part that did not pass.
   // The time limit is of one part: the parts run one after another.
-  const results = names.map((name) => ({ name, ...partCheck(rt, task, name) }));
+  const results = names.map((name) => ({ name, ...partCheck(rt, task, name, report) }));
   const why = results.flatMap((p) => (p.why === undefined ? [] : [{ name: p.name, ...p.why }]));
   if (names.length === 1 && task.manifest?.done.checks === undefined) {
     const one = results[0];
@@ -715,12 +715,12 @@ function scriptCheck(rt: Runtime, task: Task): Answer {
 }
 
 type Why = { cause: string; exit?: number; stderr?: string; limit_s?: number };
-function partCheck(rt: Runtime, task: Task, name: string): { result: 'PASS' | 'FAIL' | 'none'; reason?: 'no_check' | 'check_failed'; why?: Why } {
+function partCheck(rt: Runtime, task: Task, name: string, report: string): { result: 'PASS' | 'FAIL' | 'none'; reason?: 'no_check' | 'check_failed'; why?: Why } {
   const file = rt.merged.scriptFiles[`check/${name}`];
   if (file === undefined) return { result: 'none', reason: 'no_check' };
   const collected = taskFile(rt, task.id, '.collect');
   const timeoutMs = rt.checkScriptTimeoutMs ?? DEFAULT_CHECK_SCRIPT_MS;
-  const r = runCollect(file, { inputs: task.inputs, task: task.id, report: reportFile(rt, task.id), collected: fs.existsSync(collected) ? collected : null }, {
+  const r = runCollect(file, { inputs: task.inputs, task: task.id, report, collected: fs.existsSync(collected) ? collected : null }, {
     outputs: ['result'], flags: [], timeoutMs, maxBytes: 64 * 1024,
     ...(task.manifest !== undefined ? { env: connectorEnv(rt, task.manifest) } : {}),
     // A check runs the tests of the work: it writes into the directory of the work that it checks,
@@ -746,6 +746,54 @@ export type Submitted = { step: Step; answer?: Answer } | { error: 'unknown_task
 function hasSection(text: string, name: string): boolean {
   const want = name.trim().toLowerCase();
   return text.split(/\r?\n/).some((line) => line.trim().replace(/^#{1,6}\s*/, '').replace(/[:：]\s*$/, '').replace(/^\*\*(.*)\*\*$/, '$1').replace(/[:：]\s*$/, '').trim().toLowerCase() === want);
+}
+
+// The done check before the report (harness-check, page 1): the agent asks for the answer of the
+// check while it still works. The answer accepts nothing and returns nothing: the task executes
+// on, no send-back is spent. Only the report closes a task. The packs give the count of such runs
+// for one task (`limits.probes`); without the count there is no such run. A red answer protects
+// the files of the check, as a red answer to a report does.
+export type Probed = { task: Task; answer: Answer; left: number } | { error: 'unknown_task' | 'busy' | 'not_allowed' | 'limit' | 'no_report' };
+export function probeCheck(rt: Runtime, id: string, text: string | null): Probed {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const max = rt.merged.context.maxProbes;
+  // The run is counted first, under the lock: two calls never share one place of the count.
+  const counted = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    if (task === null) return 'unknown_task' as const;
+    if (max === undefined || task.state !== 'executing' || !coreChecks(task)) return 'not_allowed' as const;
+    if ((task.probes ?? 0) >= max) return 'limit' as const;
+    // A sweep of quotes reads the report itself; a script can check the work without one.
+    if (task.manifest?.done.kind === 'citations' && text === null) return 'no_report' as const;
+    const next: Task = { ...task, probes: (task.probes ?? 0) + 1 };
+    writeAtomic(taskFile(rt, id), next);
+    return next;
+  });
+  if (typeof counted === 'string') return { error: counted };
+  const task = counted;
+  const kind = task.manifest?.done.kind ?? 'command';
+  record(rt, task, [{ kind: 'check.started', data: { check_kind: kind, probe: 1 } }]);
+  // The text of this run lies beside the report of the task, never in its place.
+  // One file for one run: two runs at one time never read the text of each other. A run without
+  // a text gets an empty file, never the report of the task: `none` means no report for the script too.
+  const file = taskFile(rt, id, `.probe-${process.pid}-${crypto.randomBytes(4).toString('hex')}.txt`);
+  fs.writeFileSync(file, text ?? '');
+  const version = checkVersion(rt, task);
+  const unbound = task.manifest?.done.unbound === true;
+  const root = unbound ? null : task.root ?? sourceRoot(rt, task) ?? (rt.workDir !== undefined && path.isAbsolute(rt.workDir) ? rt.workDir : null);
+  const workBefore = root === null ? null : workState(root);
+  let answer: Answer = kind === 'citations' ? citations(rt, task, text ?? '') : scriptCheck(rt, task, file);
+  const work = root === null ? null : workState(root);
+  if (workBefore !== null && work !== workBefore) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
+  if (answer.result === 'PASS' && work === null && !unbound && kind !== 'citations') answer = { result: 'none', reason: 'no_work', n: 0, faults: [] };
+  fs.rmSync(file, { force: true });
+  const soaks = task.manifest?.done.soak_minutes !== undefined;
+  const detail: Record<string, string | number> = { probe: 1, ...(soaks ? {} : { report: text === null ? 'none' : crypto.createHash('sha256').update(text).digest('hex').slice(0, 12), ...(version !== null ? { check: version.slice(0, 12) } : {}) }), ...(answer.reason !== undefined ? { reason: answer.reason } : {}) };
+  const row: RowDraft = answer.result === 'none' ? { kind: 'check.no_answer', data: { ...detail, check_kind: kind } } : { kind: 'check.answered', data: { ...detail, result: answer.result, check_kind: kind }, ...(work !== null ? { fp: work } : {}) };
+  // A red answer: the files of the check are protected from now on.
+  const after = answer.result === 'PASS' ? task : mutateTask(rt, id, (now) => (now.red === true ? null : { ...now, red: true })) ?? loadTask(rt, id) ?? task;
+  record(rt, after, [row]);
+  return { task: after, answer, left: Math.max(0, (max ?? 0) - (after.probes ?? 0)) };
 }
 
 export type Checked = { step: Step; answer: Answer } | { error: 'unknown_task' | 'busy' | 'not_checking' | 'soaking' };
@@ -790,6 +838,13 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
     if (answer.parts !== undefined || answer.result === 'PASS') detail.failed = answer.parts?.length ?? 0;
   }
   if (answer.reason !== undefined) detail.reason = answer.reason;
+  // The report that the check read: the same work and the same report must get the same answer.
+  // The version of the check goes with it: a check that the owner changed is another check. A
+  // task with a soak answers twice on one work by design: its rows name no report.
+  if (text !== null && before.manifest?.done.soak_minutes === undefined) {
+    detail.report = crypto.createHash('sha256').update(text).digest('hex').slice(0, 12);
+    if (version !== null) detail.check = version.slice(0, 12);
+  }
   // The cause of one script without an answer is a code of the journal; its text is not.
   if (answer.why?.length === 1 && answer.why[0] !== undefined) detail.cause = answer.why[0].cause;
   for (let attempt = 0; attempt < 5; attempt += 1) {

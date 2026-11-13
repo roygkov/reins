@@ -48,6 +48,7 @@ export type Task = {
   check?: string; // the fingerprint of the check that gave it
   soak?: number; // the first PASS came: the second answer is due at this time
   red?: boolean; // the last answer of the check was not PASS: the files of the check are protected
+  probes?: number; // the runs of the done check before the report
   widened?: boolean; // the human let a contract task go on past its contract
 };
 

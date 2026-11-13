@@ -10,6 +10,7 @@ import { MAX_ITEMS } from '../check/citations.ts';
 export type ReportSpec = {
   check: string; // the kind of the done check
   returns_left: number; // how many times a report that is not ready can still come back
+  checks_left?: number; // how many times the check can run before the report, when the packs give a count
   max_items?: number;
   max_bytes?: number;
   source?: string; // the collected result that holds the source of the quotes
@@ -49,11 +50,16 @@ const ITEM: Record<string, string> = {
 // The input of a scenario task that executes or publishes its result; null for any other task.
 const LEVEL_ORDER: readonly string[] = ['weak', 'medium', 'strong'];
 
-export function taskInput(task: Task, collected: Record<string, unknown> | null, command = 'reins', models: Partial<Record<string, string>> = {}): TaskInput | null {
+export function taskInput(task: Task, collected: Record<string, unknown> | null, command = 'reins', models: Partial<Record<string, string>> = {}, maxProbes?: number): TaskInput | null {
   const m = task.manifest;
   if (m === undefined || (task.state !== 'executing' && task.state !== 'publishing')) return null;
   const report: ReportSpec = { check: m.done.kind, returns_left: Math.max(0, m.done.retries - task.returns) };
   const protocol = ['Do the work that the instructions describe. Use the collected data and the source that it names.'];
+  // The check before the report: only for a task that executes and that the code checks.
+  if (maxProbes !== undefined && task.state === 'executing' && m.done.kind !== 'human') {
+    report.checks_left = Math.max(0, maxProbes - (task.probes ?? 0));
+    if (report.checks_left > 0) protocol.push(`Before the report the check can run ${report.checks_left} more time(s) without a send-back: ${command} check ${task.id} <file> (or - for the standard input). Its answer accepts nothing: only the report closes the task.`);
+  }
   if (m.done.kind === 'citations') {
     report.max_items = Math.min(m.output.max_items ?? MAX_ITEMS, MAX_ITEMS);
     if (m.done.source !== undefined) report.source = m.done.source;

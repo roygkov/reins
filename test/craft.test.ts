@@ -11,6 +11,7 @@ import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
+import type { JournalRow } from '../src/contracts/journal.ts';
 import { applyDue, detect, listProposals, measure, propose, resolveProposal, proposalLine } from '../src/craft/craft.ts';
 import { addRecord, listRecords, restoreRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
@@ -644,4 +645,20 @@ test('craft: a pitfall that the human rejects is not written, and one that did n
   assert.equal(resolveProposal(b.rt, undo?.id ?? '', 'accepted', NOW + 8 * DAY), true);
   assert.equal(listRecords(b.rt, NOW + 8 * DAY).find((r) => r.id === record?.id)?.state, 'stale');
   assert.ok(listProposals(b.rt).find((p) => p.id === first?.id)?.undone !== undefined);
+});
+
+test('craft: a check that answers PASS and FAIL for one work and one report is unstable', () => {
+  const check = (result: string, fp: string, report: string, more: Record<string, unknown> = {}): JournalRow =>
+    ({ ts: new Date(NOW - DAY).toISOString(), v: 1, kind: 'check.answered', project: 'p1a2b3c4', scenario: 'code-change', scenario_v: 1, fp, data: { result, check_kind: 'command', report, ...more } }) as JournalRow;
+  const same = 'a'.repeat(32);
+  // The same work and the same report, two answers: one pattern. A check before the report counts too.
+  assert.deepEqual(detect([check('FAIL', same, 'r1'), check('PASS', same, 'r1', { probe: 1 })]), [{ pattern: 'check_unstable', key: 'code-change', n: 1 }]);
+  // Another report or another work is another question to the check: no pattern.
+  assert.deepEqual(detect([check('FAIL', same, 'r1'), check('PASS', same, 'r2')]), []);
+  assert.deepEqual(detect([check('FAIL', same, 'r1'), check('PASS', 'b'.repeat(32), 'r1')]), []);
+  // A check that was changed between the two answers is another check: no pattern.
+  assert.deepEqual(detect([check('FAIL', same, 'r1', { check: 'v1' }), check('PASS', same, 'r1', { check: 'v2' })]), []);
+  assert.equal(detect([check('FAIL', same, 'r1', { check: 'v1' }), check('PASS', same, 'r1', { check: 'v1' })]).length, 1);
+  // A scenario that the packs tell the craft to leave alone gets no proposal.
+  assert.deepEqual(detect([check('FAIL', same, 'r1'), check('PASS', same, 'r1')], { keep: ['code-change'] }), []);
 });

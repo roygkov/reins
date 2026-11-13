@@ -31,7 +31,7 @@ import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '..
 // `subId`: the identifier of the subordinate executor that makes the call, when the client gives one (`sub` is its role).
 // `callId`: the identifier that the client gives to one call of a tool, the same before and after it.
 // `named`: the name of the tool for the journal, set by `beforeAction` for a tool that is not the client's own.
-export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; headless?: boolean; unshown?: boolean; named?: string };
+export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; output?: number; headless?: boolean; unshown?: boolean; named?: string };
 
 // What a question keeps while it waits: whose it is, and whether a human sees it.
 // The project is kept with the question: a command `cd <dir> && ...` moves the session, and the
@@ -716,6 +716,9 @@ function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: bo
   // The tools of the client itself fail all the time (a command with an exit code, a file that is
   // not there): that is the work, not a fault of a tool.
   if (failed && !Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_failed', data: { tool: call.tool } }]);
+  // The size of what a tool of a connector gave back: it shows which connector fills the context.
+  // Only the number is kept, never the output. The tools of the client itself give no row.
+  if (!failed && call.output !== undefined && Number.isInteger(call.output) && call.output >= 0 && !Object.hasOwn(clientTools, call.tool) && RULE_NAME.test(call.tool)) record(rt, call, [{ kind: 'executor.tool_output', data: { tool: call.tool, size: call.output } }]);
   // The measure of the level of the client. The adapter said that the client tells the harness
   // before an action; an action ended, and no such word came in this session. The barriers did
   // not act: that is a fact for the journal and for the human, written once for a session.

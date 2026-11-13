@@ -8,6 +8,7 @@ export type Metrics = {
   tasks: { opened: number; closed: number; by_label: Record<string, number>; changed_not_verified: number };
   scenarios: Record<string, { opened: number; accepted: number; returns: number }>;
   checks: { PASS: number; FAIL: number; none: number };
+  unstable_checks: number; // the pairs of a work and a report that got both PASS and FAIL
   decisions: { allow: number; ask: number; defer: number; deny: number };
   protected_attempts: number;
   protected: { ask: number; deny: number }; // the attempts at a protected place: a question to the human, or a refusal
@@ -24,9 +25,11 @@ export const ofProject = (rows: JournalRow[], project: string): JournalRow[] => 
 export function summarize(rows: JournalRow[], since = 0): Metrics {
   const m: Metrics = {
     tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
+    unstable_checks: 0,
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0 },
   };
+  const answers = new Map<string, Set<string>>();
   const scenario = (name: string): Metrics['scenarios'][string] => (m.scenarios[name] ??= { opened: 0, accepted: 0, returns: 0 });
   for (const row of rows) {
     const time = Date.parse(row.ts);
@@ -49,12 +52,20 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         if (row.scenario !== undefined) scenario(row.scenario).returns += 1;
         break;
       case 'check.answered':
+        // The same work and the same report must get the same answer: a check that says PASS and FAIL is not stable.
+        if (row.fp !== undefined && typeof data.report === 'string' && typeof data.result === 'string') {
+          const key = `${row.scenario ?? ''} ${row.fp} ${data.report} ${typeof data.check === 'string' ? data.check : ''}`;
+          answers.set(key, (answers.get(key) ?? new Set()).add(data.result));
+        }
+        // A check before the report accepts nothing: the counts of the checks are of reports.
+        if (data.probe === 1) break;
         if (data.result === 'PASS') {
           m.checks.PASS += 1;
           if (row.scenario !== undefined) scenario(row.scenario).accepted += 1;
         } else m.checks.FAIL += 1;
         break;
       case 'check.no_answer':
+        if (data.probe === 1) break;
         m.checks.none += 1;
         break;
       case 'policy.decision': {
@@ -88,6 +99,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         break;
     }
   }
+  for (const results of answers.values()) if (results.has('PASS') && results.has('FAIL')) m.unstable_checks += 1;
   return m;
 }
 

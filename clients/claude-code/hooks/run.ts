@@ -57,6 +57,14 @@ function readEvent(): ToolCall | null {
   }
   // The client names one call of a tool with the same identifier before and after it.
   if (typeof value.tool_use_id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value.tool_use_id)) call.callId = value.tool_use_id;
+  // The size of what the tool gave back, in bytes: the adapter keeps the number, not the output.
+  if (value.hook_event_name === 'PostToolUse' && value.tool_response !== undefined && value.tool_response !== null) {
+    try {
+      call.output = Buffer.byteLength(typeof value.tool_response === 'string' ? value.tool_response : JSON.stringify(value.tool_response));
+    } catch {
+      // an output that has no text form has no size
+    }
+  }
   // A tool that the human broke off says nothing about the answer of the human.
   interrupted = value.hook_event_name === 'PostToolUseFailure' && value.is_interrupt === true;
   failed = value.hook_event_name === 'PostToolUseFailure' && value.is_interrupt !== true;

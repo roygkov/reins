@@ -57,7 +57,7 @@ export type PackSettings = {
   // network: the read connectors that need the network. files: the files of a connector under the home directory.
   connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]>; network?: string[]; files?: Record<string, string[]> };
   envs?: { known?: string[]; production?: string[] };
-  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number };
+  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number; probes?: number };
   roles?: string[];
   checks?: string[];
   memory?: { types?: string[]; veto_days?: number; keep_days?: number; case_end?: string[] };
@@ -306,7 +306,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     settings.envs = { ...(known !== undefined && { known }), ...(production !== undefined && { production }) };
   }
 
-  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes']);
+  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes', 'probes']);
   if (limits !== null) {
     const out: NonNullable<PackSettings['limits']> = {};
     if (limits.level !== undefined) {
@@ -322,6 +322,9 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     // The changes of a free task before the harness offers a contract.
     const freeChanges = limit(errors, limits.free_changes, 'limits.free_changes');
     if (freeChanges !== undefined) out.free_changes = freeChanges;
+    // The runs of the done check of one task before its report: a check costs time and money.
+    const probes = limit(errors, limits.probes, 'limits.probes');
+    if (probes !== undefined) out.probes = probes;
     if (tokens !== undefined) out.tokens = tokens;
     if (writes !== undefined) out.writes = writes;
     if (executors !== undefined) out.executors = executors;
@@ -844,7 +847,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   narrow('envs', s.envs?.known);
   narrow('roles', s.roles);
 
-  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges', value: number | undefined): void => {
+  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges' | 'maxProbes', value: number | undefined): void => {
     if (value === undefined) return;
     const before = c[key];
     if (before === undefined || value < before) {
@@ -857,6 +860,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   lower('maxExecutors', s.limits?.executors);
   lower('maxReads', s.limits?.reads);
   lower('maxFreeChanges', s.limits?.free_changes);
+  lower('maxProbes', s.limits?.probes);
   const level = s.limits?.level;
   if (level !== undefined && (c.maxLevel === undefined || rank(level) < rank(c.maxLevel))) {
     c.maxLevel = level;

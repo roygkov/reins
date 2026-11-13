@@ -318,6 +318,11 @@ test('runtime: a task file with a broken shape is no task', () => {
   assert.deepEqual(applyEvent(rt, opened.task.id, { type: 'expire' }, 'harness'), { error: 'unknown_task' });
 });
 
+const withoutReport = (data: Record<string, unknown> | undefined): Record<string, unknown> => {
+  const { report: _, ...rest } = data ?? {};
+  return rest;
+};
+
 test('runtime: a report with true citations closes the task as "form verified"', () => {
   const rt = reviewed();
   const id = open(rt);
@@ -331,7 +336,9 @@ test('runtime: a report with true citations closes the task as "form verified"',
   const rows = readJournal(rt.journal.file);
   assert.deepEqual(rows.slice(-5).map((x) => x.kind), ['task.report_submitted', 'check.started', 'check.answered', 'policy.envelope_closed', 'task.closed']);
   assert.deepEqual(rows.find((x) => x.kind === 'task.report_submitted')?.data?.size, Buffer.byteLength(GOOD_REPORT));
-  assert.deepEqual(rows.find((x) => x.kind === 'check.answered')?.data, { result: 'PASS', check_kind: 'citations', n: 1, faults: 0 });
+  // The row names the report that the check read by its fingerprint, never by its text.
+  assert.match(String(rows.find((x) => x.kind === 'check.answered')?.data?.report), /^[0-9a-f]{12}$/);
+  assert.deepEqual(withoutReport(rows.find((x) => x.kind === 'check.answered')?.data), { result: 'PASS', check_kind: 'citations', n: 1, faults: 0 });
   for (const row of rows) assert.deepEqual(validateRow(row), [], `the row ${row.kind} is valid`);
   assert.equal(rt.journal.failures, 0);
 });
@@ -349,7 +356,7 @@ test('runtime: a report with a false citation goes back, and past the limit the 
   assert.ok('step' in last);
   assert.deepEqual([last.step.task.state, last.step.task.waiting], ['waiting_human', 'check']);
   const rows = readJournal(rt.journal.file);
-  assert.deepEqual(rows.findLast((x) => x.kind === 'check.answered')?.data, { result: 'FAIL', check_kind: 'citations', n: 1, faults: 1, reason: 'faults' });
+  assert.deepEqual(withoutReport(rows.findLast((x) => x.kind === 'check.answered')?.data), { result: 'FAIL', check_kind: 'citations', n: 1, faults: 1, reason: 'faults' });
   assert.equal(rt.journal.failures, 0);
 });
 
@@ -376,7 +383,7 @@ for (const [name, change, worktree] of [
     assert.deepEqual([r.answer?.result, r.answer?.reason], ['none', 'no_source']);
     assert.deepEqual([r.step.task.state, r.step.task.returns], ['executing', 1], 'no answer is "not ready"');
     const rows = readJournal(rt.journal.file);
-    assert.deepEqual(rows.findLast((x) => x.kind === 'check.no_answer')?.data, { check_kind: 'citations', reason: 'no_source' });
+    assert.deepEqual(withoutReport(rows.findLast((x) => x.kind === 'check.no_answer')?.data), { check_kind: 'citations', reason: 'no_source' });
     assert.equal(rt.journal.failures, 0);
   });
 }

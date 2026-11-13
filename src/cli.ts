@@ -4,6 +4,7 @@
 //   reins open <scenario> [name=value]   opens a task and prints the input for the model
 //   reins input <task>                   prints the input of an open task again
 //   reins report <task> <file|->         submits the report of the model, prints the answer
+//   reins check <task> [file|-]          runs the done check before the report, when the packs give a count
 //   reins finish <task>                  ends the publication of an accepted result, closes the task
 //   reins stop <task>                    the human stops a task in any open state
 //   reins tasks                          the tasks that are not closed
@@ -29,7 +30,7 @@ import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, approveContract, collectedDir, loadTask, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
+import { applyEvent, approveContract, collectedDir, loadTask, probeCheck, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
@@ -121,7 +122,7 @@ function view(rt: Runtime, task: Task): Out {
   if (task.waiting !== undefined) out.waiting = task.waiting;
   // A contract that waits for the human: the human reads what it asks for.
   if (task.waiting === 'contract') out.contract = task.manifest;
-  const input = taskInput(task, readCollected(rt, task.id), 'reins', rt.merged.models);
+  const input = taskInput(task, readCollected(rt, task.id), 'reins', rt.merged.models, rt.merged.context.maxProbes);
   if (input !== null) {
     input.collected = byReference(rt, task.id, input.collected);
     // The notes of the packs: rules of work that hold for every task (language, tone).
@@ -667,8 +668,23 @@ function main(args: string[]): Out {
     if (r.error !== undefined) throw new Stop(r.error);
     return view(rt, r.task);
   }
+  // The done check before the report: its answer accepts nothing and spends no send-back.
+  if (command === 'check' && first !== undefined && rest.length <= 1) {
+    const rt = runtime();
+    let text: string | null = null;
+    if (rest[0] !== undefined) {
+      try {
+        text = fs.readFileSync(rest[0] === '-' ? 0 : rest[0], 'utf8');
+      } catch {
+        throw new Stop('no_report');
+      }
+    }
+    const r = probeCheck(rt, first, text);
+    if ('error' in r) throw new Stop(r.error);
+    return { ok: true, task: r.task.id, state: r.task.state, probe: true, answer: r.answer, checks_left: r.left, returns_left: Math.max(0, (r.task.manifest?.done.retries ?? 0) - r.task.returns) };
+  }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search
@@ -695,11 +711,14 @@ process.stdout.write(`${JSON.stringify(out)}\n`);
 // or of a queued action says nothing about the exit code.
 const taskState = typeof out.task === 'string' ? out.state : undefined;
 const verified = (taskState === 'closed' || taskState === 'publishing') && out.label !== 'not_verified';
-const reported = 'returns_left' in out;
+// A check before the report is no report: its red answer is "not ready", its green one changes nothing.
+const probe = out.probe === true;
+const reported = !probe && 'returns_left' in out;
 // After a run of a client the task must be closed as verified, or had no work.
 const ranClient = out.ran === true;
 // A client that did not start, or a run of the schedule where a task did not end as verified,
 // is not a success either.
 const notRun = out.ran === false || out.failed === true;
-const done = !notRun && (stopped || onlyReads || taskState === undefined || verified || (!reported && !ranClient && (taskState === 'executing' || taskState === 'skipped')) || (ranClient && taskState === 'skipped'));
+const probeRed = probe && isObj(out.answer) && out.answer.result !== 'PASS';
+const done = !notRun && !probeRed && (stopped || onlyReads || taskState === undefined || verified || (!reported && !ranClient && (taskState === 'executing' || taskState === 'skipped')) || (ranClient && taskState === 'skipped'));
 process.exitCode = out.ok !== true ? 1 : done ? 0 : 2;

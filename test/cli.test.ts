@@ -566,3 +566,48 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
     assert.equal(reins(b, ['metrics', ...bad]).json.error, 'usage', bad.join(' '));
   }
 });
+
+test('cli: the check runs before the report when the packs give a count for it, and it spends no return', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  fs.writeFileSync(check, `#!/bin/sh\nin=$(cat)\nreport=$(printf '%s' "$in" | sed 's/.*"report":"\\([^"]*\\)".*/\\1/')\nif grep -q green "$report"; then r=PASS; else r=FAIL; fi\nprintf '{"outputs":{"result":"%s"},"flags":{}}' "$r"\n`, { mode: 0o755 });
+  // The packs name no count: there is no check before the report.
+  const closed = reins(b, ['open', 'change-review', 'change_id=7']).json;
+  assert.equal(closed.input.report.checks_left, undefined);
+  assert.equal(reins(b, ['check', closed.task, '-'], 'green').json.error, 'not_allowed');
+  reins(b, ['stop', closed.task]);
+  const pack = path.join(b.root, 'organization/pack.json');
+  const value = JSON.parse(fs.readFileSync(pack, 'utf8'));
+  fs.writeFileSync(pack, JSON.stringify({ ...value, limits: { ...value.limits, probes: 3 } }));
+  const opened = reins(b, ['open', 'change-review', 'change_id=7']).json;
+  const id = opened.task;
+  assert.equal(opened.input.report.checks_left, 3);
+  // A script can run without a report: it then reads an empty text, never an older report of the task.
+  const bare = reins(b, ['check', id]);
+  assert.deepEqual([bare.code, bare.json.answer.result, bare.json.checks_left], [2, 'FAIL', 2]);
+  // A red answer: the exit code says "not ready", the task executes, no return is spent.
+  const red = reins(b, ['check', id, '-'], 'the tests are red');
+  assert.deepEqual([red.code, red.json.state, red.json.probe, red.json.answer.result, red.json.checks_left, red.json.returns_left], [2, 'executing', true, 'FAIL', 1, 1]);
+  const green = reins(b, ['check', id, '-'], 'the tests are green');
+  assert.deepEqual([green.code, green.json.state, green.json.answer.result, green.json.checks_left], [0, 'executing', 'PASS', 0]);
+  // The count is spent. A green answer of a check before the report accepts nothing: the report does.
+  assert.equal(reins(b, ['check', id, '-'], 'green').json.error, 'limit');
+  assert.equal(reins(b, ['input', id]).json.input.report.checks_left, 0);
+  const done = reins(b, ['report', id, '-'], 'the tests are green');
+  assert.deepEqual([done.code, done.json.state, done.json.answer.result], [0, 'publishing', 'PASS']);
+  // The rows of a check before the report say so, and the counts of the checks leave them out.
+  const rows = fs.readFileSync(path.join(b.root, 'state/journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l)).filter((r) => r.task === id && r.kind === 'check.answered');
+  assert.deepEqual(rows.map((r) => [r.data.result, r.data.probe]), [['FAIL', 1], ['FAIL', 1], ['PASS', 1], ['PASS', undefined]]);
+  assert.deepEqual(reins(b, ['status']).json.metrics.checks, { PASS: 1, FAIL: 0, none: 0 });
+});
+
+test('cli: a red check before the report protects the files of the check, and a scenario that the human approves has no such check', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'human', retries: 0 }) });
+  const pack = path.join(b.root, 'organization/pack.json');
+  const value = JSON.parse(fs.readFileSync(pack, 'utf8'));
+  fs.writeFileSync(pack, JSON.stringify({ ...value, limits: { ...value.limits, probes: 2 } }));
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  assert.equal(reins(b, ['check', id, '-'], 'x').json.error, 'not_allowed');
+  assert.equal(reins(b, ['check', 't000000000000', '-'], 'x').json.error, 'unknown_task');
+});

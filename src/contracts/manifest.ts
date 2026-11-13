@@ -66,6 +66,7 @@ export type PackContext = {
   maxLevel?: Level;
   maxTokens?: number;
   maxReads?: number; // the reads of one task through connectors
+  maxProbes?: number; // the runs of the done check of one task before its report
   maxFreeChanges?: number; // the changes of a free task before the offer of a contract
   maxWriteLimit?: number;
   maxExecutors?: number;

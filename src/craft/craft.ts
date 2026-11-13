@@ -17,7 +17,7 @@ import { addRecord, listRecords, retireRecord } from '../memory/store.ts';
 // `repeated_approval`: a rule asked many times and the human said "yes" every time.
 // `tool_fails_often`: one tool ended with an error many times.
 // `repeated_chain`: the same three tools of connectors, in the same order, in several free tasks.
-export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'level_too_high' | 'rollback'; key: string; n: number };
+export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'check_unstable' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'level_too_high' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
@@ -52,11 +52,16 @@ const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
 const NAME = /^[a-z][a-z0-9-]{0,62}$/;
 
-type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number>; restored: Set<string>; levels: Map<string, Map<string, number>> };
+type Counts = { decisions: number; asked: Map<string, number>; checks: Map<string, { all: number; fail: number }>; contracts: Map<string, number>; started: Map<string, number>; returned: Map<string, number>; raised: Map<string, number>; yes: Map<string, number>; no: Map<string, number>; failed: Map<string, number>; chains: Map<string, number>; restored: Set<string>; levels: Map<string, Map<string, number>>; unstable: Map<string, number> };
+
+// One question to a check: the scenario, the work, the report and the version of the check.
+const pairKey = (row: JournalRow): string => `${row.scenario ?? ''} ${row.fp ?? ''} ${String(row.data?.report)} ${typeof row.data?.check === 'string' ? row.data.check : ''}`;
 
 // What a set of journal rows counts. A decision row is followed by its basis row.
 function count(rows: JournalRow[]): Counts {
-  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map(), restored: new Set(), levels: new Map() };
+  const c: Counts = { decisions: 0, asked: new Map(), checks: new Map(), contracts: new Map(), started: new Map(), returned: new Map(), raised: new Map(), yes: new Map(), no: new Map(), failed: new Map(), chains: new Map(), restored: new Set(), levels: new Map(), unstable: new Map() };
+  // The answers of the checks for one scenario, one work and one report.
+  const answers = new Map<string, Set<string>>();
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   let question = false;
   // The tools of the connectors that each free task called, in order. A task of a scenario repeats by design: it is not counted.
@@ -96,6 +101,8 @@ function count(rows: JournalRow[]): Counts {
       if (row.data?.decision === 'answered') add(c.yes, rule);
       else if (row.data?.decision === 'refused') add(c.no, rule);
     } else if (row.scenario === undefined) continue;
+    else if (row.kind === 'check.answered' && row.fp !== undefined && typeof row.data?.report === 'string' && typeof row.data.result === 'string' && (answers.set(pairKey(row), (answers.get(pairKey(row)) ?? new Set<string>()).add(row.data.result)), row.data.probe === 1)) continue;
+    else if (row.kind === 'check.answered' && row.data?.probe === 1) continue;
     else if (row.kind === 'check.answered') {
       const k = c.checks.get(row.scenario) ?? { all: 0, fail: 0 };
       k.all += 1;
@@ -125,6 +132,7 @@ function count(rows: JournalRow[]): Counts {
     for (let i = 0; i + CHAIN <= list.length; i += 1) seen.add(list.slice(i, i + CHAIN).join(' > '));
     for (const key of seen) add(c.chains, key);
   }
+  for (const [key, results] of answers) if (results.has('PASS') && results.has('FAIL')) add(c.unstable, key.split(' ')[0] ?? '');
   return c;
 }
 
@@ -145,6 +153,8 @@ export function detect(rows: JournalRow[], set: CraftSettings = {}): Pattern[] {
     if ((set.keep ?? []).includes(key)) continue;
     if (k.all >= (set.min_checks ?? MIN_CHECKS) && k.fail / k.all >= FAIL_SHARE) out.push({ pattern: 'check_fails_often', key, n: k.fail });
   }
+  // A check that gave PASS and FAIL for one work and one report: one such pair is a pattern.
+  for (const [key, n] of c.unstable) if (!(set.keep ?? []).includes(key)) out.push({ pattern: 'check_unstable', key, n });
   for (const [key, n] of c.contracts) if (n >= (set.min_contracts ?? MIN_CONTRACTS)) out.push({ pattern: 'repeated_contract', key, n });
   for (const [key, n] of c.failed) if (n >= (set.min_tool_failures ?? MIN_TOOL_FAILURES)) out.push({ pattern: 'tool_fails_often', key, n });
   for (const [key, n] of c.chains) if (n >= (set.min_chains ?? MIN_CHAINS)) out.push({ pattern: 'repeated_chain', key, n });
@@ -395,6 +405,11 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
     // No decision of the policy after the acceptance: nobody worked, so nothing is measured.
     if (after.decisions === 0 || (before.asked.get(p.key) ?? 0) === 0) return 'not_measured';
     return compare(after.asked.get(p.key) ?? 0, before.asked.get(p.key) ?? 0);
+  }
+  if (p.pattern === 'check_unstable') {
+    // The scenario was checked after the acceptance: fewer unstable pairs is better.
+    if ((after.checks.get(p.key)?.all ?? 0) === 0) return 'not_measured';
+    return compare(after.unstable.get(p.key) ?? 0, before.unstable.get(p.key) ?? 0);
   }
   if (p.pattern === 'check_fails_often') {
     const a = after.checks.get(p.key);

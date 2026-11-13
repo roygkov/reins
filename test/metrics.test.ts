@@ -65,3 +65,10 @@ test('metrics: a series gives the eight numbers for each day, by the same formul
   const week = eight(rows, from + 7 * DAY - 1);
   for (const name of EIGHT) assert.deepEqual([all?.[name].value, all?.[name].n], [week[name].value, week[name].n], name);
 });
+
+test('metrics: the summary counts the checks that answered PASS and FAIL for one work and one report', () => {
+  const check = (result: string, fp: string, report: string): JournalRow => row('check.answered', { result, check_kind: 'command', report }, { scenario: 's', fp });
+  const m = summarize([check('FAIL', 'a'.repeat(32), 'r1'), check('PASS', 'a'.repeat(32), 'r1'), check('PASS', 'b'.repeat(32), 'r1')]);
+  assert.equal(m.unstable_checks, 1);
+  assert.equal(summarize([check('PASS', 'a'.repeat(32), 'r1')]).unstable_checks, 0);
+});
