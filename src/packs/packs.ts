@@ -77,7 +77,9 @@ export type PackSettings = {
 // Rule data of the shell gate that a pack adds: the names that mean production in this
 // organization, the protected branches, the forms of commands that the human named. A pack only
 // adds: the lists of all levels are joined.
-export type GateForm = { id?: string; pattern: string; decision: 'ask' | 'deny'; reason?: string };
+// `words`: the form holds only when the command also has one of these words, as a whole word, in
+// any case of the letters: a command that reads and writes (a tool that runs a query) asks only for a write.
+export type GateForm = { id?: string; pattern: string; decision: 'ask' | 'deny'; reason?: string; words?: string[] };
 export const GATE_LISTS = ['markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes'] as const;
 export type GateData = Partial<Record<(typeof GATE_LISTS)[number], string[]>> & { forms?: GateForm[] };
 
@@ -461,12 +463,20 @@ function gateData(errors: PackError[], gate: Obj): GateData {
           return;
         }
         const before = errors.length;
-        for (const key of Object.keys(form)) if (!['id', 'pattern', 'decision', 'reason'].includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+        for (const key of Object.keys(form)) if (!['id', 'pattern', 'decision', 'reason', 'words'].includes(key)) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
         if (form.id !== undefined && (typeof form.id !== 'string' || !NAME.test(form.id))) errors.push({ code: 'bad_name', path: `${at}.id` });
         if (!plain(form.pattern)) errors.push({ code: form.pattern === undefined ? 'missing' : 'bad_name', path: `${at}.pattern` });
         // A form only makes the gate stricter: it asks or it refuses.
         if (form.decision !== 'ask' && form.decision !== 'deny') errors.push({ code: form.decision === undefined ? 'missing' : 'not_in_list', path: `${at}.decision` });
         if (form.reason !== undefined && !plain(form.reason)) errors.push({ code: 'bad_name', path: `${at}.reason` });
+        if (form.words !== undefined) {
+          if (!Array.isArray(form.words)) errors.push({ code: 'not_array', path: `${at}.words` });
+          else if (form.words.length === 0) errors.push({ code: 'missing', path: `${at}.words` });
+          else if (form.words.length > 40) errors.push({ code: 'too_large', path: `${at}.words` });
+          else form.words.forEach((word, k) => {
+            if (typeof word !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(word)) errors.push({ code: 'bad_name', path: `${at}.words[${k}]` });
+          });
+        }
         if (errors.length === before) forms.push(form as GateForm);
       });
       out.forms = forms;

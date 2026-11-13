@@ -109,9 +109,34 @@ test('gate: a pack adds rule data of the gate, and a lower pack can only add', (
   assert.deepEqual([r.outcome, r.rule], ['deny', 'user.no-wipe']);
 });
 
+test('gate: a form with words asks only when the command holds the pattern and one of the words', () => {
+  const b = box({
+    organization: { gate: { forms: [{ id: 'stand-sql', pattern: 'stand-tool call', words: ['update', 'insert', 'delete'], decision: 'ask' }] } },
+  });
+  const asks = (command: string): [string, string | undefined] => {
+    const r = shell(b, command);
+    return [r.outcome, r.rule];
+  };
+  // A word is a whole word, and the case of its letters does not matter.
+  for (const command of [
+    `stand-tool call env db query '{"sql":"UPDATE t SET a=1"}'`,
+    `stand-tool call env db query '{"sql":"insert into t values (1)"}'`,
+    `stand-tool call env db query '{"sql":"Delete from t"}'`,
+    `stand-tool call env db query - <<'EOF'\n{"sql":"update t set a=1"}\nEOF`,
+  ]) assert.deepEqual(asks(command), ['ask', 'user.stand-sql'], command);
+  // The pattern without a word, a word inside another word, a word without the pattern: no question.
+  for (const command of [
+    `stand-tool call env db query '{"sql":"select * from t"}'`,
+    `stand-tool call env db query '{"sql":"select updated_at, deleted from t"}'`,
+    `stand-tool envs`,
+    `echo update`,
+  ]) assert.notEqual(asks(command)[1], 'user.stand-sql', command);
+});
+
 for (const [name, gate, errors] of [
   ['the rule data is an object of known lists', { hosts: ['x'] }, ['unknown_field gate.hosts']],
   ['a list holds plain one-line strings', { prod_hosts: ['ok', 7, 'two\nlines'] }, ['bad_name gate.prod_hosts[1]', 'bad_name gate.prod_hosts[2]']],
+  ['the words of a form are a short list of plain words', { forms: [{ pattern: 'p', decision: 'ask', words: 'update' }, { pattern: 'p', decision: 'ask', words: [] }, { pattern: 'p', decision: 'ask', words: ['ok', 'two words', 7] }] }, ['not_array gate.forms[0].words', 'missing gate.forms[1].words', 'bad_name gate.forms[2].words[1]', 'bad_name gate.forms[2].words[2]']],
   ['a form has a pattern and a known decision', { forms: [{ id: 'x', decision: 'deny' }, { pattern: 'p', decision: 'allow' }] }, ['missing gate.forms[0].pattern', 'not_in_list gate.forms[1].decision']],
 ] as const) {
   test(`gate: pack: ${name}`, () => {

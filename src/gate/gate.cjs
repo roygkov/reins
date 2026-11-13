@@ -121,6 +121,13 @@ evalRm.NEEDLES = [{ cmd: 'rm' }, '-delete', '-exec'];
 function evalUserForms(seg, cfg) {
   for (const f of cfg.forms || []) {
     // a literal substring of the command text, case-sensitive (since 0.4.1; a regex-looking pattern is literal too)
+    // `words` (reins): the form holds only when the command, with its here-document, also has one of
+    // the words as a whole word, in any case of the letters
+    if (Array.isArray(f.words) && f.words.length) {
+      const body = ((seg.text || seg.argv.join(' ')) + '\n' + (seg.heredoc || '')).toLowerCase();
+      const has = (w) => typeof w === 'string' && new RegExp('(^|[^a-z0-9_])' + w.toLowerCase().replace(/[^a-z0-9_]/g, '') + '($|[^a-z0-9_])').test(body);
+      if (!f.words.some(has)) continue;
+    }
     if (typeof f.pattern === 'string' && f.pattern && (seg.text || seg.argv.join(' ')).includes(f.pattern)) return { decision: f.decision === 'deny' ? 'deny' : 'ask', id: 'user.' + (f.id || 'form'), cls: 'user', why: f.reason || 'matches your configured form' };
   }
   return null;
