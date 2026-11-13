@@ -767,12 +767,17 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   const text = readReport(rt, id);
   // A report that cannot be read is a fault of the harness: no answer.
   // The answer holds for one state of the work: the work is read before the check and after it.
-  const root = before.root ?? sourceRoot(rt, before);
+  const unbound = before.manifest?.done.unbound === true;
+  const root = unbound ? null : before.root ?? sourceRoot(rt, before);
   const workBefore = root === null ? null : workState(root);
   let answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : before.manifest?.done.kind === 'citations' ? citations(rt, before, text) : scriptCheck(rt, before);
   const work = root === null ? null : workState(root);
   // The work changed while the check ran: nothing says which work the answer is about.
   if (workBefore !== null && work !== workBefore) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
+  // A green answer of a script holds for one state of a work. Without a fingerprint of the work
+  // nothing says what the answer is about: that is no answer. A manifest whose result is no work
+  // in a directory says so itself (`done.unbound`).
+  if (answer.result === 'PASS' && work === null && !unbound && before.manifest !== undefined && before.manifest.done.kind !== 'citations') answer = { result: 'none', reason: 'no_work', n: 0, faults: [] };
   // The check changed while it ran: nothing says which check answered.
   if (checkVersion(rt, before) !== version) answer = { result: 'none', reason: 'check_failed', n: 0, faults: [] };
   // The second answer of a soak is about the work and the check of the first: a soak shows that one state held over the term.
@@ -825,7 +830,7 @@ export function submitReport(rt: Runtime, id: string, text: string): Submitted {
     }
     // The work that the report is about: the source that the manifest names, else the directory
     // where the report is given. The answer of the check and an approval of the human hold for it.
-    const root = sourceRoot(rt, task) ?? (rt.workDir !== undefined && path.isAbsolute(rt.workDir) ? rt.workDir : null);
+    const root = task.manifest?.done.unbound === true ? null : sourceRoot(rt, task) ?? (rt.workDir !== undefined && path.isAbsolute(rt.workDir) ? rt.workDir : null);
     const s = step(task, { type: 'report', size, fp, ...(root !== null ? { root } : {}) });
     if (s.error !== undefined) return s;
     // The text is on the disk before the state says "checking": a check never reads an older report.

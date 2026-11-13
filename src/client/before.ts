@@ -18,7 +18,7 @@ import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession } from '../core/sessions.ts';
 import { touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
-import { guardPattern } from '../contracts/manifest.ts';
+import { guardPattern, inputForm } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { findRoot, loadConfig, shellAction, type GateConfig, isProdName } from '../gate/index.ts';
@@ -315,7 +315,9 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
       // or of the config is refused, as for a file tool. The match of the text is the second barrier.
       const places = placesGuard(rt, command, call.cwd);
       if (places?.outcome === 'deny') return { guard: places };
-      const named = human ?? places?.rule ?? namedInCommand(rt, command);
+      // A refusal of a place comes first: a question about the open of a scenario must not let a
+      // write into the state pass with one "yes".
+      const named = human ?? (opensHumanScenario(rt, command) ? 'protect.human-command' : null) ?? places?.rule ?? namedInCommand(rt, command);
       if (named !== null) return { guard: { outcome: 'ask', rule: named } };
     }
     return { action: shell.action, layers: shell.layers, command };
@@ -509,6 +511,27 @@ function roleLimit(rt: Runtime, call: ToolCall, clientTools: ClientTools, read: 
   return files.every(inArea) ? null : 'executor.area';
 }
 
+// A scenario whose manifest says that only the human opens it (`trigger.open: human`): the command
+// that opens it is the word of the human, as `reins stop` is. The command names the scenario
+// (`reins open <name>`), or gives a value whose form opens it (`reins match <value>`).
+function opensHumanScenario(rt: Runtime, command: string): boolean {
+  const human = rt.merged.scenarios.filter((s) => s.manifest.trigger.open === 'human');
+  if (human.length === 0) return false;
+  const plain = command.replace(/\$?['"\\]/g, '');
+  for (const m of plain.matchAll(/(?:^|[\s;&|(/`])(?:reins|cli\.ts)\s+open\s+([A-Za-z0-9][A-Za-z0-9_-]*)/g)) {
+    if (human.some((s) => s.name === m[1])) return true;
+  }
+  for (const m of plain.matchAll(/(?:^|[\s;&|(/`])(?:reins|cli\.ts)\s+match\s+([^\s;&|)`]+)/g)) {
+    const value = m[1] ?? '';
+    for (const s of human) {
+      const inputs = s.manifest.trigger.inputs ?? [];
+      const [only] = inputs;
+      if (inputs.length === 1 && only?.pattern !== undefined && inputForm(only.pattern)?.test(value) === true) return true;
+    }
+  }
+  return false;
+}
+
 function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Reply {
   const read = readCall(rt, call, clientTools);
   const limit = call.sub === undefined ? null : roleLimit(rt, call, clientTools, read);
@@ -525,8 +548,11 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   }
   const { action } = read;
   const layers = [...read.layers, ...packLayers(rt, call, action, read.command)];
-  // A pause of the human: a question passes without the question. A refusal holds.
-  if (pausedUntil(rt) !== null && decide({ action, layers }).outcome === 'ask') {
+  // A pause of the human: a question passes without the question. A refusal holds. So does the
+  // question about a write into production or into an unknown environment, and about a write that
+  // cannot be undone: the human approves each of those, pause or not (the same rule as for an envelope).
+  const paused = pausedUntil(rt) === null ? null : decide({ action, layers, envelope: [] });
+  if (paused !== null && paused.outcome === 'ask' && paused.envelope !== 'production' && paused.envelope !== 'irreversible') {
     record(rt, call, [
       { kind: 'policy.decision', data: { outcome: 'allow', action_kind: action.kind, env: action.env.name } },
       { kind: 'policy.basis', data: { layer: 'core', rule: 'paused' } },

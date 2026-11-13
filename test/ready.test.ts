@@ -646,14 +646,43 @@ test('ready: a check without a named source is tied to the work where the report
   fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
   assert.equal(verifyWork({ ...b.rt, workDir: b.root }, id), false);
   assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.invalidated')?.data?.reason, 'work_changed');
-  // Without a directory of the client and without a source there is nothing to tie to, as before.
+});
+
+test('ready: a green answer of a script without a fingerprint of the work is no answer, unless the manifest says that there is no work', () => {
+  // Without a directory of the client and without a source there is nothing to tie the answer to.
   const bare = box({ done: { kind: 'command', check: 'tests', retries: 0 }, check: PASSING });
   const { workDir: _, ...noDir } = bare.rt;
   const opened = openScenario(noDir, 'change-review', { change_id: '7' }, { session: 's1' });
   assert.ok(opened.ok);
   const r = submitReport(noDir, opened.task.id, REPORT);
-  assert.ok('step' in r);
-  assert.deepEqual([r.step.task.state, r.step.task.work, r.step.task.root], ['publishing', undefined, undefined]);
+  assert.ok('step' in r && r.answer !== undefined);
+  assert.deepEqual([r.answer.result, r.answer.reason, r.step.task.state, r.step.task.work], ['none', 'no_work', 'waiting_human', undefined]);
+  // A directory whose state cannot be read (a broken repository) is the same.
+  const broken = box({ done: { kind: 'command', check: 'tests', retries: 0 }, check: PASSING });
+  assert.ok(broken.rt.workDir !== undefined);
+  fs.rmSync(path.join(broken.rt.workDir, '.git'), { recursive: true });
+  fs.writeFileSync(path.join(broken.rt.workDir, '.git'), 'not a link to a repository\n');
+  const second = openScenario(broken.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(second.ok);
+  const answer = submitReport(broken.rt, second.task.id, REPORT);
+  assert.ok('step' in answer && answer.answer !== undefined);
+  assert.deepEqual([answer.answer.result, answer.answer.reason], ['none', 'no_work']);
+  // A red answer needs no fingerprint: it accepts nothing.
+  const red = box({ done: { kind: 'command', check: 'tests', retries: 0 }, check: PASSING.replace('PASS', 'FAIL') });
+  const { workDir: _r, ...redRt } = red.rt;
+  const third = openScenario(redRt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(third.ok);
+  const failed = submitReport(redRt, third.task.id, REPORT);
+  assert.ok('step' in failed && failed.answer !== undefined);
+  assert.equal(failed.answer.result, 'FAIL');
+  // The manifest says that the result is not a work in a directory (a record of the memory, a
+  // state of a system): the answer is taken without a fingerprint, also inside a repository.
+  const free = box({ done: { kind: 'command', check: 'tests', retries: 0, unbound: true }, check: PASSING });
+  const fourth = openScenario(free.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(fourth.ok);
+  const ok = submitReport(free.rt, fourth.task.id, REPORT);
+  assert.ok('step' in ok);
+  assert.deepEqual([ok.step.task.state, ok.step.task.work, ok.step.task.root], ['publishing', undefined, undefined]);
 });
 
 test('ready: a result that the human approved holds for the work that the human saw', () => {

@@ -309,7 +309,8 @@ test('memory: a veto can be taken back by the human, with the history of the rec
 });
 
 test('memory: secrets are cleaned from a record before it is written', () => {
-  assert.equal(scrub('token glpat-AbCdEf0123456789xyzQ in the config'), 'token [redacted] in the config');
+  // The sample token is put together here: a scanner of secrets must not read a made-up value as a real one.
+  assert.equal(scrub(`token ${['glpat', 'AbCdEf0123456789xyzQ'].join('-')} in the config`), 'token [redacted] in the config');
   assert.equal(scrub('AWS key AKIAIOSFODNN7EXAMPLE leaked'), 'AWS key [redacted] leaked');
   assert.equal(scrub('password=hunter2secret and api_key: "abcDEF123456789012"'), 'password=[redacted] and api_key: [redacted]');
   assert.equal(scrub('Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghijk'), 'Bearer [redacted]');

@@ -9,6 +9,8 @@ export const MANIFEST_VERSION = 1;
 export const PACKAGES = ['organization', 'project', 'person'] as const;
 export const STATES = ['active', 'disabled'] as const;
 export const TRIGGER_KINDS = ['command', 'schedule', 'event'] as const;
+// Who opens a scenario of a command: the agent (and the human), or only the human.
+export const OPENERS = ['agent', 'human'] as const;
 export const INPUT_TYPES = ['string', 'number', 'id', 'url'] as const;
 export const LEVELS = ['weak', 'medium', 'strong'] as const;
 export const CONFIRMS = ['none', 'once'] as const;
@@ -38,14 +40,14 @@ export type Manifest = {
   state?: (typeof STATES)[number];
   description?: string;
   // `pattern` of an input: the form of its value. A value that fits the form of one manifest opens that scenario without its name.
-  trigger: { kind: (typeof TRIGGER_KINDS)[number]; value?: string; inputs?: { name: string; type: (typeof INPUT_TYPES)[number]; pattern?: string }[] };
+  trigger: { kind: (typeof TRIGGER_KINDS)[number]; value?: string; open?: (typeof OPENERS)[number]; inputs?: { name: string; type: (typeof INPUT_TYPES)[number]; pattern?: string }[] };
   collect?: { script: string; outputs: string[]; flags?: string[]; max_bytes?: number; timeout_s?: number };
   run_if?: string;
   model: { level?: Level; raise_to?: Level; executors?: { role: string; count: number; rights?: (typeof EXECUTOR_RIGHTS)[number]; area?: string[] }[]; token_limit?: number };
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
+  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; unbound?: boolean; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -186,11 +188,15 @@ function inPack(r: Report, allowed: string[] | undefined, value: string | null, 
 
 function trigger(r: Report, value: unknown): Set<string> {
   const inputs = new Set<string>();
-  const t = fields(r, value, 'trigger', ['kind', 'value', 'inputs'], ['kind']);
+  const t = fields(r, value, 'trigger', ['kind', 'value', 'open', 'inputs'], ['kind']);
   if (t === null) return inputs;
   const kind = choice(r, t.kind, 'trigger.kind', TRIGGER_KINDS);
   text(r, t.value, 'trigger.value');
   if (kind !== null && kind !== 'command' && t.value === undefined) r.add('missing', 'trigger.value');
+  // Who opens the scenario. Without the key the agent opens it. `human`: the command that opens
+  // it is the word of the human, and the client asks the human before the agent runs it.
+  const opener = choice(r, t.open, 'trigger.open', OPENERS);
+  if (opener !== null && kind !== null && kind !== 'command') r.add('not_allowed', 'trigger.open');
   // A schedule has one of the known forms. An event has a name.
   if (kind === 'schedule' && typeof t.value === 'string' && parseSchedule(t.value) === null) r.add('bad_form', 'trigger.value');
   if (kind === 'event' && typeof t.value === 'string' && !NAME.test(t.value)) r.add('bad_form', 'trigger.value');
@@ -363,10 +369,17 @@ export function guardPattern(guard: string): RegExp {
 }
 
 function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
+  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'unbound', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
+  // `unbound`: the result is not a work in a directory (a record of the memory, a state of a
+  // system), so the answer of the script has no fingerprint of a work. Only a script check can
+  // say so, and not together with a source: a source is a work.
+  if (d.unbound !== undefined) {
+    if (typeof d.unbound !== 'boolean') r.add('not_in_list', 'done.unbound');
+    else if (!needsCheck || d.source !== undefined) r.add('not_allowed', 'done.unbound');
+  }
   // A check of several named parts stands in place of the one name: every part is a script of a pack.
   if (d.checks !== undefined) {
     if (d.check !== undefined || (kind !== null && !needsCheck)) r.add('not_allowed', 'done.checks');

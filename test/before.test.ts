@@ -308,6 +308,31 @@ test('before: a percent form of a space stays as it is on both sides', () => {
   assert.deepEqual([r.outcome, r.rule], ['ask', 'default.write'], 'the value is a plain target, not an unknown one');
 });
 
+test('before: a scenario that only the human opens: the command that opens it asks, the others pass', () => {
+  const b = box();
+  const run = (command: string) => beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+  // The manifest does not say who opens the scenario: the agent opens it, as before.
+  assert.equal(run('reins open change-review change_id=7').outcome, 'allow');
+  const scenario = b.rt.merged.scenarios.find((s) => s.name === 'change-review');
+  assert.ok(scenario !== undefined);
+  scenario.manifest.trigger.open = 'human';
+  for (const command of ['reins open change-review change_id=7', 'cd /tmp && reins  open change-review', "node /x/src/cli.ts open 'change-review'", 'reins "open" change-review']) {
+    const r = run(command);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  // Another scenario, a name that is no scenario, and a command that only reads: no question.
+  for (const command of ['reins open other-name', 'reins input t000000000000', 'reins scenarios', 'echo reins open change-review-2']) assert.equal(run(command).outcome, 'allow', command);
+  // A refusal holds: the open of the scenario joined with a write into the state is refused, not asked.
+  const joined = run(`reins open change-review && echo x > ${b.rt.stateDir}/pause.json`);
+  assert.deepEqual([joined.outcome, joined.rule], ['deny', 'protect.state']);
+  // The form of the input opens the same scenario without its name: the same question.
+  scenario.manifest.trigger.inputs = [{ name: 'change_id', type: 'string', pattern: 'CH-[0-9]+' }];
+  assert.deepEqual([run('reins match CH-7').outcome, run('reins match CH-7').rule], ['ask', 'protect.human-command']);
+  assert.equal(run('reins match other').outcome, 'allow');
+  scenario.manifest.trigger.open = 'agent';
+  assert.equal(run('reins match CH-7').outcome, 'allow');
+});
+
 test('before: a command that stops a task is the word of the human: the client asks', () => {
   const b = box();
   for (const command of ['reins stop t000000000000', 'cd /tmp && reins  stop t000000000000', 'node /x/src/cli.ts stop t000000000000', "reins 'stop' t000000000000", 'reins "stop" t000000000000', '\\reins stop t000000000000', "'reins' stop t000000000000"]) {

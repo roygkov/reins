@@ -178,9 +178,16 @@ test('handoff: a session without a request leaves no record', () => {
   assert.doesNotMatch(sessionStart(b.rt, e(b, 's2')).context.join('\n'), /Last session/);
 });
 
+// A write of a tool into a known environment of work that is not production.
+const workTool = (b: Box, more: Record<string, unknown> = {}): void => {
+  b.rt.merged.context.envs = [...(b.rt.merged.context.envs ?? []), 'bench'];
+  b.rt.merged.tools.post_note = { kind: 'write', action: 'comment', target: 'note', env: 'bench', ...more } as (typeof b.rt.merged.tools)[string];
+};
+
 test('pause: while the barriers are paused a question passes, a protected path does not', () => {
   const b = box();
-  const ask = () => beforeAction(b.rt, { ...e(b), tool: 'launch_rocket', input: {} }, CLIENT);
+  workTool(b);
+  const ask = () => beforeAction(b.rt, { ...e(b), tool: 'post_note', input: {} }, CLIENT);
   assert.equal(ask().outcome, 'ask');
   const until = pause(b.rt, 30);
   assert.equal(pausedUntil(b.rt), until);
@@ -191,6 +198,26 @@ test('pause: while the barriers are paused a question passes, a protected path d
   pause(b.rt, 0);
   assert.equal(ask().outcome, 'ask');
   assert.ok(readJournal(b.rt.journal.file).some((r) => r.kind === 'harness.barriers_off'));
+});
+
+test('pause: a write into production or into an unknown environment and a write that cannot be undone still ask', () => {
+  const b = box();
+  workTool(b);
+  pause(b.rt, 30);
+  const call = (tool: string) => beforeAction(b.rt, { ...e(b), tool, input: {} }, CLIENT);
+  assert.deepEqual([call('post_note').outcome, call('post_note').rule], ['allow', 'paused']);
+  // A tool that nothing describes: its environment is not known, and that counts as production.
+  assert.equal(call('launch_rocket').outcome, 'ask');
+  // The same tool in an environment of production.
+  b.rt.merged.context.productionEnvs = ['bench'];
+  assert.equal(call('post_note').outcome, 'ask');
+  b.rt.merged.context.productionEnvs = [];
+  // A write that cannot be undone, in any environment.
+  workTool(b, { irreversible: true });
+  assert.equal(call('post_note').outcome, 'ask');
+  // A command of the shell that the gate reads as a production one.
+  const shell = beforeAction(b.rt, { ...e(b), tool: 'shell', input: { command: 'git push --force origin main' } }, CLIENT);
+  assert.equal(shell.outcome, 'ask');
 });
 
 test('pause: a rule that refuses holds during a pause', () => {
