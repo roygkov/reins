@@ -69,10 +69,9 @@ Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, з�
 
 ## Правка схем
 
-Правь генератор, не файлы `.drawio`.
+Правь генератор, не файлы `.drawio`. Источник схем один: генератор; файлы `.drawio` это его вывод. PDF в репозитории нет.
 
     PYTHONIOENCODING=utf-8 python3 -I tools/gen_harness_diagrams.py docs/spec
-    drawio -x -f pdf -a -o docs/spec/harness-spec.pdf docs/spec/harness-spec.drawio
 
 ## Решения
 
