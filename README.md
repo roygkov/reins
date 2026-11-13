@@ -26,6 +26,7 @@
 - `src/check/citations.ts`: проверка готовности вида «сверка цитат».
 - `src/cli.ts`, `src/client`: команда `reins` и вход задачи для модели.
 - `clients/claude-code`: команда `/reins:run` для Claude Code.
+- `clients/claude-code/skills`: скиллы памяти харнеса: `search-first`, `decision-hygiene`, `strategic-compact`, `systematic-debugging`. Клиент называет их `reins:<имя>`. После правки скилла подними `version` в `plugin.json` и запусти `claude plugin update reins@reins`.
 - `src/journal/writer.ts`: запись и чтение журнала.
 - `test/data/*.json`: тестовые случаи как данные.
 - `docs/contracts.md`: отличия кода от схем.
