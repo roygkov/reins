@@ -163,7 +163,7 @@ test('cli: past the limit of returns the task waits for the human', () => {
   const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
   let last: Out | null = null;
   for (let i = 0; i < 3; i += 1) last = reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'none' }]));
-  assert.equal(last?.code, 2);
+  assert.equal(last?.code, 2, last?.stdout);
   assert.deepEqual([last?.json.state, last?.json.waiting, last?.json.returns_left], ['waiting_human', 'check', 0]);
   const again = reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'high' }]));
   assert.deepEqual([again.code, again.json.ok, again.json.error], [1, false, 'bad_event']);

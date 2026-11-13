@@ -1,4 +1,4 @@
-<mxfile host="drawio-plugin" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36" modified="2026-11-13T12:20:38.653Z" version="22.1.22" etag="63qXRLUU9bwN-3aLWUA0" type="embed" pages="6">
+<mxfile host="drawio-plugin" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36" modified="2026-11-13T12:55:16.445Z" version="22.1.22" etag="iihll9Ou_iXEJgMemRnB" type="embed" pages="6">
   <diagram id="p1" name="1. Строка журнала">
     <mxGraphModel dx="1163" dy="544" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
       <root>
@@ -370,6 +370,9 @@
         </mxCell>
         <mxCell id="c26" value="Агент получает из журнала только готовую выжимку во входе задачи: состояние и следующий шаг.&lt;br&gt;Сырые строки агенту не показываются: в них нет текста, и они не предназначены для чтения моделью." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=14;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;spacingRight=8;fontSize=11;" parent="1" vertex="1">
           <mxGeometry x="330" y="500" width="500" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="s-VQfOlq7eVWghN_RI_o-1" value="Text" style="text;strokeColor=none;align=center;fillColor=none;html=1;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="550" y="270" width="60" height="30" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
