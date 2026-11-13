@@ -557,6 +557,24 @@ test('cli: a check script that answers FAIL says why: the end of its error text'
   assert.deepEqual(rows.map((d) => [d.result, d.cause, d.stderr]), [['FAIL', undefined, undefined], ['FAIL', undefined, undefined], ['FAIL', undefined, undefined], ['PASS', undefined, undefined]]);
 });
 
+test('cli: the human says that the result of a closed task was wrong, and the journal has it once', () => {
+  const b = box();
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  // Only a result can be wrong: a task that still runs has none.
+  assert.deepEqual([reins(b, ['dispute', id]).json.ok, reins(b, ['dispute', id]).json.error], [false, 'not_closed']);
+  assert.equal(reins(b, ['dispute', 't0000000000']).json.error, 'unknown_task');
+  reins(b, ['stop', id]);
+  const first = reins(b, ['dispute', id]).json;
+  assert.deepEqual([first.ok, first.task, first.state, first.label, first.already], [true, id, 'closed', 'not_verified', undefined]);
+  assert.match(first.disputed, /^\d{4}-\d{2}-\d{2}T/);
+  // The second word changes nothing: the same time, no second row.
+  const second = reins(b, ['dispute', id]).json;
+  assert.deepEqual([second.ok, second.already, second.disputed], [true, true, first.disputed]);
+  const rows = fs.readFileSync(path.join(b.root, 'state/journal.jsonl'), 'utf8').split('\n').filter((l) => l.includes('task.result_disputed')).map((l) => JSON.parse(l));
+  assert.deepEqual(rows.map((r) => [r.task, r.data.label]), [[id, 'not_verified']]);
+  assert.deepEqual(reins(b, ['status']).json.metrics.disputed, { not_verified: 1 });
+});
+
 test('cli: the config gives the time limit of a check script, and the answer names the limit', () => {
   const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
   const check = path.join(b.root, 'project/check/tests.sh');

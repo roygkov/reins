@@ -37,6 +37,7 @@ export type Runtime = {
   projectPackDir?: string; // `.reins` of the repository of the client, also when it does not exist yet
   memoryDir?: string; // the directory of the memory records; absent: inside the state directory
   clientPaths?: string[]; // patterns of the paths of the client settings that register the harness
+  uptimeMs?: () => number; // the time since the start of the process of a hook: the cost of one decision
   notify?: string[]; // the command of the machine that shows a notice to the human; `{text}` is the notice
   runner?: string[]; // the command of the machine that starts a client for one task, with its arguments
   memoryCommit?: boolean; // the harness commits the directory of the memory records after a change
@@ -523,6 +524,25 @@ export function raiseLevel(rt: Runtime, id: string): { task: Task } | { error: '
 
 // Changes a task under its lock, outside the task loop: what the harness notes about the task
 // (who holds it, which executors run). null: the task is unknown or the change gave nothing.
+// The human says that the result of a closed task was wrong: a fact of the journal, once for a
+// task. The task stays closed with its label: the fact counts the results that a check or a human
+// accepted and that were not right.
+export function disputeResult(rt: Runtime, id: string): { task: Task; first: boolean } | { error: 'unknown_task' | 'busy' | 'not_closed' } {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const r = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    if (task === null) return 'unknown_task' as const;
+    if (task.state !== 'closed') return 'not_closed' as const;
+    if (task.disputed !== undefined) return { task, first: false };
+    const next: Task = { ...task, disputed: new Date().toISOString() };
+    writeAtomic(taskFile(rt, id), next);
+    return { task: next, first: true };
+  });
+  if (typeof r === 'string') return { error: r };
+  if (r.first) record(rt, r.task, [{ kind: 'task.result_disputed', data: { label: r.task.label ?? 'not_verified' } }]);
+  return r;
+}
+
 export function mutateTask(rt: Runtime, id: string, change: (task: Task) => Task | null): Task | null {
   if (!TASK_ID.test(id)) return null;
   const r = withLock(rt, id, () => {
@@ -784,13 +804,15 @@ export function probeCheck(rt: Runtime, id: string, text: string | null): Probed
   const unbound = task.manifest?.done.unbound === true;
   const root = unbound ? null : task.root ?? sourceRoot(rt, task) ?? (rt.workDir !== undefined && path.isAbsolute(rt.workDir) ? rt.workDir : null);
   const workBefore = root === null ? null : workState(root);
+  const probeFrom = Date.now();
   let answer: Answer = kind === 'citations' ? citations(rt, task, text ?? '') : scriptCheck(rt, task, file);
+  const probeMs = Date.now() - probeFrom;
   const work = root === null ? null : workState(root);
   if (workBefore !== null && work !== workBefore) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
   if (answer.result === 'PASS' && work === null && !unbound && kind !== 'citations') answer = { result: 'none', reason: 'no_work', n: 0, faults: [] };
   fs.rmSync(file, { force: true });
   const soaks = task.manifest?.done.soak_minutes !== undefined;
-  const detail: Record<string, string | number> = { probe: 1, ...(soaks ? {} : { report: text === null ? 'none' : crypto.createHash('sha256').update(text).digest('hex').slice(0, 12), ...(version !== null ? { check: version.slice(0, 12) } : {}) }), ...(answer.reason !== undefined ? { reason: answer.reason } : {}) };
+  const detail: Record<string, string | number> = { probe: 1, ms: probeMs, ...(soaks ? {} : { report: text === null ? 'none' : crypto.createHash('sha256').update(text).digest('hex').slice(0, 12), ...(version !== null ? { check: version.slice(0, 12) } : {}) }), ...(answer.reason !== undefined ? { reason: answer.reason } : {}) };
   const row: RowDraft = answer.result === 'none' ? { kind: 'check.no_answer', data: { ...detail, check_kind: kind } } : { kind: 'check.answered', data: { ...detail, result: answer.result, check_kind: kind }, ...(work !== null ? { fp: work } : {}) };
   // A red answer: the files of the check are protected from now on.
   const after = answer.result === 'PASS' ? task : mutateTask(rt, id, (now) => (now.red === true ? null : { ...now, red: true })) ?? loadTask(rt, id) ?? task;
@@ -820,7 +842,9 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   const unbound = before.manifest?.done.unbound === true;
   const root = unbound ? null : before.root ?? sourceRoot(rt, before);
   const workBefore = root === null ? null : workState(root);
+  const checkFrom = Date.now();
   let answer: Answer = text === null ? { result: 'none', reason: 'no_source', n: 0, faults: [] } : before.manifest?.done.kind === 'citations' ? citations(rt, before, text) : scriptCheck(rt, before);
+  const checkMs = Date.now() - checkFrom;
   const work = root === null ? null : workState(root);
   // The work changed while the check ran: nothing says which work the answer is about.
   if (workBefore !== null && work !== workBefore) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
@@ -833,6 +857,8 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   // The second answer of a soak is about the work and the check of the first: a soak shows that one state held over the term.
   if (before.soak !== undefined && answer.result === 'PASS' && ((work ?? undefined) !== before.work || (version ?? undefined) !== before.check)) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
   const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
+  // How long the check ran: the wait of a task between its report and its answer.
+  detail.ms = checkMs;
   // A check of several parts: how many parts ran and how many did not pass. The names stay in the answer for the agent.
   if (before.manifest?.done.checks !== undefined) {
     detail.parts = before.manifest.done.checks.length;

@@ -318,8 +318,10 @@ test('runtime: a task file with a broken shape is no task', () => {
   assert.deepEqual(applyEvent(rt, opened.task.id, { type: 'expire' }, 'harness'), { error: 'unknown_task' });
 });
 
+// The fingerprint of the report and the time of the check change from run to run: the time is a number.
 const withoutReport = (data: Record<string, unknown> | undefined): Record<string, unknown> => {
-  const { report: _, ...rest } = data ?? {};
+  const { report: _, ms, ...rest } = data ?? {};
+  assert.equal(typeof ms, 'number', 'a row of a check carries the time of the check');
   return rest;
 };
 

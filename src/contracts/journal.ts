@@ -15,7 +15,7 @@ export type Source = (typeof SOURCES)[number];
 export const EVENT_KINDS = [
   // the loop
   'task.opened', 'task.kind_decided', 'task.contract_proposed', 'task.contract_approved', 'task.prepared', 'task.skipped',
-  'task.started', 'task.report_submitted', 'task.returned', 'task.waiting_human', 'task.human_decision', 'task.closed',
+  'task.started', 'task.report_submitted', 'task.returned', 'task.waiting_human', 'task.human_decision', 'task.closed', 'task.result_disputed',
   // the policy
   'policy.decision', 'policy.basis', 'policy.envelope_opened', 'policy.envelope_closed', 'policy.action_deferred',
   'policy.deferred_resolved', 'policy.protected_attempt',
@@ -29,7 +29,7 @@ export const EVENT_KINDS = [
   'craft.pattern_found', 'craft.proposal_created', 'craft.proposal_resolved', 'craft.effect_measured',
   // the harness itself
   'harness.failure', 'harness.step_timeout', 'harness.client_shape_changed', 'harness.client_level_detected',
-  'harness.barriers_off', 'harness.packs_merged', 'harness.pack_changed', 'harness.manifest_rejected',
+  'harness.barriers_off', 'harness.packs_merged', 'harness.pack_changed', 'harness.manifest_rejected', 'harness.context_given',
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
@@ -84,6 +84,8 @@ type FieldSpec = readonly string[] | 'number' | 'token';
 const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'task.kind_decided': { kind: TASK_KINDS, reason: TASK_KIND_REASONS },
   'task.closed': { label: RESULT_LABELS },
+  // The human says that an accepted result was wrong: the label is the one that the result had.
+  'task.result_disputed': { label: RESULT_LABELS },
   'policy.decision': { outcome: OUTCOMES, action_kind: ACTION_KINDS, env: 'token' },
   'policy.basis': { layer: LAYERS, rule: 'token' },
   'task.prepared': { outputs: 'number', bytes: 'number' },
@@ -116,6 +118,8 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'check.answered': { result: CHECK_RESULTS, check_kind: DONE_KINDS },
   'executor.cost': { tokens: 'number', ms: 'number', calls: 'number' },
   'harness.failure': { where: 'token' },
+  // A text that a hook of the client gave to the agent: where (the start of a session, a request, after an action) and its size.
+  'harness.context_given': { where: 'token', bytes: 'number' },
 };
 
 export function sourceOf(kind: EventKind): Source {

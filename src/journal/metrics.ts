@@ -18,7 +18,25 @@ export type Metrics = {
   // What the tools of the connectors gave back: the calls and the bytes of each tool, the largest
   // sum first. The tools of the client itself write no row, so they are not here.
   tool_output: Record<string, { n: number; bytes: number }>;
+  // The questions that the human saw, by the rule that asked, the most asked first: how many were
+  // asked and how many got "yes". A rule where every answer is "yes" asks for nothing.
+  questions: Record<string, { asked: number; yes: number }>;
+  // The cost in time: one decision of the hook before an action (from the start of its process)
+  // and one run of the done check. `n` counts the rows that carry a time.
+  timing: { hook_ms: Spread; check_ms: Spread };
+  // The text that the hooks gave to the agent, by the place: it stays in the context of a session.
+  context: Record<string, { n: number; bytes: number }>;
+  // The results that a human said were wrong, by the label that the result had.
+  disputed: Record<string, number>;
 };
+export type Spread = { n: number; p50: number | null; p95: number | null; max: number | null };
+
+function spread(values: number[]): Spread {
+  if (values.length === 0) return { n: 0, p50: null, p95: null, max: null };
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)] ?? 0;
+  return { n: sorted.length, p50: at(0.5), p95: at(0.95), max: sorted[sorted.length - 1] ?? 0 };
+}
 
 // The rows of one project. A row that an adapter writes before it knows the project (the
 // project `p0`: an input of a hook that cannot be read) belongs to no project.
@@ -32,7 +50,15 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0 },
     tool_output: {},
+    questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
   };
+  const asked = new Map<string, { asked: number; yes: number }>();
+  const question = (rule: string): { asked: number; yes: number } => asked.get(rule) ?? (asked.set(rule, { asked: 0, yes: 0 }), asked.get(rule) as { asked: number; yes: number });
+  // A decision "ask" names its rule in the basis row that follows it for the same task and session.
+  const waiting = new Set<string>();
+  const place = (row: JournalRow): string => `${row.session ?? ''} ${row.task ?? ''}`;
+  const hookMs: number[] = [];
+  const checkMs: number[] = [];
   const outputs = new Map<string, { n: number; bytes: number }>();
   const answers = new Map<string, Set<string>>();
   const scenario = (name: string): Metrics['scenarios'][string] => (m.scenarios[name] ??= { opened: 0, accepted: 0, returns: 0 });
@@ -62,6 +88,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
           const key = `${row.scenario ?? ''} ${row.fp} ${data.report} ${typeof data.check === 'string' ? data.check : ''}`;
           answers.set(key, (answers.get(key) ?? new Set()).add(data.result));
         }
+        if (typeof data.ms === 'number') checkMs.push(data.ms);
         // A check before the report accepts nothing: the counts of the checks are of reports.
         if (data.probe === 1) break;
         if (data.result === 'PASS') {
@@ -70,18 +97,44 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         } else m.checks.FAIL += 1;
         break;
       case 'check.no_answer':
+        if (typeof data.ms === 'number') checkMs.push(data.ms);
         if (data.probe === 1) break;
         m.checks.none += 1;
         break;
       case 'policy.decision': {
         const o = data.outcome;
         if (o === 'allow' || o === 'ask' || o === 'defer' || o === 'deny') m.decisions[o] += 1;
+        if (typeof data.ms === 'number') hookMs.push(data.ms);
+        // A question that no human saw is not a question to the human.
+        if (o === 'ask' && data.unshown !== 1) waiting.add(place(row));
+        else waiting.delete(place(row));
         break;
       }
+      case 'policy.basis':
+        if (waiting.delete(place(row)) && typeof data.rule === 'string') question(data.rule).asked += 1;
+        break;
       case 'policy.protected_attempt':
         m.protected_attempts += 1;
         if (data.outcome === 'ask' || data.outcome === 'deny') m.protected[data.outcome] += 1;
+        if (typeof data.ms === 'number') hookMs.push(data.ms);
+        if (data.outcome === 'ask' && data.unshown !== 1 && typeof data.rule === 'string') question(data.rule).asked += 1;
         break;
+      case 'task.human_decision':
+        // The "yes" of the human to a question about one action names the rule of the question.
+        if (data.decision === 'answered' && typeof data.rule === 'string') question(data.rule).yes += 1;
+        break;
+      case 'task.result_disputed': {
+        const label = String(data.label ?? 'unknown');
+        m.disputed[label] = (m.disputed[label] ?? 0) + 1;
+        break;
+      }
+      case 'harness.context_given': {
+        if (typeof data.where !== 'string' || typeof data.bytes !== 'number') break;
+        const at = (m.context[data.where] ??= { n: 0, bytes: 0 });
+        at.n += 1;
+        at.bytes += data.bytes;
+        break;
+      }
       case 'harness.failure':
         m.failures += 1;
         break;
@@ -113,6 +166,8 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
   }
   for (const [tool, at] of [...outputs].sort((a, b) => b[1].bytes - a[1].bytes || a[0].localeCompare(b[0]))) m.tool_output[tool] = at;
   for (const results of answers.values()) if (results.has('PASS') && results.has('FAIL')) m.unstable_checks += 1;
+  for (const [rule, at] of [...asked].sort((a, b) => b[1].asked - a[1].asked || a[0].localeCompare(b[0]))) m.questions[rule] = at;
+  m.timing = { hook_ms: spread(hookMs), check_ms: spread(checkMs) };
   return m;
 }
 

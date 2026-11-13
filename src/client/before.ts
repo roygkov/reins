@@ -313,7 +313,7 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     // A refusal of the gate stays a refusal: the question about a path of the harness does not soften it.
     // `reins stop` is the word of the human. The agent can type the command, so the client asks.
     // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire\s+run)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+    const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire\s+run)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
     if (shell.result?.decision !== 'deny') {
       // The parse of the command says which places it changes: a change of the state, of the memory
       // or of the config is refused, as for a file tool. The match of the text is the second barrier.
@@ -411,7 +411,10 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
     const layer = row.kind === 'policy.basis' ? row.data?.layer : undefined;
     return layer === 'organization' || layer === 'project' || layer === 'person' ? { pack: layer } : {};
   };
-  for (const row of named) rt.journal.write({ ...row, ...pack(row), ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
+  // The cost of the decision: the time since the process of the hook started, when the adapter gives it.
+  const ms = rt.uptimeMs?.();
+  const timed = ms === undefined ? named : named.map((row) => (row.kind === 'policy.decision' || row.kind === 'policy.protected_attempt' ? { ...row, data: { ...row.data, ms } } : row));
+  for (const row of timed) rt.journal.write({ ...row, ...pack(row), ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 
 // A question waits under the call that asked it. The identifier of the call, when the client gives

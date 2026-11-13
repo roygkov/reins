@@ -50,6 +50,7 @@ export type Task = {
   red?: boolean; // the last answer of the check was not PASS: the files of the check are protected
   probes?: number; // the runs of the done check before the report
   widened?: boolean; // the human let a contract task go on past its contract
+  disputed?: string; // the time when the human said that the accepted result was wrong
 };
 
 export type TaskEvent =

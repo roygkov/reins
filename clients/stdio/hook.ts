@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { clientRuntime, loadRuntime } from '../../src/client/config.ts';
+import { errorToken } from '../../src/client/failure.ts';
 import type { ClientTools } from '../../src/client/before.ts';
 import { handleEvent, readEvent, UNREADABLE, type EventReply } from '../../src/client/events.ts';
 
@@ -45,8 +46,10 @@ function run(): EventReply {
     // An event whose parts have an unknown form (no tool, no input): the same fact, with the name of the event.
     if (reply === UNREADABLE || reply.rule === 'adapter.shape') noted('harness.client_shape_changed', { client: 'stdio', event: head.event }, head.cwd);
     return reply;
-  } catch {
-    noted('harness.failure', { where: 'adapter', event: head.event }, head.cwd);
+  } catch (e) {
+    // The kind of the error as a code, never its text.
+    const error = errorToken(e);
+    noted('harness.failure', { where: 'adapter', event: head.event, ...(error !== undefined ? { error } : {}) }, head.cwd);
     // Only the event before an action is a barrier: its failure is a question.
     return head.event === 'before' ? { outcome: 'ask', rule: 'adapter.failure' } : {};
   }

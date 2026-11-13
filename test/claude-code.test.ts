@@ -243,7 +243,10 @@ test('claude-code: a tool that reads and writes is a read when its input says so
   assert.match(ask({ sql: `select ${'a,'.repeat(20000)} 1` }), /default\.write/, 'a text that is too long is not judged');
   // A read of a tool that also writes keeps the environment of the tool.
   const rows = fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
-  assert.deepEqual(rows.find((r) => r.kind === 'policy.decision' && r.data.action_kind === 'read')?.data, { outcome: 'allow', action_kind: 'read', env: 'work', tool: 'mcp__db__query' });
+  // The time of the decision changes from run to run: it is a number of the row.
+  const { ms, ...read } = rows.find((r) => r.kind === 'policy.decision' && r.data.action_kind === 'read')?.data ?? {};
+  assert.equal(typeof ms, 'number');
+  assert.deepEqual(read, { outcome: 'allow', action_kind: 'read', env: 'work', tool: 'mcp__db__query' });
 });
 
 test('claude-code: a condition of a read is checked when the pack is loaded', () => {
@@ -526,6 +529,41 @@ test('claude-code: an adapter that does not load asks the human, and the journal
   const out = spawnSync(process.execPath, [path.join(cache, 'hook.ts'), 'pre'], { input: '{}', env: { ...env, REINS_CONFIG: config }, cwd: b.cwd, encoding: 'utf8' }).stdout;
   assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').length, 4);
+});
+
+test('claude-code: the journal has the time of a decision of the hook and the size of the text given to the agent', () => {
+  const b = box();
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
+  pre(b, 'Read', { file_path: path.join(b.cwd, 'a.ts') });
+  pre(b, 'mcp__tracker__add_comment', { change: '7' });
+  const rows = readJournal(path.join(b.state, 'journal.jsonl'));
+  // The start of a session gave a text: where and how large, never the text itself.
+  const given = rows.filter((r) => r.kind === 'harness.context_given');
+  assert.deepEqual(given.map((r) => [r.data?.where, typeof r.data?.bytes, Object.keys(r.data ?? {}).sort().join(',')]), [['session_start', 'number', 'bytes,where']]);
+  assert.ok((given[0]?.data?.bytes as number) > 0);
+  // Every decision before an action carries the time since the process of the hook started.
+  const decided = rows.filter((r) => r.kind === 'policy.decision' || r.kind === 'policy.protected_attempt');
+  assert.ok(decided.length >= 2);
+  for (const r of decided) assert.ok(typeof r.data?.ms === 'number' && r.data.ms > 0 && r.data.ms < 60_000, JSON.stringify(r.data));
+});
+
+test('claude-code: a failure of the adapter at an event names the kind of the error as a code', () => {
+  const b = box();
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
+  // The place of the questions of the harness is a file, not a directory: the decision about a write breaks.
+  for (const name of ['pending', 'queue', 'sessions']) {
+    fs.rmSync(path.join(b.state, name), { recursive: true, force: true });
+    fs.writeFileSync(path.join(b.state, name), 'not a directory');
+  }
+  const out = pre(b, 'mcp__tracker__add_comment', { change: '7' });
+  assert.equal(decision(out), 'ask');
+  const rows = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure');
+  assert.ok(rows.length >= 1, 'the failure is in the journal');
+  for (const r of rows) {
+    assert.deepEqual([r.data?.where, r.data?.event], ['adapter', 'pre']);
+    assert.equal(typeof r.data?.error, 'string', JSON.stringify(r.data));
+    assert.match(r.data?.error as string, /^(E[A-Z]+|ERR_[A-Z_]+|[A-Z][A-Za-z]*Error)$/);
+  }
 });
 
 test('claude-code: an adapter that loads and breaks outside its guards is a failure of the run', () => {
