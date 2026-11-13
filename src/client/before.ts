@@ -16,7 +16,7 @@ import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, mutateTask,
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession, withSession } from '../core/sessions.ts';
-import { touchedPlaces } from './places.ts';
+import { readsOnly, touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
 import { guardPattern, inputForm } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
@@ -200,13 +200,17 @@ function spellings(p: string): string[] {
 
 // A shell command that names the state, the config or a pack of the harness: the human looks at
 // it. This is a match of the text, not a parse of the command: a relative path gets through.
+// A command that only reads (a closed list of programs, see `readsOnly`) gets no question for a
+// text that names a pack or the code of the harness: a read changes neither. The state, the
+// memory, the config and the paths of the client keep their question.
 function namedInCommand(rt: Runtime, command: string): string | null {
   const names = (p: string): boolean => spellings(p).some((s) => command.includes(s));
+  const reads = readsOnly(command);
   if (names(rt.stateDir)) return 'protect.state';
   if (rt.memoryDir !== undefined && names(rt.memoryDir)) return 'protect.memory';
   if (rt.configFile !== undefined && names(rt.configFile)) return 'protect.config';
-  if (rt.merged.packs.some((p) => names(p.dir)) || (rt.projectPackDir !== undefined && names(rt.projectPackDir)) || /(^|[\s\/="'])\.reins(\/|[\s"']|$)/.test(command)) return 'protect.packs';
-  if ((rt.harnessDirs ?? []).some(names)) return 'protect.harness';
+  if (!reads && (rt.merged.packs.some((p) => names(p.dir)) || (rt.projectPackDir !== undefined && names(rt.projectPackDir)) || /(^|[\s\/="'])\.reins(\/|[\s"']|$)/.test(command))) return 'protect.packs';
+  if (!reads && (rt.harnessDirs ?? []).some(names)) return 'protect.harness';
   // Every word of the command is tested as a path: a relative path after a space or a redirect too.
   const words = command.replace(/['"\\]/g, '').split(/[\s;&|<>()=]+/);
   if ((rt.clientPaths ?? []).some((source) => words.some((w) => new RegExp(source).test(w)))) return 'protect.client';

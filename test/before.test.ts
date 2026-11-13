@@ -232,6 +232,58 @@ test('before: a change of the code of the harness asks the human', () => {
   assert.deepEqual([shell.outcome, shell.rule], ['ask', 'protect.harness']);
 });
 
+test('before: a command that only reads the code of the harness or a pack gets no question', () => {
+  const b = box();
+  const h = path.join(b.root, 'harness');
+  b.rt.harnessDirs = [h];
+  const asks = (command: string): [string, string | undefined] => {
+    const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+    return [r.outcome, r.rule];
+  };
+  // Every part is a program that only reads, with no variable, no substitution and no output file.
+  for (const command of [
+    `cat ${h}/src/a.ts`,
+    `git -C ${h} log --oneline | head -5`,
+    `cd ${h} && git status --short && git diff --stat`,
+    `grep -rn "x" ${h}/src | wc -l`,
+    `sed -n 1,20p ${h}/README.md`,
+    `ls -la ${h} 2>/dev/null`,
+    `find ${h} -name "*.ts" | sort | tail -3`,
+    `jq -c .version ${h}/package.json; echo done`,
+  ]) assert.notEqual(asks(command)[0], 'ask', command);
+  // Anything else that names the harness asks as before.
+  for (const command of [
+    `echo x > ${h}/a.ts`,
+    `cat ${h}/a.ts > ${b.root}/copy.ts`,
+    `python3 ${h}/x.py`,
+    `node ${h}/src/cli.ts status`,
+    `git -C ${h} commit -m x`,
+    `git -C ${h} diff --output=${b.root}/x.patch`,
+    `sed -i s/a/b/ ${h}/a.ts`,
+    `sed -n 'w ${b.root}/out' ${h}/a.ts`,
+    `find ${h} -name "*.ts" -delete`,
+    `find ${h} -exec touch {} +`,
+    `cat $(echo ${h}/a.ts)`,
+    `cat ${h}/a.ts | xargs rm`,
+    `rg --pre cat x ${h}`,
+    `sort -o ${h}/a.ts ${h}/b.ts`,
+    `FOO=1 cat ${h}/a.ts`,
+    `cat ${h}/a.ts; rm -rf "$HOME/x"`,
+    `npx cat ${h}/a.ts`,
+    `sudo cat ${h}/a.ts`,
+    `cat ${h}/list.txt | xargs cat`,
+    `git -C ${h} -c core.pager=less log`,
+  ]) assert.deepEqual(asks(command), ['ask', 'protect.harness'], command);
+  // A pack of the harness: the same rule.
+  const pack = b.rt.merged.packs[0]?.dir;
+  assert.ok(pack !== undefined);
+  assert.notEqual(asks(`cat ${pack}/pack.json`)[0], 'ask');
+  assert.deepEqual(asks(`touch ${pack}/pack.json`), ['ask', 'protect.packs']);
+  assert.deepEqual(asks(`bash ${pack}/check/x.sh`), ['ask', 'protect.packs']);
+  // The state, the memory and the config keep their question for a read.
+  assert.deepEqual(asks(`cat ${h}/a.ts ${b.rt.stateDir}/journal.jsonl`), ['ask', 'protect.state']);
+});
+
 test('before: the answer to a question belongs to the session that asked', () => {
   const b = box();
   const id = open(b);

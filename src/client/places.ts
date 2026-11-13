@@ -91,6 +91,64 @@ function matches(file: string): string[] {
   }
 }
 
+// A command that only reads. The list is closed: a program that is not here, or a form of a
+// program that can write a file or start another program, is not a read. A variable, a
+// substitution, an assignment before the command or an output into a file is not a read either:
+// what such a command does is not known from its text. The answer is used only to drop the
+// question about a text that names the code of the harness or a pack: the state, the memory and
+// the config keep their question.
+const READERS = new Set(['cat', 'head', 'tail', 'ls', 'wc', 'stat', 'diff', 'cmp', 'cut', 'tr', 'nl', 'basename', 'dirname', 'realpath', 'readlink', 'pwd', 'cd', 'echo', 'printf', 'true', 'false', 'test', '[', 'which', 'du', 'column', 'grep', 'egrep', 'fgrep', 'rg', 'jq', 'sort', 'uniq', 'find', 'sed', 'git']);
+const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'rev-list', 'ls-files', 'ls-tree', 'blame', 'describe', 'shortlog', 'cat-file', 'merge-base']);
+const FIND_ACTS = new Set(['-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprint0', '-fprintf', '-fls']);
+type FullSegment = Segment & { vars?: boolean[]; env?: Record<string, string>; text?: string };
+
+function readerSegment(seg: FullSegment): boolean {
+  if (seg.argv.length === 0) return false;
+  if ((seg.vars ?? []).some(Boolean) || Object.keys(seg.env ?? {}).length > 0) return false;
+  if (seg.redirects.some((target) => target !== '/dev/null')) return false;
+  const name = base(seg.argv[0] ?? '');
+  if (!READERS.has(name)) return false;
+  // The parse drops a wrapper (`npx`, `sudo`, `xargs`, `uv run`): the program that the shell
+  // starts is the wrapper, and `npx cat` runs a package, not `cat`. The first word of the text
+  // of the part must be the reader itself.
+  if (base((seg.text ?? '').trim().split(/\s+/)[0] ?? '') !== name) return false;
+  let args = seg.argv.slice(1);
+  if (name === 'git') {
+    // `-C <dir>` and `--no-pager` only: `-c` sets a config value, and a config value can name a program.
+    for (;;) {
+      if (args[0] === '-C' && args[1] !== undefined) args = args.slice(2);
+      else if (args[0] === '--no-pager') args = args.slice(1);
+      else break;
+    }
+    const sub = args[0] ?? '';
+    const rest = args.slice(1);
+    if (rest.some((a) => a.startsWith('--output') || a === '--ext-diff')) return false;
+    if (GIT_READS.has(sub)) return true;
+    if (sub === 'remote') return rest.length === 0 || (rest.length === 1 && rest[0] === '-v') || (rest.length === 2 && rest[0] === 'get-url');
+    if (sub === 'branch') return rest.every((a) => ['--show-current', '-a', '-r', '-v', '-vv', '--list'].includes(a));
+    return false;
+  }
+  if (name === 'find') return !args.some((a) => FIND_ACTS.has(a));
+  // `sed` only prints a range of lines: any other program of `sed` can write a file or run a command.
+  if (name === 'sed') return args[0] === '-n' && /^\d+(,\d+)?p$/.test(args[1] ?? '') && args.slice(2).every((a) => !a.startsWith('-'));
+  if (name === 'sort') return !args.some((a) => /^-[A-Za-z]*o/.test(a) || a.startsWith('--o') || a.startsWith('--compress-program') || a.startsWith('--files0-from'));
+  // `uniq <in> <out>` writes its second place.
+  if (name === 'uniq') return args.every((a) => a.startsWith('-'));
+  if (name === 'rg') return !args.some((a) => a.startsWith('--pre') || a.startsWith('--hostname-bin'));
+  return true;
+}
+
+export function readsOnly(command: string): boolean {
+  if (/[$`]|[<>]\(/.test(command)) return false;
+  let segments: FullSegment[];
+  try {
+    segments = parse(command) as FullSegment[];
+  } catch {
+    return false;
+  }
+  return segments.length > 0 && segments.every(readerSegment);
+}
+
 // The places of a command. `every`: a relative path is read from every directory that the command
 // was in, not only from the last one: a `cd` inside a subshell does not move the parts after it.
 export function commandPlaces(command: string, cwd: string, home: string, every = false): Place[] {
