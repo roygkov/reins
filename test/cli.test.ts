@@ -56,7 +56,9 @@ function box(options: { flag?: boolean; instructions?: string | null; manifest?:
 function reins(b: Box | null, args: string[], input?: string): Out {
   const env: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: b?.root ?? SB };
   if (b !== null) env.REINS_CONFIG = b.config;
-  const p = spawnSync(process.execPath, [CLI, ...args], { env, input: input ?? '', encoding: 'utf8' });
+  // The command runs in the directory of the box, never in this repository: the harness reads the
+  // state of the directory where it runs, and an edit of the repository during a test is not a part of the test.
+  const p = spawnSync(process.execPath, [CLI, ...args], { env, input: input ?? '', encoding: 'utf8', cwd: b?.tree ?? SB });
   let json: unknown = null;
   try {
     json = JSON.parse(p.stdout);

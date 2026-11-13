@@ -138,7 +138,8 @@ test('memory: the start of a session names the records that wait for a veto', ()
 });
 
 function reins(b: Box, args: string[]): { code: number | null; json: any } {
-  const p = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config } });
+  // The command runs in the directory of the box, never in this repository.
+  const p = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd: b.cwd, env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config } });
   return { code: p.status, json: JSON.parse(p.stdout) };
 }
 
