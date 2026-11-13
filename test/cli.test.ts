@@ -531,6 +531,32 @@ test('cli: a check script that gives no answer says why: the exit code and the e
   assert.deepEqual(rows.map((d) => [d.reason, d.cause, d.stderr]), [['check_failed', 'exit', undefined], ['check_failed', 'bad_json', undefined], ['check_failed', 'bad_result', undefined], ['check_failed', 'exit', undefined]]);
 });
 
+test('cli: a check script that answers FAIL says why: the end of its error text', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 4 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  const answer = (result: string, note: string): string => `#!/bin/sh\ncat >/dev/null\n${note}printf '{"outputs":{"result":"${result}"},"flags":{}}'\n`;
+  fs.writeFileSync(check, answer('FAIL', 'echo "this task did not change: m0123456789" >&2\n'), { mode: 0o755 });
+  const red = reins(b, ['report', id, '-'], 'red').json.answer;
+  assert.deepEqual([red.result, red.reason, red.why], ['FAIL', undefined, [{ name: 'tests', cause: 'fail', stderr: 'this task did not change: m0123456789' }]]);
+  // A FAIL without an error text has no cause to name.
+  fs.writeFileSync(check, answer('FAIL', ''), { mode: 0o755 });
+  const silent = reins(b, ['report', id, '-'], 'red').json.answer;
+  assert.deepEqual([silent.result, silent.why], ['FAIL', undefined]);
+  // Only the end of a long error text is kept.
+  fs.writeFileSync(check, answer('FAIL', 'i=0; while [ $i -lt 400 ]; do echo "line $i of the error text" >&2; i=$((i+1)); done\n'), { mode: 0o755 });
+  const long = reins(b, ['report', id, '-'], 'red').json.answer.why[0];
+  assert.ok(long.stderr.length <= 2000 && long.stderr.endsWith('line 399 of the error text'), long.stderr.slice(-60));
+  // A PASS says nothing more: the error text of a script that passed is not a cause.
+  fs.writeFileSync(check, answer('PASS', 'echo "a note of the script" >&2\n'), { mode: 0o755 });
+  const green = reins(b, ['report', id, '-'], 'green').json.answer;
+  assert.deepEqual([green.result, green.why], ['PASS', undefined]);
+  // The journal has neither the cause nor the text of an answer.
+  const rows = fs.readFileSync(path.join(b.root, 'state/journal.jsonl'), 'utf8').split('\n').filter((l) => l.includes('check.answered')).map((l) => JSON.parse(l).data);
+  assert.deepEqual(rows.map((d) => [d.result, d.cause, d.stderr]), [['FAIL', undefined, undefined], ['FAIL', undefined, undefined], ['FAIL', undefined, undefined], ['PASS', undefined, undefined]]);
+});
+
 test('cli: the config gives the time limit of a check script, and the answer names the limit', () => {
   const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
   const check = path.join(b.root, 'project/check/tests.sh');

@@ -36,8 +36,9 @@ export type Answer = {
   faults: { n: number; fault: ItemFault }[]; // at most one for an item, `n` counts from 1
   parts?: { name: string; result: 'FAIL' | 'none' }[]; // a check of several parts: each part that did not pass
   // A check script that gave no answer: its name and the cause. `exit` and `stderr` are of a script
-  // that ran and failed; `limit_s` is the time limit that it passed. The text is for the agent and
-  // the human: the journal has only the cause.
+  // that ran and failed; `limit_s` is the time limit that it passed. A script that answered FAIL and
+  // wrote an error text has the cause `fail` and the end of that text. The text is for the agent
+  // and the human: the journal has only the cause of a script without an answer.
   why?: { name: string; cause: string; exit?: number; stderr?: string; limit_s?: number }[];
 };
 

@@ -34,7 +34,8 @@ function noteOf(text: string | null): { exit?: number; stderr?: string } {
 
 export type CollectReason = 'exit' | 'timeout' | 'too_large' | 'bad_json' | 'bad_shape' | 'missing_output' | 'missing_flag' | 'no_sandbox';
 export type CollectResult =
-  | { ok: true; outputs: Record<string, unknown>; flags: Record<string, boolean>; bytes: number }
+  // `stderr`: the end of the error text of a script that is done, when it wrote one.
+  | { ok: true; outputs: Record<string, unknown>; flags: Record<string, boolean>; bytes: number; stderr?: string }
   // `exit`, `stderr`: the exit code of the script and the end of its error text, when the script ran.
   | { ok: false; reason: CollectReason; exit?: number; stderr?: string };
 
@@ -138,5 +139,6 @@ export function runCollect(file: string, input: { inputs: Record<string, string 
   }
   if (Object.keys(flags).some((k) => !opts.flags.includes(k))) return { ok: false, reason: 'bad_shape' };
 
-  return { ok: true, outputs: { ...outputs }, flags: checked, bytes: Buffer.byteLength(r.stdout) };
+  const said = noteOf(r.stderr).stderr;
+  return { ok: true, outputs: { ...outputs }, flags: checked, bytes: Buffer.byteLength(r.stdout), ...(said !== undefined ? { stderr: said } : {}) };
 }

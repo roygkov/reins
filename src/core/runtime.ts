@@ -703,7 +703,7 @@ function scriptCheck(rt: Runtime, task: Task, report: string = reportFile(rt, ta
   const why = results.flatMap((p) => (p.why === undefined ? [] : [{ name: p.name, ...p.why }]));
   if (names.length === 1 && task.manifest?.done.checks === undefined) {
     const one = results[0];
-    return one === undefined || one.result === 'none' ? { result: 'none', reason: one?.reason ?? 'no_check', n: 0, faults: [], ...(why.length > 0 ? { why } : {}) } : { result: one.result, n: 0, faults: [] };
+    return one === undefined || one.result === 'none' ? { result: 'none', reason: one?.reason ?? 'no_check', n: 0, faults: [], ...(why.length > 0 ? { why } : {}) } : { result: one.result, n: 0, faults: [], ...(why.length > 0 ? { why } : {}) };
   }
   const bad = results.filter((p) => p.result !== 'PASS').map((p) => ({ name: p.name, result: p.result as 'FAIL' | 'none' }));
   // Every part without an answer has no script: the cause is the pack, not a run of a script.
@@ -736,7 +736,9 @@ function partCheck(rt: Runtime, task: Task, name: string, report: string): { res
     return { result: 'none', reason: 'check_failed', why: { cause: r.reason, ...(r.reason === 'exit' && r.exit !== undefined ? { exit: r.exit } : {}), ...(r.reason === 'exit' && r.stderr !== undefined ? { stderr: r.stderr } : {}) } };
   }
   const result = r.outputs.result;
-  return result === 'PASS' || result === 'FAIL' ? { result } : { result: 'none', reason: 'check_failed', why: { cause: 'bad_result' } };
+  // A script that answers FAIL says why on its error output: the end of that text goes to the agent.
+  if (result === 'FAIL') return { result, ...(r.stderr !== undefined ? { why: { cause: 'fail', stderr: r.stderr } } : {}) };
+  return result === 'PASS' ? { result } : { result: 'none', reason: 'check_failed', why: { cause: 'bad_result' } };
 }
 
 // `bad_form`: a text report without a section that the manifest names; `missing` lists them.
@@ -845,8 +847,9 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
     detail.report = crypto.createHash('sha256').update(text).digest('hex').slice(0, 12);
     if (version !== null) detail.check = version.slice(0, 12);
   }
-  // The cause of one script without an answer is a code of the journal; its text is not.
-  if (answer.why?.length === 1 && answer.why[0] !== undefined) detail.cause = answer.why[0].cause;
+  // The cause of one script without an answer is a code of the journal; its text is not. A script
+  // that answered FAIL has a result in the journal, not a cause.
+  if (answer.result === 'none' && answer.why?.length === 1 && answer.why[0] !== undefined) detail.cause = answer.why[0].cause;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const r = withLock(rt, id, (): Checked => {
       const task = loadTask(rt, id);
