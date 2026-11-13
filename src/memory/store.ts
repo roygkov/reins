@@ -65,6 +65,16 @@ export type NewRecord = {
   next?: string; status?: string; // of a case
   unverified?: string; // of a state; a state has `next` too
 };
+// A text that the memory does not take: which field, why, and the limit with the length of the text.
+// `too_long` names `max` and `length`; `line_break` is a field of one line that has more.
+export type TextFault = { field: 'text' | 'next' | 'status' | 'unverified'; cause: 'empty' | 'not_text' | 'too_long' | 'line_break'; max?: number; length?: number };
+function badText(field: TextFault['field'], value: unknown, max: number, oneLine = false): ({ ok: false; error: 'bad_text' } & TextFault) | null {
+  if (typeof value !== 'string') return { ok: false, error: 'bad_text', field, cause: 'not_text' };
+  if (value.trim() === '') return { ok: false, error: 'bad_text', field, cause: 'empty' };
+  if (value.length > max) return { ok: false, error: 'bad_text', field, cause: 'too_long', max, length: value.length };
+  if (oneLine && /[\r\n]/.test(value)) return { ok: false, error: 'bad_text', field, cause: 'line_break' };
+  return null;
+}
 export type AddError = 'bad_type' | 'bad_text' | 'bad_path' | 'human_only' | 'not_allowed' | 'no_reason' | 'unknown_record';
 
 const VETO_DAYS = 7;
@@ -314,10 +324,11 @@ function mayWrite(rt: Runtime, id: string | undefined, type: RecordType): { clas
   return memory;
 }
 
-export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now()): { ok: true; record: MemoryRecord } | { ok: false; error: AddError } {
+export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now()): { ok: true; record: MemoryRecord } | ({ ok: false; error: AddError } & Partial<TextFault>) {
   if (!(RECORD_TYPES as readonly string[]).includes(input.type)) return { ok: false, error: 'bad_type' };
   const type = input.type as RecordType;
-  if (typeof input.text !== 'string' || input.text.trim() === '' || input.text.length > MAX_TEXT) return { ok: false, error: 'bad_text' };
+  const text = badText('text', input.text, MAX_TEXT);
+  if (text !== null) return text;
   if (!Array.isArray(input.paths) || input.paths.length > MAX_PATHS || input.paths.some(badPath)) return { ok: false, error: 'bad_path' };
   let pending = false;
   if (input.by === 'agent') {
@@ -337,8 +348,10 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     if (value === undefined) continue;
     const fits = key === 'next' ? type === 'case' || type === 'state' : key === 'status' ? type === 'case' : type === 'state';
     if (!fits) return { ok: false, error: 'bad_type' };
-    if (typeof value !== 'string') return { ok: false, error: 'bad_text' };
-    if (type === 'case' ? value.length > MAX_STEP || /[\r\n]/.test(value) : value.length > MAX_STATE_PART) return { ok: false, error: 'bad_text' };
+    if (typeof value !== 'string') return { ok: false, error: 'bad_text', field: key, cause: 'not_text' };
+    // An empty part is not written: only its length and its lines are tested here.
+    const part = value.trim() === '' ? null : type === 'case' ? badText(key, value, MAX_STEP, true) : badText(key, value, MAX_STATE_PART);
+    if (part !== null) return part;
   }
   // A decision without its reason is of no use in a month (harness-memory, page 2, rule 1).
   if (type === 'decision' && (input.because === undefined || input.because.trim() === '')) return { ok: false, error: 'no_reason' };
@@ -557,12 +570,13 @@ function caseFor(rt: Runtime, id: string, who: Who, now: number): { ok: true; re
 }
 
 // A step of a case: its next step is another one now, and the count of carried days starts again.
-export function stepCase(rt: Runtime, id: string, change: Who & { next: string; status?: string }, now: number = Date.now()): { ok: true; record: MemoryRecord } | { ok: false; error: CaseError } {
+export function stepCase(rt: Runtime, id: string, change: Who & { next: string; status?: string }, now: number = Date.now()): { ok: true; record: MemoryRecord } | ({ ok: false; error: CaseError } & Partial<TextFault>) {
   const found = caseFor(rt, id, change, now);
   if (!found.ok) return found;
   const next = change.next.trim();
   const status = change.status?.trim();
-  if (next === '' || next.length > MAX_STEP || /[\r\n]/.test(next) || (status !== undefined && (status.length > MAX_STEP || /[\r\n]/.test(status)))) return { ok: false, error: 'bad_text' };
+  const fault = badText('next', next, MAX_STEP, true) ?? (status === undefined || status === '' ? null : badText('status', status, MAX_STEP, true));
+  if (fault !== null) return fault;
   const { carried_day: _, ...rest } = found.record;
   // The step is a proof that the case is alive: its term starts again.
   const record = { ...rest, next: scrub(next), carried: 0, verified: new Date(now).toISOString(), ...(status !== undefined && status !== '' ? { status: scrub(status) } : {}) };

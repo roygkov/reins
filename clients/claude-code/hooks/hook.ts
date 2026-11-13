@@ -35,17 +35,21 @@ try {
   }
   loaded = true;
   adapter.main(mode);
-} catch {
+} catch (e) {
+  // The kind of the error as a code: the code of the loader, or the name of the error. Its text
+  // can hold a path or a line of a file, so it does not go to the journal.
+  const named = typeof (e as { code?: unknown }).code === 'string' ? (e as { code: string }).code : e instanceof Error ? e.name : '';
+  const error = /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(named) ? named : undefined;
   // The failure is a fact of the journal, when a core can still write it. The row decides
   // nothing, so the core of the source can write it where the core beside this file cannot.
   try {
-    let writer: { loadFailed: (event: 'load' | 'run') => void };
+    let writer: { loadFailed: (event: 'load' | 'run', error?: string) => void };
     try {
       writer = await import('./failed.ts');
     } catch {
       writer = await import(fromSource('failed.ts'));
     }
-    writer.loadFailed(loaded ? 'run' : 'load');
+    writer.loadFailed(loaded ? 'run' : 'load', error);
   } catch {
     // the journal cannot be reached either
   }

@@ -7,6 +7,7 @@
 // Rule of a failure: a doubt about a write goes to the human, a doubt about a read passes.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { afterAction, beforeAction, type ClientTools, type Reply, type ToolCall } from '../../../src/client/before.ts';
 import { clientRuntime, loadRuntime } from '../../../src/client/config.ts';
 import { noteCost } from '../../../src/client/cost.ts';
@@ -23,6 +24,42 @@ const TOOLS = JSON.parse(fs.readFileSync(new URL('../tools.json', import.meta.ur
 const CLIENT_PATHS = ['(^|/)\\.claude/(settings[^/]*\\.json|plugins(/|$))'];
 // The code of the harness and of this adapter: a change of it changes every decision.
 const HARNESS_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+
+// The copy of the plugin that the client runs (the client names its directory) against the plugin
+// of this harness. The copy keeps its own entry of the hooks and its own list of the events: they
+// change only with an update of the plugin. A copy that is behind gets no word about it from the
+// client, so the start of a session says it. The answer is a line for the agent, or nothing.
+export function staleCopy(copy: string | undefined, own: string = path.join(HARNESS_ROOT, 'clients', 'claude-code')): string | null {
+  if (copy === undefined || copy === '') return null;
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  if (real(copy) === real(own)) return null;
+  const text = (dir: string, name: string): string | null => {
+    try {
+      return fs.readFileSync(path.join(dir, name), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const version = (dir: string): string => {
+    try {
+      const v = (JSON.parse(text(dir, '.claude-plugin/plugin.json') ?? '') as { version?: unknown }).version;
+      return typeof v === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(v) ? v : 'unknown';
+    } catch {
+      return 'unknown';
+    }
+  };
+  const [theirs, ours] = [version(copy), version(own)];
+  const files = ['hooks/hook.ts', 'hooks/hooks.json'].filter((name) => text(copy, name) !== text(own, name));
+  if (theirs === ours && files.length === 0) return null;
+  if (theirs !== ours) return `reins: the client runs the plugin ${theirs}, the harness has the plugin ${ours}. Say this to the human at the start of your answer: run \`claude plugin update reins@reins\` and start the client again.`;
+  return `reins: the client runs a copy of the plugin ${theirs} where ${files.join(' and ')} differ from the harness. Say this to the human at the start of your answer: raise \`version\` in plugin.json, run \`claude plugin update reins@reins\` and start the client again.`;
+}
 
 function say(decision: 'allow' | 'ask' | 'deny', reason: string): void {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision, permissionDecisionReason: reason } }));
@@ -289,6 +326,8 @@ function session(mode: string): void {
     }
     if (mode === 'session-start') {
       const { context } = sessionStart(rt, e);
+      const stale = staleCopy(process.env.CLAUDE_PLUGIN_ROOT);
+      if (stale !== null) context.unshift(stale);
       process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context.join('\n') } }));
     } else if (mode === 'prompt') {
       const asked = humanRequest(rt, e);

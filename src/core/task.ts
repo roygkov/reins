@@ -231,7 +231,7 @@ export function step(task: Task, event: TaskEvent): Step {
         const pass: RowDraft = { kind: 'check.answered', data: { ...detail, result: 'PASS', check_kind: done.kind }, ...(event.work !== undefined ? { fp: event.work } : {}) };
         // The soak: the first PASS is not the result. The check answers again after the term.
         if (done.soak_minutes !== undefined && soak === undefined) return { task: { ...green, soak: at + done.soak_minutes * 60_000, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, rows: [{ ...pass, data: { ...pass.data, soak: done.soak_minutes } }] };
-        return accept({ ...green, checked: at, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, labelOf(done.kind), [pass]);
+        return accept({ ...green, checked: at, ...(event.check !== undefined ? { check: event.check } : {}), ...(event.work !== undefined ? { work: event.work } : {}) }, labelOf(done.kind, done.proves), [pass]);
       }
       // No answer means "not ready". The silence of a check is never a success.
       const answer: RowDraft = { ...(event.result === 'FAIL' ? { kind: 'check.answered' as const, data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer' as const, data: { ...detail, check_kind: done.kind } }), ...(event.work !== undefined ? { fp: event.work } : {}) };

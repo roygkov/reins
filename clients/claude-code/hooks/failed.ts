@@ -2,7 +2,8 @@
 // When the core does not load either, nothing can be written: the entry asks the human all the same.
 import { clientRuntime, loadRuntime } from '../../../src/client/config.ts';
 
-export function loadFailed(event: 'load' | 'run'): void {
+// `error`: the code of the error, or its name: a token, never its text.
+export function loadFailed(event: 'load' | 'run', error?: string): void {
   const rt = clientRuntime(loadRuntime(), 'claude_code');
-  rt.journal.write({ kind: 'harness.failure', project: rt.project, data: { where: 'adapter', event } });
+  rt.journal.write({ kind: 'harness.failure', project: rt.project, data: { where: 'adapter', event, ...(error !== undefined ? { error } : {}) } });
 }

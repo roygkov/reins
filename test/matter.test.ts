@@ -72,7 +72,7 @@ test('case: a case keeps its next step and its outer status, and a human can rea
   assert.match(file, /^status: "card: Planned"$/m);
   // A next step is a thing of a case only.
   assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: 'x is slow', paths: [], by: 'human', next: 'y' }, T0), { ok: false, error: 'bad_type' });
-  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'n'.repeat(501) }, T0), { ok: false, error: 'bad_text' });
+  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'n'.repeat(501) }, T0), { ok: false, error: 'bad_text', field: 'next', cause: 'too_long', max: 500, length: 501 });
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
 });
 
@@ -132,7 +132,7 @@ test('case: the agent changes a case only in a task whose manifest lets it write
   assert.ok(note.ok);
   assert.deepEqual(stepCase(b.rt, note.record.id, { next: 'x', by: 'human' }, T0), { ok: false, error: 'bad_type' });
   assert.deepEqual(stepCase(b.rt, 'm0000000000', { next: 'x', by: 'human' }, T0), { ok: false, error: 'unknown_record' });
-  assert.deepEqual(stepCase(b.rt, id, { next: '  ', by: 'human' }, T0), { ok: false, error: 'bad_text' });
+  assert.deepEqual(stepCase(b.rt, id, { next: '  ', by: 'human' }, T0), { ok: false, error: 'bad_text', field: 'next', cause: 'empty' });
 });
 
 test('case: a closed case is out of use, and its file stays', () => {
@@ -265,10 +265,10 @@ test('state: what is not verified is a thing of a state, and an outer status is 
   const b = box();
   assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', unverified: 'x' }, T0), { ok: false, error: 'bad_type' });
   assert.deepEqual(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', status: 'x' }, T0), { ok: false, error: 'bad_type' });
-  assert.deepEqual(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', next: 'n'.repeat(1001) }, T0), { ok: false, error: 'bad_text' });
+  assert.deepEqual(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', next: 'n'.repeat(1001) }, T0), { ok: false, error: 'bad_text', field: 'next', cause: 'too_long', max: 1000, length: 1001 });
   // The next steps of a state are a short list: lines are kept. The next step of a case is one line.
   assert.ok(addRecord(b.rt, { type: 'state', text: 'a state', paths: [], by: 'human', next: 'one\ntwo' }, T0).ok);
-  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'one\ntwo' }, T0), { ok: false, error: 'bad_text' });
+  assert.deepEqual(addRecord(b.rt, { type: 'case', text: 'a case', paths: [], by: 'human', next: 'one\ntwo' }, T0), { ok: false, error: 'bad_text', field: 'next', cause: 'line_break' });
 });
 
 test('state: the start of a session gives the state of the project, whole', () => {

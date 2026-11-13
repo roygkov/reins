@@ -683,6 +683,14 @@ test('ready: a green answer of a script without a fingerprint of the work is no 
   const ok = submitReport(free.rt, fourth.task.id, REPORT);
   assert.ok('step' in ok);
   assert.deepEqual([ok.step.task.state, ok.step.task.work, ok.step.task.root], ['publishing', undefined, undefined]);
+  assert.equal(ok.step.task.label, 'verified_result');
+  // The manifest says that the script proves only the form (a record was written): the label is the lower one.
+  const form = box({ done: { kind: 'command', check: 'tests', retries: 0, unbound: true, proves: 'form' }, check: PASSING });
+  const fifth = openScenario(form.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(fifth.ok);
+  const formed = submitReport(form.rt, fifth.task.id, REPORT);
+  assert.ok('step' in formed);
+  assert.equal(formed.step.task.label, 'verified_form');
 });
 
 test('ready: a result that the human approved holds for the work that the human saw', () => {

@@ -47,7 +47,7 @@ export type Manifest = {
   permissions: { read: string[]; write?: WriteGrant[] };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; unbound?: boolean; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
+  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; unbound?: boolean; proves?: 'form'; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -97,12 +97,14 @@ const TOP = ['manifest', 'version', 'name', 'title', 'package', 'state', 'descri
 const TOP_REQUIRED = ['manifest', 'name', 'title', 'package', 'trigger', 'model', 'permissions', 'done', 'output'] as const;
 
 // The label of the result that the human sees follows the kind of the check, not the manifest text.
-export function labelOf(kind: DoneKind): ResultLabel {
+// `proves`: a script check that proves only the form of the result (a record was written, a file
+// is there), not that the result is right. The manifest can only lower the label this way.
+export function labelOf(kind: DoneKind, proves?: 'form'): ResultLabel {
   switch (kind) {
     case 'command':
     case 'artifact':
     case 'external':
-      return 'verified_result';
+      return proves === 'form' ? 'verified_form' : 'verified_result';
     case 'citations':
       return 'verified_form';
     case 'human':
@@ -372,7 +374,7 @@ export function guardPattern(guard: string): RegExp {
 }
 
 function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'unbound', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
+  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'unbound', 'proves', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
@@ -382,6 +384,12 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
   if (d.unbound !== undefined) {
     if (typeof d.unbound !== 'boolean') r.add('not_in_list', 'done.unbound');
     else if (!needsCheck || d.source !== undefined) r.add('not_allowed', 'done.unbound');
+  }
+  // `proves`: the script proves the form of the result, not the result. Only a script check has
+  // a label to lower, and `form` is the only word.
+  if (d.proves !== undefined) {
+    if (d.proves !== 'form') r.add('not_in_list', 'done.proves');
+    else if (!needsCheck) r.add('not_allowed', 'done.proves');
   }
   // A check of several named parts stands in place of the one name: every part is a script of a pack.
   if (d.checks !== undefined) {

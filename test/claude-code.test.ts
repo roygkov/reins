@@ -295,6 +295,35 @@ test('claude-code: a question that no run of the tool answered is the "no" of th
   assert.equal(decisions(b).length, 1);
 });
 
+test('claude-code: the start of a session says that the copy of the plugin of the client is behind the harness', () => {
+  const b = box();
+  const own = path.join(path.dirname(HOOK), '..');
+  const copyOf = (name: string, change: (dir: string) => void): string => {
+    const dir = path.join(b.root, name);
+    fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
+    fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
+    for (const file of ['hooks/hook.ts', 'hooks/hooks.json', '.claude-plugin/plugin.json']) fs.copyFileSync(path.join(own, file), path.join(dir, file));
+    change(dir);
+    return dir;
+  };
+  const start = (root?: string): string => {
+    const out = run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'), root === undefined ? {} : { CLAUDE_PLUGIN_ROOT: root }).json as { hookSpecificOutput?: { additionalContext?: string } };
+    return out.hookSpecificOutput?.additionalContext ?? '';
+  };
+  // No copy, the plugin of the harness itself, a copy that is the same: no word.
+  assert.doesNotMatch(start(), /claude plugin update/);
+  assert.doesNotMatch(start(own), /claude plugin update/);
+  assert.doesNotMatch(start(copyOf('same', () => {})), /claude plugin update/);
+  // A copy of another version: the first line names both versions and the command.
+  const old = copyOf('old', (dir) => fs.writeFileSync(path.join(dir, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'reins', version: '0.0.1' })));
+  const ours = JSON.parse(fs.readFileSync(path.join(own, '.claude-plugin/plugin.json'), 'utf8')).version;
+  assert.ok(start(old).startsWith(`reins: the client runs the plugin 0.0.1, the harness has the plugin ${ours}.`), start(old).slice(0, 120));
+  assert.match(start(old).split('\n')[0] ?? '', /claude plugin update reins@reins/);
+  // The same version with another entry of the hooks: the update needs a new version first.
+  const edited = copyOf('edited', (dir) => fs.appendFileSync(path.join(dir, 'hooks/hook.ts'), '\n// an older entry\n'));
+  assert.match(start(edited).split('\n')[0] ?? '', /hooks\/hook\.ts differ from the harness.*raise `version`/);
+});
+
 test('claude-code: actions with no hook before them: the human reads it at the stop, once', () => {
   const b = box();
   run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
@@ -481,7 +510,13 @@ test('claude-code: an adapter that does not load asks the human, and the journal
   assert.equal(JSON.parse(run('pre')).hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(run('post'), '');
   const rows = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure');
-  assert.deepEqual(rows.map((r) => [r.data?.where, r.data?.event, r.client]), [['adapter', 'load', 'claude_code'], ['adapter', 'load', 'claude_code']]);
+  // The row names the kind of the error as a code: the cause of a failure is not lost.
+  assert.deepEqual(rows.map((r) => [r.data?.where, r.data?.event, r.data?.error, r.client]), [['adapter', 'load', 'Error', 'claude_code'], ['adapter', 'load', 'Error', 'claude_code']]);
+  // A file that is not code names the code of the error of the loader.
+  fs.writeFileSync(path.join(hooks, 'run.ts'), 'export function main(: void {}\n');
+  run('post');
+  const syntax = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').at(-1);
+  assert.match(String(syntax?.data?.error), /^(ERR_[A-Z_]+|SyntaxError)$/);
   // A copy of the client without a core beside it: the adapter and the writer of the failure come from the source.
   const cache = path.join(b.root, 'cache/hooks');
   fs.mkdirSync(cache, { recursive: true });
@@ -490,7 +525,7 @@ test('claude-code: an adapter that does not load asks the human, and the journal
   fs.writeFileSync(config, JSON.stringify({ ...JSON.parse(fs.readFileSync(b.config, 'utf8')), source: tree }));
   const out = spawnSync(process.execPath, [path.join(cache, 'hook.ts'), 'pre'], { input: '{}', env: { ...env, REINS_CONFIG: config }, cwd: b.cwd, encoding: 'utf8' }).stdout;
   assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').length, 3);
+  assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').length, 4);
 });
 
 test('claude-code: an adapter that loads and breaks outside its guards is a failure of the run', () => {

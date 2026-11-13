@@ -105,8 +105,12 @@ test('memory: the agent writes only what the manifest of its task allows', () =>
     [{ type: 'pitfall', text: 'x'.repeat(2001), paths: [], task, by: 'agent' }, 'bad_text'],
     [{ type: 'pitfall', text: TEXT, paths: ['../x', ''], task, by: 'agent' }, 'bad_path'],
   ] as const) {
-    assert.deepEqual(addRecord(b.rt, input as never, T0), { ok: false, error }, JSON.stringify(input).slice(0, 80));
+    const refused = addRecord(b.rt, input as never, T0);
+    assert.deepEqual([refused.ok, refused.ok ? null : refused.error], [false, error], JSON.stringify(input).slice(0, 80));
   }
+  // A text that is not taken says which field, why, and the limit with the length.
+  assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: 'x'.repeat(2001), paths: [], task, by: 'agent' }, T0), { ok: false, error: 'bad_text', field: 'text', cause: 'too_long', max: 2000, length: 2001 });
+  assert.deepEqual(addRecord(b.rt, { type: 'pitfall', text: '', paths: [], task, by: 'agent' }, T0), { ok: false, error: 'bad_text', field: 'text', cause: 'empty' });
   assert.deepEqual(listRecords(b.rt, T0), []);
 });
 

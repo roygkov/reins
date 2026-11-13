@@ -46,6 +46,11 @@ import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
+// What a refusal of the memory says besides its code: the field of a text, the cause, the limit.
+function faultOf(r: { field?: string; cause?: string; max?: number; length?: number }): Out {
+  return { ...(r.field !== undefined ? { field: r.field } : {}), ...(r.cause !== undefined ? { cause: r.cause } : {}), ...(r.max !== undefined ? { max: r.max } : {}), ...(r.length !== undefined ? { length: r.length } : {}) };
+}
+
 class Stop extends Error {
   out: Out;
   constructor(error: string, more: Out = {}) {
@@ -558,7 +563,7 @@ function main(args: string[]): Out {
       if (rest.slice(2).some((m) => !m.startsWith('status='))) throw new Stop('usage');
       const status = rest.slice(2).find((m) => m.startsWith('status='))?.slice(7);
       const r = stepCase(rt, id, { by: 'human', next: rest[1] ?? '', ...(status !== undefined ? { status } : {}) });
-      if (!r.ok) throw new Stop(r.error);
+      if (!r.ok) throw new Stop(r.error, faultOf(r));
       return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}), ...(r.record.state === 'closed' ? { state: 'closed' } : {}) };
     }
     if ((first === 'next' && rest.length >= 2) || (first === 'close' && rest.length >= 1)) {
@@ -576,7 +581,7 @@ function main(args: string[]): Out {
       }
       const status = value('status');
       const r = stepCase(rt, id, { ...who, next: rest[1] ?? '', ...(status !== undefined ? { status } : {}) });
-      if (!r.ok) throw new Stop(r.error);
+      if (!r.ok) throw new Stop(r.error, faultOf(r));
       return { ok: true, record: id, next: r.record.next, ...(r.record.status !== undefined ? { status: r.record.status } : {}), ...(r.record.state === 'closed' ? { state: 'closed' } : {}) };
     }
     // `add <type> <text> [task=<id>] [path=<p>]...` is the agent; `decide <text> because=<reason> ...` is the human.
@@ -592,7 +597,7 @@ function main(args: string[]): Out {
       const root = findRoot(process.cwd());
       if (root.isRepo) input.root = root.root;
       const r = addRecord(rt, input);
-      if (!r.ok) throw new Stop(r.error);
+      if (!r.ok) throw new Stop(r.error, faultOf(r));
       return { ok: true, record: r.record };
     }
     throw new Stop('usage');

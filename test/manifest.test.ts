@@ -25,6 +25,23 @@ test('manifest: the result label follows the kind of the done check', () => {
   assert.equal(labelOf('external'), 'verified_result');
   assert.equal(labelOf('citations'), 'verified_form');
   assert.equal(labelOf('human'), 'approved_by_human');
+  // A script that proves only the form of the result (a record was written, a file is there)
+  // says so in the manifest: the label is the lower one. The manifest cannot raise a label.
+  assert.equal(labelOf('command', 'form'), 'verified_form');
+  assert.equal(labelOf('external', 'form'), 'verified_form');
+  assert.equal(labelOf('citations', 'form'), 'verified_form');
+  assert.equal(labelOf('human', 'form'), 'approved_by_human');
+});
+
+test('manifest: only a script check says that it proves the form, and only that word is taken', () => {
+  const base = loadCases<{ name: string; manifest: Record<string, unknown> }>('manifest-bases').find((b) => b.name === 'review')?.manifest;
+  assert.ok(base !== undefined);
+  const withDone = (done: unknown): unknown => ({ ...base, done });
+  const errors = (done: unknown): string[] => validateManifest(withDone(done)).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, unbound: true, proves: 'form' }), []);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, proves: 'result' }), ['not_in_list done.proves']);
+  assert.deepEqual(errors({ kind: 'citations', retries: 2, source: 'worktree', proves: 'form' }), ['not_allowed done.proves']);
+  assert.deepEqual(errors({ kind: 'human', retries: 0, proves: 'form' }), ['not_allowed done.proves']);
 });
 
 test('manifest: the trigger says who opens the scenario: the agent or only the human', () => {
