@@ -64,7 +64,7 @@ test('week: the eight numbers of the specification are counted from the rows of 
     // this week
     // A result is the end of a scenario task, or of a free request that changed the work. A free
     // request that changed nothing is a question: it has no result, verified or not.
-    row(1, 'task.closed', { task: 't1', scenario: 's', data: { label: 'verified_form' } }),
+    row(1, 'task.closed', { task: 't1', scenario: 's', data: { label: 'verified_result' } }),
     row(1, 'task.closed', { task: 't2', data: { label: 'not_verified', changed: 1 } }),
     row(1, 'task.closed', { task: 't3', scenario: 's', data: { label: 'approved_by_human' } }),
     row(1, 'task.closed', { task: 't4', scenario: 's', data: { label: 'not_verified' } }),
@@ -97,7 +97,9 @@ test('week: the eight numbers of the specification are counted from the rows of 
     row(20, 'harness.failure', { data: { where: 'journal' } }),
   ];
   assert.deepEqual(eight(rows, NOW), {
-    verified_share: { value: 0.5, prev: 1, n: 4, parts: { verified_form: 1, approved_by_human: 1 } },
+    // Only a check of the result counts: the approval of the human of this week and the check of
+    // the form of the week before are named in the parts, not in the value.
+    verified_share: { value: 0.25, prev: 0, n: 4, parts: { verified_result: 1, approved_by_human: 1 } },
     returns_per_task: { value: 0.5, prev: null, n: 2 },
     gate_yes_share: { value: 0.67, prev: null, n: 3 },
     no_model_share: { value: 0.5, prev: null, n: 4 },

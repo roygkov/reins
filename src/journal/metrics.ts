@@ -94,8 +94,9 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
 // The eight numbers of the specification (harness-journal, page 5): each answers one question of
 // the human. `value` is for the last period, `prev` for the period before it, `n` is the count of
 // the rows that the value stands on. A number without rows has no value.
-// `parts`: for the share of verified results, the count of the results of each label that is
-// counted as verified. A check of the form is not a check of the result: the parts say which it was.
+// `parts`: for the share of verified results, the count of the results of each label other than
+// "not verified". Only `verified_result` counts in the value: a check of the form and an approval
+// of the human are not a check of the result, and the parts show how many they were.
 export type Number8 = { value: number | null; prev: number | null; n: number; parts?: Record<string, number> };
 export const EIGHT = ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures'] as const;
 export type Eight = Record<(typeof EIGHT)[number], Number8>;
@@ -117,10 +118,8 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
         // free request that changed nothing is a question: it has no result, verified or not.
         if (row.scenario === undefined && data.changed !== 1) break;
         closed += 1;
-        if (typeof data.label === 'string' && data.label !== 'not_verified') {
-          verified += 1;
-          labels[data.label] = (labels[data.label] ?? 0) + 1;
-        }
+        if (data.label === 'verified_result') verified += 1;
+        if (typeof data.label === 'string' && data.label !== 'not_verified') labels[data.label] = (labels[data.label] ?? 0) + 1;
         break;
       case 'task.started': started += 1; break;
       case 'task.returned': returned += 1; break;

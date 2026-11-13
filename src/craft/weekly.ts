@@ -26,9 +26,9 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   const numbers = eight(journal, now);
   const lines = [`# reins: the week to ${day}`, '', '## Numbers of the week', '', '| number | this week | the week before | rows |', '|---|---|---|---|'];
   for (const name of EIGHT) lines.push(`| ${name} | ${cell(numbers[name].value)} | ${cell(numbers[name].prev)} | ${numbers[name].n} |`);
-  // How the verified results were verified: a check of the form is not a check of the result.
+  // The results by label: only `verified_result` counts in the share.
   const parts = Object.entries(numbers.verified_share.parts ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  if (parts.length > 0) lines.push('', `verified_share by label: ${parts.map(([label, count]) => `${label} ${count}`).join(', ')}.`);
+  if (parts.length > 0) lines.push('', `Results by label (verified_share counts verified_result only): ${parts.map(([label, count]) => `${label} ${count}`).join(', ')}.`);
   // Where the tokens of the week went: one line for a scenario, the one that spent the most first.
   const costs = costByScenario(journal, now);
   lines.push('', '## Cost of each scenario', '');
