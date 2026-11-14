@@ -9,7 +9,7 @@ import { BY, EIGHT, MEASURES } from '../src/journal/metrics.ts';
 const DAY1 = '2026-11-12T00:00:00.000Z';
 const DAY2 = '2026-11-13T00:00:00.000Z';
 const series: Series = {
-  metrics: 7, targets: { hook_ms_p50: 300, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
+  metrics: 9, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
   points: [
     { from: DAY1, to: DAY2, verified_share: { value: 0.04, n: 156, parts: { verified_form: 69, verified_result: 7 } }, cost_per_scenario: { value: null, n: 0 }, measures: { asks_per_task: 0.86, hook_ms_p50: null } },
     { from: DAY2, to: '2026-11-14T00:00:00.000Z', verified_share: { value: 0.23, n: 125 }, cost_per_scenario: { value: 38333, n: 37 }, measures: { asks_per_task: 0.95, hook_ms_p50: 125 }, by: { questions_asked: { 'protect.harness': 12, 'default.write': 3, 'bad"name': 1 }, not_named: { x: 1 } } },
@@ -46,7 +46,10 @@ test('grafana export: a name that is not a plain token gives no series', () => {
   const lines = toLines({ ...series, names: ['verified_share', 'Bad-Name"}'], measures: ['x{y}'], points: [{ from: DAY1, to: DAY2, verified_share: { value: 1, n: 1, parts: { 'a"b': 1 } }, 'Bad-Name"}': { value: 1, n: 1 }, measures: { 'x{y}': 1 } }] });
   assert.deepEqual(lines.map((l) => l.metric.__name__), ['reins_verified_share', 'reins_verified_share_n', 'reins_target_max']);
   // The target of a measure is one series with the name of the measure; a name that is no token gives none.
-  assert.deepEqual(lines.filter((l) => l.metric.__name__ === 'reins_target_max').map((l) => [l.metric.name, l.values]), [['hook_ms_p50', [300]]]);
+  assert.deepEqual(lines.filter((l) => l.metric.__name__ === 'reins_target_max').map((l) => [l.metric.name, l.values]), [['hook_ms_p50', [100]]]);
+  // The state against the target: only a day with a value has one; a series by hours carries no target.
+  assert.deepEqual(toLines(series).filter((l) => l.metric.__name__ === 'reins_target_over').map((l) => [l.metric.name, l.values, l.timestamps]), [['hook_ms_p50', [1], [Date.parse(DAY2)]]]);
+  assert.deepEqual(toLines({ ...series, step: 'hour' }).filter((l) => (l.metric.__name__ ?? '').startsWith('reins_target')), []);
 });
 
 test('grafana export: the store is on this machine only', () => {
@@ -59,7 +62,7 @@ test('grafana export: the dashboard asks only for the numbers that the series ha
   const dir = path.join(import.meta.dirname, '..', 'examples', 'grafana');
   const dash = JSON.parse(fs.readFileSync(path.join(dir, 'dashboards', 'reins.json'), 'utf8')) as { panels: { targets: { expr: string }[] }[] };
   // The line of a target is a series of its own.
-  const known = new Set<string>(['reins_target_max', ...[...EIGHT, ...MEASURES].flatMap((n) => [`reins_${n}`, `reins_${n}_n`, `reins_${n}_parts`]), ...BY.map((n) => `reins_${n}_by`)]);
+  const known = new Set<string>(['reins_target_max', 'reins_target_over', ...[...EIGHT, ...MEASURES].flatMap((n) => [`reins_${n}`, `reins_${n}_n`, `reins_${n}_parts`]), ...BY.map((n) => `reins_${n}_by`)]);
   const asked = dash.panels.flatMap((p) => p.targets.flatMap((t) => t.expr.match(/reins_[a-z0-9_]+/g) ?? []));
   assert.ok(asked.length >= 10);
   for (const name of asked) assert.ok(known.has(name), name);

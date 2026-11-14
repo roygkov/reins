@@ -641,8 +641,8 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 7, 'day', 'all', 14]);
-  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites']);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 9, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened']);
   assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
   assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes']);
   assert.deepEqual(Object.keys(r.json.points[0].by), r.json.by);
@@ -654,8 +654,17 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const end = Date.parse(points.at(-1)?.to ?? '');
   assert.ok(end > before && end - before <= 24 * 60 * 60 * 1000);
   assert.deepEqual([r.json.from, r.json.to], [points[0]?.from, points.at(-1)?.to]);
+  // By hours: a short window, the last bucket is this hour.
+  const hours = reins(b, ['metrics', 'days=1', 'step=hour']).json;
+  assert.deepEqual([hours.points.length, hours.step, Date.parse(hours.to) - Date.parse(hours.points[23].from)], [24, 'hour', 3600_000]);
+  assert.ok(Date.parse(hours.to) > Date.now() && Date.parse(hours.to) - Date.now() <= 3600_000);
+  assert.equal(reins(b, ['metrics', 'days=8', 'step=hour']).json.error, 'usage');
   const weeks = reins(b, ['metrics', 'days=15', 'step=week', 'project=here']).json;
   assert.deepEqual([weeks.points.length, weeks.step], [3, 'week']);
+  // The series of the machine names the projects of the window; the series of one project does not.
+  assert.equal(weeks.projects, undefined);
+  const named = reins(b, ['metrics', 'days=1']).json.projects;
+  assert.ok(Array.isArray(named) && named.length >= 1 && named.every((id: string) => /^p[0-9a-f]{8}$/.test(id)), JSON.stringify(named));
   assert.match(weeks.project, /^p[0-9a-f]{8}$/);
   for (const bad of [['days=0'], ['days=367'], ['step=month'], ['days=3', 'days=4'], ['project=ums'], ['14'], ['format=csv']]) {
     assert.equal(reins(b, ['metrics', ...bad]).json.error, 'usage', bad.join(' '));

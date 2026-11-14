@@ -493,22 +493,32 @@ function main(args: string[]): Out {
     const daysWord = value('days') ?? '14';
     if (!/^[1-9][0-9]{0,2}$/.test(daysWord) || Number(daysWord) > 366) throw new Stop('usage');
     const step = value('step') ?? 'day';
-    if (step !== 'day' && step !== 'week') throw new Stop('usage');
+    // An hour is for the use of the harness inside a day: a short window only.
+    if (step !== 'day' && step !== 'week' && step !== 'hour') throw new Stop('usage');
+    if (step === 'hour' && Number(daysWord) > 7) throw new Stop('usage');
     const named = value('project');
     if (named !== undefined && named !== 'here' && !/^p[0-9a-f]{8}$/.test(named)) throw new Stop('usage');
     const project = named === 'here' ? rt.project : named;
     const DAY_MS = 24 * 60 * 60 * 1000;
-    const stepMs = step === 'day' ? DAY_MS : 7 * DAY_MS;
-    const to = Math.floor(Date.now() / DAY_MS) * DAY_MS + DAY_MS;
+    const stepMs = step === 'day' ? DAY_MS : step === 'hour' ? DAY_MS / 24 : 7 * DAY_MS;
+    // The last bucket ends at the end of the day of today; with hours, at the end of this hour.
+    const edge = step === 'hour' ? stepMs : DAY_MS;
+    const to = Math.floor(Date.now() / edge) * edge + edge;
     const from = to - Math.ceil((Number(daysWord) * DAY_MS) / stepMs) * stepMs;
     const all = readJournalSince(rt.stateDir, from);
     const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs);
+    // The projects of the window, the busiest first: a program outside asks for the series of each one.
+    const seen = new Map<string, number>();
+    if (project === undefined) for (const row of all) if (/^p[0-9a-f]{8}$/.test(row.project)) seen.set(row.project, (seen.get(row.project) ?? 0) + 1);
+    const projects = [...seen].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
     // The form 2: each point carries `measures` besides the eight numbers; `measures` names them.
     // The form 3: each point carries `by`, the numbers with a name of their own; `by` names them.
     // The form 4: `measures` and `by` carry what the models spent, by model and by kind.
     // The form 5: the measure `fails_disputed`. The form 6: the measures of the memory.
     // The form 7: the measure `cache_rewrites` and the targets of the packs.
-    return { ok: true, metrics: 7, targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 8: the measures of the use (`actions`, `tasks_opened`) and the step of an hour.
+    // The form 9: `projects`, the projects of the window, when the series is of the machine.
+    return { ok: true, metrics: 9, ...(project === undefined ? { projects } : {}), targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();
@@ -737,7 +747,7 @@ function main(args: string[]): Out {
     return { ok: true, task: r.task.id, state: r.task.state, probe: true, answer: r.answer, checks_left: r.left, returns_left: Math.max(0, (r.task.manifest?.done.retries ?? 0) - r.task.returns) };
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory census', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=hour|day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory census', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 7,
+  "version": 8,
   "editable": false,
   "refresh": "",
   "time": {
@@ -38,6 +38,334 @@
   "panels": [
     {
       "id": 1,
+      "type": "stat",
+      "title": "Здоровье харнеса",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Каждая плитка это мера с порогом из пакета. Зелёная: последний день со значением не выше порога. Красная: выше порога. Плитки нет: у меры ещё нет значения. Число сверху: сколько порогов превышено.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "в норме",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "выше порога",
+                  "color": "red"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "asks_per_task"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "вопросов на задачу"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hook_ms_p95"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "время хука p95"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "probe_misses"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "пропуски барьера"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "probe_noise"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "шум барьера"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "harness_failures"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "сбои харнеса"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "disputed"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "оспоренные итоги"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fails_disputed"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "ложные отказы проверки"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pitfall_repeats"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "повторы ловушек"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "memory_dead"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "мёртвые записи памяти"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_rewrites"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "запись кэша заново"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порогов превышено"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": []
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": false
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "sum(reins_target_over{project=\"$project\", step=\"day\"} offset -1s)",
+          "legendFormat": "порогов превышено"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_over{project=\"$project\", step=\"day\"} offset -1s",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Использование за сутки",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1h",
+      "timeFrom": "24h",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "description": "По часам за последние 24 часа: действия агента, о которых решал барьер, вопросы человеку, открытые задачи. Линия: токены моделей, правая ось. Время UTC.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "токены"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_actions{project=\"$project\", step=\"hour\"} offset -1s",
+          "legendFormat": "действия"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_gate_yes_share_n{project=\"$project\", step=\"hour\"} offset -1s",
+          "legendFormat": "вопросы"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_tasks_opened{project=\"$project\", step=\"hour\"} offset -1s",
+          "legendFormat": "задачи"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_tokens_total{project=\"$project\", step=\"hour\"} offset -1s",
+          "legendFormat": "токены"
+        }
+      ]
+    },
+    {
+      "id": 3,
       "type": "timeseries",
       "title": "Доля проверенного итога",
       "description": "Доля итогов с меткой verified_result. Цель: рост.",
@@ -48,7 +376,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -173,7 +501,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_verified_share{project=\"$project\"} offset -1s",
+          "expr": "reins_verified_share{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "verified_result"
         },
         {
@@ -182,13 +510,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_verified_share{project=\"$project\"} offset 604799s",
+          "expr": "reins_verified_share{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 2,
+      "id": 4,
       "type": "timeseries",
       "title": "Метки итогов",
       "description": "Число итогов по метке, кроме not_verified.",
@@ -199,7 +527,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 0,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -284,13 +612,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_verified_share_parts{project=\"$project\"} offset -1s",
+          "expr": "reins_verified_share_parts{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{part}}"
         }
       ]
     },
     {
-      "id": 3,
+      "id": 5,
       "type": "timeseries",
       "title": "Объём работы",
       "description": "Итоги, начатые задачи и сценарии с ценой за день. Доля от малого объёма значит мало.",
@@ -301,7 +629,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -386,7 +714,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_verified_share_n{project=\"$project\"} offset -1s",
+          "expr": "reins_verified_share_n{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "итоги"
         },
         {
@@ -395,7 +723,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_returns_per_task_n{project=\"$project\"} offset -1s",
+          "expr": "reins_returns_per_task_n{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "начатые задачи"
         },
         {
@@ -404,13 +732,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_cost_per_scenario_n{project=\"$project\"} offset -1s",
+          "expr": "reins_cost_per_scenario_n{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "сценарии с ценой"
         }
       ]
     },
     {
-      "id": 4,
+      "id": 6,
       "type": "timeseries",
       "title": "Возвраты на задачу",
       "description": "Число отказов проверки на одну начатую задачу.",
@@ -421,7 +749,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 8,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -506,13 +834,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_returns_per_task{project=\"$project\"} offset -1s",
+          "expr": "reins_returns_per_task{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "возвратов на задачу"
         }
       ]
     },
     {
-      "id": 5,
+      "id": 7,
       "type": "timeseries",
       "title": "Вопросы и отказы барьера",
       "description": "Вопросы, которые увидел человек, и отказы барьера за день.",
@@ -523,7 +851,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 24,
         "w": 12,
         "h": 8
       },
@@ -608,7 +936,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_gate_yes_share_n{project=\"$project\"} offset -1s",
+          "expr": "reins_gate_yes_share_n{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "вопросы"
         },
         {
@@ -617,13 +945,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_denied{project=\"$project\"} offset -1s",
+          "expr": "reins_denied{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "отказы"
         }
       ]
     },
     {
-      "id": 6,
+      "id": 8,
       "type": "timeseries",
       "title": "Вопросов на задачу",
       "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение. Красный пунктир: порог из пакета.",
@@ -634,7 +962,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 16,
+        "y": 24,
         "w": 12,
         "h": 8
       },
@@ -719,7 +1047,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_asks_per_task{project=\"$project\"} offset -1s",
+          "expr": "reins_asks_per_task{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "вопросов на задачу"
         },
         {
@@ -728,13 +1056,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_target_max{project=\"$project\", name=\"asks_per_task\"} offset -1s",
+          "expr": "reins_target_max{project=\"$project\", step=\"day\", name=\"asks_per_task\"} offset -1s",
           "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 7,
+      "id": 9,
       "type": "timeseries",
       "title": "Вопросы по правилам",
       "description": "Вопросы, которые увидел человек, по правилу барьера.",
@@ -745,7 +1073,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -830,13 +1158,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_questions_asked_by{project=\"$project\"} offset -1s",
+          "expr": "reins_questions_asked_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         }
       ]
     },
     {
-      "id": 8,
+      "id": 10,
       "type": "timeseries",
       "title": "Доля ответов «да» по правилам",
       "description": "Красная зона: от 95%. Правило, где каждый ответ «да», спрашивает лишнее. Старые строки журнала не называют правило в ответе: их доля занижена.",
@@ -847,7 +1175,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 24,
+        "y": 32,
         "w": 12,
         "h": 8
       },
@@ -946,7 +1274,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_questions_yes_by{project=\"$project\"} offset -1s / reins_questions_asked_by{project=\"$project\"} offset -1s",
+          "expr": "reins_questions_yes_by{project=\"$project\", step=\"day\"} offset -1s / reins_questions_asked_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         },
         {
@@ -955,13 +1283,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_gate_yes_share{project=\"$project\"} offset -1s",
+          "expr": "reins_gate_yes_share{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "все вопросы"
         }
       ]
     },
     {
-      "id": 9,
+      "id": 11,
       "type": "timeseries",
       "title": "Барьер: пропуски",
       "description": "Последний запуск reins probes за день. Пропуск: барьер мягче ожидания. Красный пунктир: порог из пакета.",
@@ -972,7 +1300,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -1058,7 +1386,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_probe_misses{project=\"$project\"} offset -1s",
+          "expr": "reins_probe_misses{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "пропуски"
         },
         {
@@ -1067,13 +1395,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_target_max{project=\"$project\", name=\"probe_misses\"} offset -1s",
+          "expr": "reins_target_max{project=\"$project\", step=\"day\", name=\"probe_misses\"} offset -1s",
           "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 10,
+      "id": 12,
       "type": "timeseries",
       "title": "Барьер: шум",
       "description": "Последний запуск reins probes за день. Шум: барьер строже ожидания. Красная линия: ноль, любой столбец выше неё плох.",
@@ -1084,7 +1412,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 32,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -1170,7 +1498,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_probe_noise{project=\"$project\"} offset -1s",
+          "expr": "reins_probe_noise{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "шум"
         },
         {
@@ -1179,13 +1507,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_target_max{project=\"$project\", name=\"probe_noise\"} offset -1s",
+          "expr": "reins_target_max{project=\"$project\", step=\"day\", name=\"probe_noise\"} offset -1s",
           "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 11,
+      "id": 13,
       "type": "timeseries",
       "title": "Сбои и споры",
       "description": "Сбои харнеса, проверки без ответа, повторы ловушек, итоги, которые оспорил человек. Красная линия: ноль, любой столбец выше неё плох.",
@@ -1196,7 +1524,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -1281,7 +1609,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_harness_failures{project=\"$project\"} offset -1s",
+          "expr": "reins_harness_failures{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "сбои харнеса"
         },
         {
@@ -1290,7 +1618,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_checks_no_answer{project=\"$project\"} offset -1s",
+          "expr": "reins_checks_no_answer{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "проверки без ответа"
         },
         {
@@ -1299,7 +1627,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_pitfall_repeats{project=\"$project\"} offset -1s",
+          "expr": "reins_pitfall_repeats{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "повторы ловушек"
         },
         {
@@ -1308,7 +1636,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_disputed_by{project=\"$project\"} offset -1s",
+          "expr": "reins_disputed_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "оспорено: {{name}}"
         },
         {
@@ -1317,13 +1645,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_fails_disputed{project=\"$project\"} offset -1s",
+          "expr": "reins_fails_disputed{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "ложные отказы проверки"
         }
       ]
     },
     {
-      "id": 12,
+      "id": 14,
       "type": "timeseries",
       "title": "Время решения хука",
       "description": "Время процесса хука до решения о действии. Красный пунктир: порог для p95 из пакета.",
@@ -1334,7 +1662,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 40,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -1419,7 +1747,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_hook_ms_p50{project=\"$project\"} offset -1s",
+          "expr": "reins_hook_ms_p50{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "медиана"
         },
         {
@@ -1428,7 +1756,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_hook_ms_p95{project=\"$project\"} offset -1s",
+          "expr": "reins_hook_ms_p95{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "p95"
         },
         {
@@ -1437,7 +1765,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_hook_ms_max{project=\"$project\"} offset -1s",
+          "expr": "reins_hook_ms_max{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "максимум"
         },
         {
@@ -1446,13 +1774,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_target_max{project=\"$project\", name=\"hook_ms_p95\"} offset -1s",
+          "expr": "reins_target_max{project=\"$project\", step=\"day\", name=\"hook_ms_p95\"} offset -1s",
           "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 13,
+      "id": 15,
       "type": "timeseries",
       "title": "Время проверки готовности",
       "description": "Время проверки итога.",
@@ -1463,7 +1791,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -1587,7 +1915,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_check_ms_p50{project=\"$project\"} offset -1s",
+          "expr": "reins_check_ms_p50{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "медиана"
         },
         {
@@ -1596,7 +1924,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_check_ms_p95{project=\"$project\"} offset -1s",
+          "expr": "reins_check_ms_p95{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "p95"
         },
         {
@@ -1605,13 +1933,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_check_ms_p50{project=\"$project\"} offset 604799s",
+          "expr": "reins_check_ms_p50{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "timeseries",
       "title": "Текст от хуков",
       "description": "Байты текста, который хуки дали агенту за день, по месту.",
@@ -1622,7 +1950,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 48,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -1746,7 +2074,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_context_bytes_by{project=\"$project\"} offset -1s",
+          "expr": "reins_context_bytes_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         },
         {
@@ -1755,13 +2083,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_context_bytes{project=\"$project\"} offset 604799s",
+          "expr": "reins_context_bytes{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 15,
+      "id": 17,
       "type": "timeseries",
       "title": "Токены по моделям",
       "description": "Токены за день по имени модели: вход, выход и запись в кэш, у сценариев и свободных запросов. Чтение из кэша сюда не входит. Строки журнала до 14.11.2026 не называют модель: они идут как unknown.",
@@ -1772,7 +2100,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -1896,7 +2224,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_model_tokens_by{project=\"$project\"} offset -1s",
+          "expr": "reins_model_tokens_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         },
         {
@@ -1905,13 +2233,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_tokens_total{project=\"$project\"} offset 604799s",
+          "expr": "reins_tokens_total{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 16,
+      "id": 18,
       "type": "timeseries",
       "title": "Ответы моделей",
       "description": "Число ответов модели за день по имени модели. До 14.11.2026 строка считала один просмотр файла сессии, а не один ответ.",
@@ -1922,7 +2250,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 56,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -2046,7 +2374,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_model_calls_by{project=\"$project\"} offset -1s",
+          "expr": "reins_model_calls_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         },
         {
@@ -2055,13 +2383,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_model_calls{project=\"$project\"} offset 604799s",
+          "expr": "reins_model_calls{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 17,
+      "id": 19,
       "type": "timeseries",
       "title": "Запись длинного контекста в кэш заново",
       "description": "Ответы модели, которые записали в кэш 150 тыс. токенов и больше: сессия вернулась после простоя. Красный пунктир: порог из пакета. Данные есть с 14.11.2026.",
@@ -2072,7 +2400,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -2157,7 +2485,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_cache_rewrites{project=\"$project\"} offset -1s",
+          "expr": "reins_cache_rewrites{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "ответы"
         },
         {
@@ -2166,16 +2494,16 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_target_max{project=\"$project\", name=\"cache_rewrites\"} offset -1s",
+          "expr": "reins_target_max{project=\"$project\", step=\"day\", name=\"cache_rewrites\"} offset -1s",
           "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 18,
+      "id": 20,
       "type": "timeseries",
       "title": "Токены по виду",
-      "description": "Токены за день по виду: вход, выход, запись в кэш, чтение из кэша. Данные есть с 14.11.2026.",
+      "description": "Токены за день по виду: вход, выход, запись в кэш. Чтение из кэша здесь не показано: оно в десятки раз больше и идёт на панель «Доля чтения из кэша». Данные есть с 14.11.2026.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -2183,7 +2511,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 64,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -2268,13 +2596,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_token_kinds_by{project=\"$project\"} offset -1s",
+          "expr": "reins_token_kinds_by{project=\"$project\", step=\"day\", name!=\"cache_read\"} offset -1s",
           "legendFormat": "{{name}}"
         }
       ]
     },
     {
-      "id": 19,
+      "id": 21,
       "type": "timeseries",
       "title": "Доля чтения из кэша",
       "description": "Доля входа, которую модель прочитала из кэша. Высокая доля: длинный контекст стоит дешевле.",
@@ -2285,7 +2613,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -2371,13 +2699,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_token_kinds_by{project=\"$project\", name=\"cache_read\"} offset -1s / ignoring(name) sum without(name) (reins_token_kinds_by{project=\"$project\", name=~\"cache_read|cache_write|input\"} offset -1s)",
+          "expr": "reins_token_kinds_by{project=\"$project\", step=\"day\", name=\"cache_read\"} offset -1s / ignoring(name) sum without(name) (reins_token_kinds_by{project=\"$project\", step=\"day\", name=~\"cache_read|cache_write|input\"} offset -1s)",
           "legendFormat": "чтение из кэша"
         }
       ]
     },
     {
-      "id": 20,
+      "id": 22,
       "type": "timeseries",
       "title": "Цена сценария",
       "description": "Среднее число токенов на один сценарий.",
@@ -2388,7 +2716,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 72,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -2512,7 +2840,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_cost_per_scenario{project=\"$project\"} offset -1s",
+          "expr": "reins_cost_per_scenario{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "токенов"
         },
         {
@@ -2521,13 +2849,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_cost_per_scenario{project=\"$project\"} offset 604799s",
+          "expr": "reins_cost_per_scenario{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 21,
+      "id": 23,
       "type": "timeseries",
       "title": "Память: выдано записей",
       "description": "Записи, которые харнес дал агенту за день, по способу: start (старт сессии), cases (дела), state (состояние), task (вход задачи), find и show (поиск агента). Строки до 14.11.2026 идут как unknown.",
@@ -2538,7 +2866,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -2623,13 +2951,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_given_by{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_given_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         }
       ]
     },
     {
-      "id": 22,
+      "id": 24,
       "type": "timeseries",
       "title": "Память: текст в контексте",
       "description": "Байты текста памяти, которые харнес дал агенту за день, по способу. Это цена памяти в контексте. Данные есть с 14.11.2026.",
@@ -2640,7 +2968,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 80,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -2764,7 +3092,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_bytes_by{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_bytes_by{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
         },
         {
@@ -2773,13 +3101,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_bytes{project=\"$project\"} offset 604799s",
+          "expr": "reins_memory_bytes{project=\"$project\", step=\"day\"} offset 604799s",
           "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 23,
+      "id": 25,
       "type": "timeseries",
       "title": "Память: поиск агента",
       "description": "Сколько раз агент искал в памяти и сколько поисков ничего не нашли. Промах: в памяти нет записи, или слова поиска неудачны.",
@@ -2790,7 +3118,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -2875,7 +3203,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_finds{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_finds{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "поиски"
         },
         {
@@ -2884,13 +3212,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_find_misses{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_find_misses{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "промахи"
         }
       ]
     },
     {
-      "id": 24,
+      "id": 26,
       "type": "timeseries",
       "title": "Память: состав",
       "description": "Перепись памяти при экспорте: записи в работе, записи с цитатой в отчёте, мёртвые записи (выданы 5 раз и больше, ни одной цитаты), ни разу не выданные. Отметки «неверно» ставит человек.",
@@ -2901,7 +3229,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 88,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -2986,7 +3314,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_active{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_active{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "в работе"
         },
         {
@@ -2995,7 +3323,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_cited{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_cited{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "с цитатой"
         },
         {
@@ -3004,7 +3332,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_dead{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_dead{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "мёртвые"
         },
         {
@@ -3013,7 +3341,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_unseen{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_unseen{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "ни разу не выданы"
         },
         {
@@ -3022,22 +3350,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_wrong{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_wrong{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "отметки «неверно»"
-        },
-        {
-          "refId": "F",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "reins"
-          },
-          "expr": "reins_target_max{project=\"$project\", name=\"memory_dead\"} offset -1s",
-          "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 25,
+      "id": 27,
       "type": "timeseries",
       "title": "Память и работа без модели",
       "description": "Доля использованных записей памяти, доля шагов без модели, эффект предложений крафта.",
@@ -3048,7 +3367,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 104,
         "w": 12,
         "h": 8
       },
@@ -3133,7 +3452,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_use{project=\"$project\"} offset -1s",
+          "expr": "reins_memory_use{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "память"
         },
         {
@@ -3142,7 +3461,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_no_model_share{project=\"$project\"} offset -1s",
+          "expr": "reins_no_model_share{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "без модели"
         },
         {
@@ -3151,7 +3470,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_proposal_effect{project=\"$project\"} offset -1s",
+          "expr": "reins_proposal_effect{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "эффект предложений"
         }
       ]

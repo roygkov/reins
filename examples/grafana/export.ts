@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The export of the series of `reins metrics` (form 7) to a local VictoriaMetrics.
+// The export of the series of `reins metrics` (form 9) to a local VictoriaMetrics.
 // The journal is the source: the store of the stand is a view of it. Each run removes the series
 // `reins_*` from the store and writes the whole window again, so a point of the current day
 // always has its last value. Before the export the script runs `reins probes`: the run writes the
@@ -19,6 +19,7 @@ type SeriesPoint = { from: string; to: string; measures?: Record<string, number 
 export type Series = { metrics: number; step: string; project: string; names: string[]; measures?: string[]; by?: string[]; targets?: Record<string, number>; points: SeriesPoint[] };
 export type Line = { metric: Record<string, string>; values: number[]; timestamps: number[] };
 
+const MAX_PROJECTS = 30; // the projects of one export: a machine with more shows the busiest ones
 const NAME = /^[a-z][a-z0-9_]{0,59}$/;
 // The name of a rule, a place or a label: the value of the label `name` of a series.
 const KEY = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
@@ -49,7 +50,14 @@ export function toLines(series: Series): Line[] {
     }
     for (const name of series.measures ?? []) if (NAME.test(name)) put(name, {}, ts, point.measures?.[name]);
     // The target of the packs for a measure: the same number at every point, so the dashboard draws it as a line.
-    for (const [name, max] of Object.entries(series.targets ?? {})) if (NAME.test(name)) put('target_max', { name }, ts, max);
+    // A target is a number for one day: a series by hours carries none.
+    for (const [name, max] of Object.entries(series.step === 'day' ? series.targets ?? {} : {})) {
+      if (!NAME.test(name)) continue;
+      put('target_max', { name }, ts, max);
+      // The state of the measure against its target on this day: 1 above it, 0 in order. A day without a value has no state.
+      const v = series.names.includes(name) ? (point[name] as Value | undefined)?.value : point.measures?.[name];
+      if (typeof v === 'number') put('target_over', { name }, ts, v > max ? 1 : 0);
+    }
     for (const name of series.by ?? []) {
       if (!NAME.test(name)) continue;
       for (const [key, value] of Object.entries(point.by?.[name] ?? {})) if (KEY.test(key)) put(`${name}_by`, { name: key }, ts, value);
@@ -80,33 +88,55 @@ async function main(): Promise<void> {
     return;
   }
   const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'cli.ts');
-  const more = args.has('project') ? [`project=${args.get('project')}`] : [];
   try {
     execFileSync(process.execPath, [cli, 'probes'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     execFileSync(process.execPath, [cli, 'memory', 'census'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
     // No probes: the series has no point of the barrier for this run.
   }
-  const series = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', `days=${days}`, 'step=day', ...more], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean };
-  if (series.ok !== true || series.metrics !== 7) {
-    console.log(JSON.stringify({ ok: false, error: 'bad_series', metrics: series.metrics ?? null }));
-    process.exitCode = 1;
-    return;
-  }
-  const lines = toLines(series);
+  const read = (words: string[]): (Series & { ok?: boolean; projects?: string[] }) | null => {
+    try {
+      const value = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', ...words], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean; projects?: string[] };
+      return value.ok === true && value.metrics === 9 ? value : null;
+    } catch {
+      return null;
+    }
+  };
   const base = url.origin;
-  try {
-    const selector = encodeURIComponent(`{__name__=~"reins_.*",project="${series.project}"}`);
-    const removed = await fetch(`${base}/api/v1/admin/tsdb/delete_series?match[]=${selector}`, { method: 'POST' });
-    if (!removed.ok) throw new Error(`delete ${removed.status}`);
-    const written = await fetch(`${base}/api/v1/import`, { method: 'POST', body: lines.map((l) => JSON.stringify(l)).join('\n') });
-    if (!written.ok) throw new Error(`import ${written.status}`);
-  } catch (e) {
-    console.log(JSON.stringify({ ok: false, error: 'store_unreachable', url: base, detail: String((e as Error).message).slice(0, 120) }));
+  // One project of the store: its series by days and, for the use inside a day, by hours for the
+  // last two days. The series of the project are removed and written again.
+  const one = async (project: string[]): Promise<{ project: string; series: number; samples: number; projects: string[] } | { error: string; detail?: string }> => {
+    const series = read([`days=${days}`, 'step=day', ...project]);
+    if (series === null) return { error: 'bad_series' };
+    const hours = read(['days=2', 'step=hour', ...project]);
+    const lines = [...toLines(series), ...(hours === null ? [] : toLines(hours))];
+    try {
+      const selector = encodeURIComponent(`{__name__=~"reins_.*",project="${series.project}"}`);
+      const removed = await fetch(`${base}/api/v1/admin/tsdb/delete_series?match[]=${selector}`, { method: 'POST' });
+      if (!removed.ok) throw new Error(`delete ${removed.status}`);
+      const written = await fetch(`${base}/api/v1/import`, { method: 'POST', body: lines.map((l) => JSON.stringify(l)).join('\n') });
+      if (!written.ok) throw new Error(`import ${written.status}`);
+    } catch (e) {
+      return { error: 'store_unreachable', detail: String((e as Error).message).slice(0, 120) };
+    }
+    return { project: series.project, series: lines.length, samples: lines.reduce((n, l) => n + l.values.length, 0), projects: series.projects ?? [] };
+  };
+  // With `project`: that project only. Without it: the machine, then every project of the window,
+  // so the list "project" of the dashboard never shows numbers of an older export.
+  const first = await one(args.has('project') ? [`project=${args.get('project')}`] : []);
+  if ('error' in first) {
+    console.log(JSON.stringify({ ok: false, error: first.error, url: base, ...(first.detail !== undefined ? { detail: first.detail } : {}) }));
     process.exitCode = 1;
     return;
   }
-  console.log(JSON.stringify({ ok: true, url: base, project: series.project, days, series: lines.length, samples: lines.reduce((n, l) => n + l.values.length, 0) }));
+  const done = [first];
+  if (!args.has('project')) {
+    for (const project of first.projects.filter((p) => /^p[0-9a-f]{8}$/.test(p)).slice(0, MAX_PROJECTS)) {
+      const next = await one([`project=${project}`]);
+      if (!('error' in next)) done.push(next);
+    }
+  }
+  console.log(JSON.stringify({ ok: true, url: base, project: first.project, days, series: done.reduce((n, d) => n + d.series, 0), samples: done.reduce((n, d) => n + d.samples, 0), projects: done.length - 1 }));
 }
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
