@@ -106,9 +106,16 @@ test('cli: a report with a false quote is not ready, a true one closes the task'
   const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
   const file = path.join(b.root, 'report.json');
   fs.writeFileSync(file, report([{ ...ITEM, severity: 'high', quote: 'const limit = items.size();' }]));
+  // The human can say that a FAIL was wrong only for a task that got one.
+  assert.equal(reins(b, ['dispute', id, 'fail']).json.error, 'no_fail');
   const bad = reins(b, ['report', id, file]);
   assert.equal(bad.code, 2);
   assert.deepEqual(bad.json, { ok: true, task: id, state: 'executing', returns_left: 1, answer: { result: 'FAIL', reason: 'faults', n: 1, faults: [{ n: 1, fault: 'not_found' }] } });
+  const said = reins(b, ['dispute', id, 'fail']).json;
+  assert.deepEqual([said.ok, said.state, said.returns, said.already], [true, 'executing', 1, undefined]);
+  assert.equal(reins(b, ['dispute', id, 'fail']).json.already, true);
+  assert.equal(reins(b, ['status']).json.metrics.fails_disputed, 1);
+  assert.equal(reins(b, ['metrics', 'days=1']).json.points[0].measures.fails_disputed, 1);
 
   const good = reins(b, ['report', id, '-'], report([{ ...ITEM, severity: 'high' }]));
   assert.equal(good.code, 0);
@@ -626,8 +633,8 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 4, 'day', 'all', 14]);
-  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls']);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 5, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed']);
   assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
   assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds']);
   assert.deepEqual(Object.keys(r.json.points[0].by), r.json.by);

@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 4,
+  "version": 5,
   "editable": false,
   "refresh": "",
   "time": {
@@ -852,6 +852,15 @@
           },
           "expr": "reins_disputed_by{project=\"$project\"} offset -1s",
           "legendFormat": "оспорено: {{name}}"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_fails_disputed{project=\"$project\"} offset -1s",
+          "legendFormat": "ложные отказы проверки"
         }
       ]
     },

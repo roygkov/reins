@@ -543,6 +543,25 @@ export function disputeResult(rt: Runtime, id: string): { task: Task; first: boo
   return r;
 }
 
+// The word of the human: the done check sent the work of this task back, and the work was right.
+// The task must have a send-back; the journal has the word once for a task. The task itself does
+// not change its state: the word is a measure of the check, not a way past it.
+export function disputeFail(rt: Runtime, id: string): { task: Task; first: boolean } | { error: 'unknown_task' | 'busy' | 'no_fail' } {
+  if (!TASK_ID.test(id)) return { error: 'unknown_task' };
+  const r = withLock(rt, id, () => {
+    const task = loadTask(rt, id);
+    if (task === null) return 'unknown_task' as const;
+    if (task.returns < 1) return 'no_fail' as const;
+    if (task.fail_disputed !== undefined) return { task, first: false };
+    const next: Task = { ...task, fail_disputed: new Date().toISOString() };
+    writeAtomic(taskFile(rt, id), next);
+    return { task: next, first: true };
+  });
+  if (typeof r === 'string') return { error: r };
+  if (r.first) record(rt, r.task, [{ kind: 'check.fail_disputed', data: { n: r.task.returns } }]);
+  return r;
+}
+
 export function mutateTask(rt: Runtime, id: string, change: (task: Task) => Task | null): Task | null {
   if (!TASK_ID.test(id)) return null;
   const r = withLock(rt, id, () => {

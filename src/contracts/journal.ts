@@ -20,7 +20,7 @@ export const EVENT_KINDS = [
   'policy.decision', 'policy.basis', 'policy.envelope_opened', 'policy.envelope_closed', 'policy.action_deferred',
   'policy.deferred_resolved', 'policy.protected_attempt',
   // the check
-  'check.started', 'check.answered', 'check.no_answer', 'check.invalidated', 'check.retries_exceeded',
+  'check.started', 'check.answered', 'check.no_answer', 'check.invalidated', 'check.retries_exceeded', 'check.fail_disputed',
   // executors and cost
   'executor.started', 'executor.report_received', 'executor.report_judged', 'executor.level_raised', 'executor.cost', 'executor.tool_failed', 'executor.tool_output',
   // memory
@@ -101,6 +101,8 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'check.started': { check_kind: DONE_KINDS },
   'check.no_answer': { check_kind: DONE_KINDS },
   'check.retries_exceeded': { n: 'number' },
+  // The word of the human: a FAIL of the done check of this task was wrong. `n`: the send-backs that the task had.
+  'check.fail_disputed': { n: 'number' },
   'executor.tool_failed': { tool: 'token' },
   'executor.tool_output': { tool: 'token', size: 'number' },
   'memory.read': { n: 'number' },

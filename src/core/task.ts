@@ -51,6 +51,7 @@ export type Task = {
   probes?: number; // the runs of the done check before the report
   widened?: boolean; // the human let a contract task go on past its contract
   disputed?: string; // the time when the human said that the accepted result was wrong
+  fail_disputed?: string; // the time when the human said that a FAIL of the done check was wrong
 };
 
 export type TaskEvent =

@@ -50,6 +50,7 @@
     reins finish <задача>
     reins stop <задача>
     reins dispute <задача>
+    reins dispute <задача> fail
     reins probes
     reins tasks
     reins status [days] [project=here|<project>]
@@ -82,6 +83,8 @@ Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, з�
     node examples/grafana/export.ts [days=90] [project=here|<project>]
 
 Дашборд: `http://127.0.0.1:3000/d/reins`. Экспорт сначала запускает `reins probes`: запуск пишет числа барьера в журнал. Экспорт удаляет ряды `reins_*` проекта из хранилища и пишет окно заново. Экспорт отклоняет адрес хранилища не на этой машине. Дашборд правь в файле `examples/grafana/dashboards/reins.json`.
+
+Экспорт по расписанию на macOS: `examples/grafana/schedule.sh install` ставит задачу launchd, которая запускает экспорт раз в час. `schedule.sh remove` снимает её, `schedule.sh status` показывает состояние. Журнал запусков: `~/Library/Logs/reins-measures-export.log`.
 
 ## Правка схем
 

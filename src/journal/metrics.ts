@@ -8,6 +8,7 @@ export type Metrics = {
   tasks: { opened: number; closed: number; by_label: Record<string, number>; changed_not_verified: number };
   scenarios: Record<string, { opened: number; accepted: number; returns: number }>;
   checks: { PASS: number; FAIL: number; none: number };
+  fails_disputed: number; // the tasks where the human said that a FAIL of the done check was wrong
   unstable_checks: number; // the pairs of a work and a report that got both PASS and FAIL
   decisions: { allow: number; ask: number; defer: number; deny: number };
   protected_attempts: number;
@@ -60,7 +61,7 @@ export const ofProject = (rows: JournalRow[], project: string): JournalRow[] => 
 export function summarize(rows: JournalRow[], since = 0): Metrics {
   const m: Metrics = {
     tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
-    unstable_checks: 0,
+    unstable_checks: 0, fails_disputed: 0,
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0 },
     tool_output: {},
@@ -112,6 +113,9 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
           m.checks.PASS += 1;
           if (row.scenario !== undefined) scenario(row.scenario).accepted += 1;
         } else m.checks.FAIL += 1;
+        break;
+      case 'check.fail_disputed':
+        m.fails_disputed += 1;
         break;
       case 'check.no_answer':
         if (typeof data.ms === 'number') checkMs.push(data.ms);
@@ -288,7 +292,7 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // The numbers of a period that have a name of their own inside one measure (the form 3): the
 // questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
@@ -320,6 +324,7 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       probe_noise: m.probes.noise,
       tokens_total: m.tokens.total,
       model_calls: m.tokens.calls,
+      fails_disputed: m.fails_disputed,
     },
     by: {
       questions_asked: pick(m.questions, (at) => at.asked),

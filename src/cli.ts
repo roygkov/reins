@@ -33,7 +33,7 @@ import { sessionOfDirectory } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, approveContract, collectedDir, disputeResult, loadTask, probeCheck, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
+import { applyEvent, approveContract, collectedDir, disputeFail, disputeResult, loadTask, probeCheck, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
@@ -499,7 +499,8 @@ function main(args: string[]): Out {
     // The form 2: each point carries `measures` besides the eight numbers; `measures` names them.
     // The form 3: each point carries `by`, the numbers with a name of their own; `by` names them.
     // The form 4: `measures` and `by` carry what the models spent, by model and by kind.
-    return { ok: true, metrics: 4, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 5: the measure `fails_disputed`.
+    return { ok: true, metrics: 5, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();
@@ -664,6 +665,12 @@ function main(args: string[]): Out {
     if ('error' in r) throw new Stop(r.error);
     return { ok: true, task: r.task.id, state: r.task.state, disputed: r.task.disputed, ...(r.task.label !== undefined ? { label: r.task.label } : {}), ...(r.first ? {} : { already: true }) };
   }
+  // The word of the human: a FAIL of the done check of this task was wrong. The journal has it once for a task.
+  if (command === 'dispute' && first !== undefined && rest.length === 1 && rest[0] === 'fail') {
+    const r = disputeFail(runtime(), first);
+    if ('error' in r) throw new Stop(r.error);
+    return { ok: true, task: r.task.id, state: r.task.state, fail_disputed: r.task.fail_disputed, returns: r.task.returns, ...(r.first ? {} : { already: true }) };
+  }
   if (command === 'stop' && first !== undefined && rest.length === 0) {
     const rt = runtime();
     const r = applyEvent(rt, first, { type: 'human', decision: 'stop' }, 'human');
@@ -713,7 +720,7 @@ function main(args: string[]): Out {
     return { ok: true, task: r.task.id, state: r.task.state, probe: true, answer: r.answer, checks_left: r.left, returns_left: Math.max(0, (r.task.manifest?.done.retries ?? 0) - r.task.returns) };
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search
