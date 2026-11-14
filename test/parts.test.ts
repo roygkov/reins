@@ -74,6 +74,45 @@ test('sweep: a task inside its term stays open', () => {
   assert.equal(openTasks(rt).length, 2);
 });
 
+test('sweep: a directory of compiled code that Node wrote nothing to for 30 days goes away', () => {
+  const rt = runtime();
+  const cache = path.join(rt.stateDir, 'compile-cache');
+  const DAY = 24 * HOUR;
+  const make = (name: string, days: number, file = 'a1b2c3d4'): string => {
+    const dir = path.join(cache, name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, file), 'code');
+    const t = new Date(Date.now() - days * DAY);
+    fs.utimesSync(path.join(dir, file), t, t);
+    fs.utimesSync(dir, t, t);
+    return dir;
+  };
+  // The directory of an older Node: no call writes there any more.
+  const old = make('v24.0.0-arm64-00000000-501', 31);
+  // The directory in use: one file is old, one is new. Node reads both, so both stay.
+  const used = make('v25.8.1-arm64-392347a2-501', 31);
+  fs.writeFileSync(path.join(used, 'ffffffff'), 'code');
+  const fresh = make('v25.9.0-arm64-11111111-501', 29);
+  // A file beside the directories and a link are not of Node: the sweep does not touch them.
+  fs.writeFileSync(path.join(cache, 'note'), '');
+  const t = new Date(Date.now() - 40 * DAY);
+  fs.utimesSync(path.join(cache, 'note'), t, t);
+  const outside = path.join(rt.stateDir, 'outside');
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'keep'), '');
+  fs.utimesSync(path.join(outside, 'keep'), t, t);
+  fs.symlinkSync(outside, path.join(cache, 'link'));
+  sweep(rt);
+  assert.equal(fs.existsSync(old), false);
+  assert.deepEqual(fs.readdirSync(used).sort(), ['a1b2c3d4', 'ffffffff']);
+  assert.ok(fs.existsSync(fresh));
+  assert.ok(fs.existsSync(path.join(cache, 'note')));
+  assert.ok(fs.existsSync(path.join(outside, 'keep')));
+  // No cache at all is not a failure of the sweep.
+  fs.rmSync(cache, { recursive: true, force: true });
+  assert.deepEqual(sweep(rt), []);
+});
+
 test('sweep: the start of a session runs the sweep', () => {
   const rt = runtime();
   const free = openFreeTask(rt).id;

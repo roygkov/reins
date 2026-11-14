@@ -63,6 +63,22 @@ export function sweep(rt: Runtime, now: number = Date.now()): string[] {
       // no copies
     }
   }
+  // The compiled code that the first file of a hook of a client keeps in the state. Node
+  // has one directory for each of its versions and writes a file again when its source changes.
+  // A directory where nothing was written for 30 days is of a Node that left, or of a code that
+  // did not change: it goes away whole, and Node writes it again at the next call when it is in use.
+  try {
+    const cache = path.join(rt.stateDir, 'compile-cache');
+    for (const name of fs.readdirSync(cache)) {
+      const dir = path.join(cache, name);
+      const stat = fs.lstatSync(dir);
+      if (!/^v[0-9]/.test(name) || !stat.isDirectory()) continue;
+      const last = fs.readdirSync(dir).reduce((at, file) => Math.max(at, fs.lstatSync(path.join(dir, file)).mtimeMs), stat.mtimeMs);
+      if (now - last > 30 * 24 * HOUR) fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch {
+    // no cache
+  }
   // The archive of the journal past the term that the packs name goes away.
   pruneArchive(rt.stateDir, rt.merged.journalKeepDays, now);
   // The file of a memory record that the human removed, past the term that the packs name.
