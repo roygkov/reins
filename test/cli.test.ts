@@ -596,6 +596,10 @@ test('cli: the barrier is asked about the commands with a known answer of a pack
   assert.deepEqual(r.noise.map((f: { pack: string; n: number; expect: string; got: string }) => [f.pack, f.n, f.expect, f.got]), [['person', 5, 'pass', 'ask']]);
   // The summary has the counts only.
   assert.deepEqual(reins(b, ['status']).json.barrier, { n: 5, bad: 3, misses: 1, noise: 1 });
+  // The run wrote its counts to the journal: the series of the metrics has them. The run without a file wrote nothing.
+  assert.deepEqual(reins(b, ['status']).json.metrics.probes, { runs: 1, n: 5, misses: 1, noise: 1 });
+  const last = reins(b, ['metrics', 'days=1']).json.points[0].measures;
+  assert.deepEqual([last.probe_misses, last.probe_noise], [1, 1]);
   // A file that is no list is one bad file.
   fs.writeFileSync(file, '{}');
   assert.deepEqual(reins(b, ['probes']).json, { ok: true, n: 0, bad: 1, misses: [], noise: [] });
@@ -622,9 +626,11 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 2, 'day', 'all', 14]);
-  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'check_ms_p50', 'context_bytes', 'disputed', 'pitfall_repeats']);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 3, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise']);
   assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
+  assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed']);
+  assert.deepEqual(Object.keys(r.json.points[0].by), r.json.by);
   assert.deepEqual(r.json.names, ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']);
   // The buckets follow one another without a gap; the last one ends at the end of the day of today.
   const points = r.json.points as { from: string; to: string }[];

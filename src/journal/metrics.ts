@@ -34,6 +34,9 @@ export type Metrics = {
   // The pitfalls that were written, and how many of them name an older record of the same
   // pitfall: the memory had it, and somebody hit it again.
   pitfalls: { written: number; repeats: number };
+  // The last run of the commands with a known answer against the barrier in the period: the
+  // commands that it let pass wrongly (misses) and that it asked about wrongly (noise).
+  probes: { runs: number; n: number | null; misses: number | null; noise: number | null };
 };
 export type Spread = { n: number; p50: number | null; p95: number | null; max: number | null };
 
@@ -58,6 +61,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     tool_output: {},
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
     asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
+    probes: { runs: 0, n: null, misses: null, noise: null },
   };
   const asked = new Map<string, { asked: number; yes: number }>();
   const question = (rule: string): { asked: number; yes: number } => asked.get(rule) ?? (asked.set(rule, { asked: 0, yes: 0 }), asked.get(rule) as { asked: number; yes: number });
@@ -145,6 +149,10 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         at.bytes += data.bytes;
         break;
       }
+      case 'harness.barrier_probed':
+        if (typeof data.n !== 'number' || typeof data.misses !== 'number' || typeof data.noise !== 'number') break;
+        m.probes = { runs: m.probes.runs + 1, n: data.n, misses: data.misses, noise: data.noise };
+        break;
       case 'harness.failure':
         m.failures += 1;
         break;
@@ -263,22 +271,46 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'check_ms_p50', 'context_bytes', 'disputed', 'pitfall_repeats'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
+// The numbers of a period that have a name of their own inside one measure (the form 3): the
+// questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
+// place, the disputed results by label. A name without rows is absent.
+export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed'] as const;
+export type By = Record<(typeof BY)[number], Record<string, number>>;
 export function measures(rows: JournalRow[]): Measures {
+  return measured(rows).measures;
+}
+function measured(rows: JournalRow[]): { measures: Measures; by: By } {
   const m = summarize(rows);
+  const pick = <T>(from: Record<string, T>, value: (at: T) => number): Record<string, number> => Object.fromEntries(Object.entries(from).map(([name, at]) => [name, value(at)] as const).filter(([, n]) => n !== 0));
   return {
-    asks_per_task: m.asks.per_task,
-    hook_ms_p50: m.timing.hook_ms.p50,
-    hook_ms_p95: m.timing.hook_ms.p95,
-    check_ms_p50: m.timing.check_ms.p50,
-    context_bytes: Object.values(m.context).reduce((sum, at) => sum + at.bytes, 0),
-    disputed: Object.values(m.disputed).reduce((sum, n) => sum + n, 0),
-    pitfall_repeats: m.pitfalls.repeats,
+    measures: {
+      asks_per_task: m.asks.per_task,
+      hook_ms_p50: m.timing.hook_ms.p50,
+      hook_ms_p95: m.timing.hook_ms.p95,
+      hook_ms_max: m.timing.hook_ms.max,
+      check_ms_p50: m.timing.check_ms.p50,
+      check_ms_p95: m.timing.check_ms.p95,
+      context_bytes: Object.values(m.context).reduce((sum, at) => sum + at.bytes, 0),
+      disputed: Object.values(m.disputed).reduce((sum, n) => sum + n, 0),
+      pitfall_repeats: m.pitfalls.repeats,
+      // The refusals of the barrier: of the policy and of a protected place.
+      denied: m.decisions.deny + m.protected.deny,
+      checks_no_answer: m.checks.none,
+      probe_misses: m.probes.misses,
+      probe_noise: m.probes.noise,
+    },
+    by: {
+      questions_asked: pick(m.questions, (at) => at.asked),
+      questions_yes: pick(m.questions, (at) => at.yes),
+      context_bytes: pick(m.context, (at) => at.bytes),
+      disputed: pick(m.disputed, (n) => n),
+    },
   };
 }
 
-export type Point = { from: string; to: string; measures: Measures } & Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }>;
+export type Point = { from: string; to: string; measures: Measures; by: By } & Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }>;
 export function series(rows: JournalRow[], from: number, to: number, step: number): Point[] {
   // Each row goes to its bucket once: a long series does not read the whole journal for every bucket.
   const count = Math.max(0, Math.ceil((to - from) / step));
@@ -291,7 +323,7 @@ export function series(rows: JournalRow[], from: number, to: number, step: numbe
   return buckets.map((bucket, i) => {
     const start = from + i * step;
     const end = Math.min(start + step, to);
-    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end), measures: measures(bucket) };
+    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end), ...measured(bucket) };
   });
 }
 

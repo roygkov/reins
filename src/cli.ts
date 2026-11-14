@@ -44,7 +44,7 @@ import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
-import { EIGHT, MEASURES, eight, ofProject, series, summarize } from './journal/metrics.ts';
+import { BY, EIGHT, MEASURES, eight, ofProject, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
@@ -497,7 +497,8 @@ function main(args: string[]): Out {
     const all = readJournalSince(rt.stateDir, from);
     const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs);
     // The form 2: each point carries `measures` besides the eight numbers; `measures` names them.
-    return { ok: true, metrics: 2, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], points };
+    // The form 3: each point carries `by`, the numbers with a name of their own; `by` names them.
+    return { ok: true, metrics: 3, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();
@@ -648,7 +649,14 @@ function main(args: string[]): Out {
   // the human before it runs this command.
   // The barrier against the commands with a known answer that the packs hold: each command whose
   // answer is not the expected one, by the pack and the place in its file.
-  if (command === 'probes' && first === undefined) return { ok: true, ...runProbes(runtime(), process.cwd()) };
+  // A run of the probes writes its counts to the journal: the series of the metrics shows the barrier by day.
+  if (command === 'probes' && first === undefined) {
+    const rt = runtime();
+    const result = runProbes(rt, process.cwd());
+    // A run that asked nothing says nothing about the barrier.
+    if (result.n > 0) rt.journal.write({ kind: 'harness.barrier_probed', project: rt.project, data: { n: result.n, misses: result.misses.length, noise: result.noise.length } });
+    return { ok: true, ...result };
+  }
   // The word of the human: the result of a closed task was wrong. The journal has it once for a task.
   if (command === 'dispute' && first !== undefined && rest.length === 0) {
     const r = disputeResult(runtime(), first);

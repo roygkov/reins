@@ -29,7 +29,7 @@ export const EVENT_KINDS = [
   'craft.pattern_found', 'craft.proposal_created', 'craft.proposal_resolved', 'craft.effect_measured',
   // the harness itself
   'harness.failure', 'harness.step_timeout', 'harness.client_shape_changed', 'harness.client_level_detected',
-  'harness.barriers_off', 'harness.packs_merged', 'harness.pack_changed', 'harness.manifest_rejected', 'harness.context_given',
+  'harness.barriers_off', 'harness.packs_merged', 'harness.pack_changed', 'harness.manifest_rejected', 'harness.context_given', 'harness.barrier_probed',
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
@@ -120,6 +120,8 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'harness.failure': { where: 'token' },
   // A text that a hook of the client gave to the agent: where (the start of a session, a request, after an action) and its size.
   'harness.context_given': { where: 'token', bytes: 'number' },
+  // One run of the commands with a known answer against the barrier: how many were asked, how many the barrier let pass wrongly (misses) and asked about wrongly (noise).
+  'harness.barrier_probed': { n: 'number', misses: 'number', noise: 'number' },
 };
 
 export function sourceOf(kind: EventKind): Source {

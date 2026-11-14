@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JournalRow } from '../src/contracts/journal.ts';
-import { summarize } from '../src/journal/metrics.ts';
+import { BY, MEASURES, series, summarize } from '../src/journal/metrics.ts';
 
 let tick = 0;
 const row = (kind: string, data: Record<string, unknown>, more: Record<string, unknown> = {}): JournalRow =>
@@ -83,4 +83,36 @@ test('measures: a pitfall that names an older record of the same pitfall is a re
     row('memory.record_changed', { record: 'm0000000004', type: 'state', state: 'active' }),
   ]);
   assert.deepEqual(m.pitfalls, { written: 3, repeats: 2 });
+});
+
+test('measures: a run of the probes of the barrier gives the counts of the last run of the period', () => {
+  const m = summarize([row('harness.barrier_probed', { n: 36, misses: 3, noise: 1 }), row('harness.barrier_probed', { n: 36, misses: 1, noise: 0 }), row('harness.barrier_probed', { n: 36 })]);
+  assert.deepEqual(m.probes, { runs: 2, n: 36, misses: 1, noise: 0 });
+  assert.deepEqual(summarize([]).probes, { runs: 0, n: null, misses: null, noise: null });
+});
+
+test('measures: a point of the series carries the numbers by rule, by place and by label (the form 3)', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const from = Date.UTC(2026, 10, 13);
+  const rows = [
+    row('task.opened', {}),
+    row('policy.protected_attempt', { rule: 'protect.harness', outcome: 'ask', ms: 100 }), row('task.human_decision', { decision: 'answered', rule: 'protect.harness' }),
+    row('policy.protected_attempt', { rule: 'protect.harness', outcome: 'ask', ms: 300 }),
+    row('policy.protected_attempt', { rule: 'protect.state', outcome: 'deny', ms: 900 }),
+    row('policy.decision', { outcome: 'deny', action_kind: 'write', env: 'prod' }),
+    row('harness.context_given', { where: 'session_start', bytes: 9000 }), row('harness.context_given', { where: 'after', bytes: 120 }),
+    row('task.result_disputed', { label: 'verified_form' }),
+    row('check.answered', { result: 'PASS', check_kind: 'command', ms: 4000 }), row('check.no_answer', { check_kind: 'command', ms: 300_000 }),
+    row('harness.barrier_probed', { n: 36, misses: 1, noise: 2 }),
+  ];
+  const points = series(rows, from, from + 2 * day, day);
+  assert.equal(points.length, 2);
+  assert.deepEqual(Object.keys(points[0]?.measures ?? {}), [...MEASURES]);
+  assert.deepEqual(Object.keys(points[0]?.by ?? {}), [...BY]);
+  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 } });
+  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2 });
+  // A day without rows: no name by rule, no value of the barrier.
+  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {} });
+  assert.equal(points[1]?.measures.probe_misses, null);
+  assert.equal(points[1]?.measures.denied, 0);
 });

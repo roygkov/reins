@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "refresh": "",
   "time": {
@@ -40,7 +40,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Доля проверенного итога",
-      "description": "Доля закрытых задач с меткой verified_result. Цель: рост.",
+      "description": "Доля итогов с меткой verified_result. Цель: рост.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -87,7 +87,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_verified_share{project=\"$project\"}",
+          "expr": "reins_verified_share{project=\"$project\"} offset -1s",
           "legendFormat": "verified_result"
         }
       ]
@@ -96,7 +96,7 @@
       "id": 2,
       "type": "timeseries",
       "title": "Метки итогов",
-      "description": "Число закрытых задач по метке итога.",
+      "description": "Число итогов по метке, кроме not_verified.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -142,7 +142,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_verified_share_parts{project=\"$project\"}",
+          "expr": "reins_verified_share_parts{project=\"$project\"} offset -1s",
           "legendFormat": "{{part}}"
         }
       ]
@@ -150,8 +150,8 @@
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Вопросов на задачу",
-      "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение.",
+      "title": "Объём работы",
+      "description": "Итоги, начатые задачи и сценарии с ценой за день. Доля от малого объёма значит мало.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -159,6 +159,79 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_verified_share_n{project=\"$project\"} offset -1s",
+          "legendFormat": "итоги"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_returns_per_task_n{project=\"$project\"} offset -1s",
+          "legendFormat": "начатые задачи"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_cost_per_scenario_n{project=\"$project\"} offset -1s",
+          "legendFormat": "сценарии с ценой"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Возвраты на задачу",
+      "description": "Число отказов проверки на одну начатую задачу.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
         "y": 8,
         "w": 12,
         "h": 8
@@ -197,16 +270,80 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_asks_per_task{project=\"$project\"}",
-          "legendFormat": "вопросов на задачу"
+          "expr": "reins_returns_per_task{project=\"$project\"} offset -1s",
+          "legendFormat": "возвратов на задачу"
         }
       ]
     },
     {
-      "id": 4,
+      "id": 5,
       "type": "timeseries",
-      "title": "Доля ответов «да»",
-      "description": "Доля вопросов барьера с ответом «да». Близко к 1: барьер спрашивает лишнее.",
+      "title": "Вопросы и отказы барьера",
+      "description": "Вопросы, которые увидел человек, и отказы барьера за день.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_gate_yes_share_n{project=\"$project\"} offset -1s",
+          "legendFormat": "вопросы"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_denied{project=\"$project\"} offset -1s",
+          "legendFormat": "отказы"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Вопросов на задачу",
+      "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -214,7 +351,117 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 8,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_asks_per_task{project=\"$project\"} offset -1s",
+          "legendFormat": "вопросов на задачу"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Вопросы по правилам",
+      "description": "Вопросы, которые увидел человек, по правилу барьера.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_questions_asked_by{project=\"$project\"} offset -1s",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Доля ответов «да» по правилам",
+      "description": "Правило, где каждый ответ «да», спрашивает лишнее. Старые строки журнала не называют правило в ответе: их доля занижена.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
         "w": 12,
         "h": 8
       },
@@ -253,13 +500,168 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_gate_yes_share{project=\"$project\"}",
-          "legendFormat": "да"
+          "expr": "reins_questions_yes_by{project=\"$project\"} offset -1s / reins_questions_asked_by{project=\"$project\"} offset -1s",
+          "legendFormat": "{{name}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_gate_yes_share{project=\"$project\"} offset -1s",
+          "legendFormat": "все вопросы"
         }
       ]
     },
     {
-      "id": 5,
+      "id": 9,
+      "type": "timeseries",
+      "title": "Проверочные команды барьера",
+      "description": "Последний запуск reins probes за день. Пропуск: барьер мягче ожидания. Шум: барьер строже ожидания.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_probe_misses{project=\"$project\"} offset -1s",
+          "legendFormat": "пропуски"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_probe_noise{project=\"$project\"} offset -1s",
+          "legendFormat": "шум"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Сбои и споры",
+      "description": "Сбои харнеса, проверки без ответа, повторы ловушек, итоги, которые оспорил человек.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_harness_failures{project=\"$project\"} offset -1s",
+          "legendFormat": "сбои харнеса"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_checks_no_answer{project=\"$project\"} offset -1s",
+          "legendFormat": "проверки без ответа"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_pitfall_repeats{project=\"$project\"} offset -1s",
+          "legendFormat": "повторы ловушек"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_disputed_by{project=\"$project\"} offset -1s",
+          "legendFormat": "оспорено: {{name}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
       "type": "timeseries",
       "title": "Время решения хука",
       "description": "Время процесса хука до решения о действии.",
@@ -270,7 +672,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -308,7 +710,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_hook_ms_p50{project=\"$project\"}",
+          "expr": "reins_hook_ms_p50{project=\"$project\"} offset -1s",
           "legendFormat": "медиана"
         },
         {
@@ -317,16 +719,25 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_hook_ms_p95{project=\"$project\"}",
+          "expr": "reins_hook_ms_p95{project=\"$project\"} offset -1s",
           "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_hook_ms_max{project=\"$project\"} offset -1s",
+          "legendFormat": "максимум"
         }
       ]
     },
     {
-      "id": 6,
+      "id": 12,
       "type": "timeseries",
       "title": "Время проверки готовности",
-      "description": "Медиана времени проверки итога.",
+      "description": "Время проверки итога.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -334,7 +745,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 16,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -372,126 +783,25 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_check_ms_p50{project=\"$project\"}",
+          "expr": "reins_check_ms_p50{project=\"$project\"} offset -1s",
           "legendFormat": "медиана"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Возвраты на задачу",
-      "description": "Число отказов проверки на одну задачу.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "reins"
-      },
-      "interval": "1d",
-      "gridPos": {
-        "x": 0,
-        "y": 24,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "always",
-            "pointSize": 6,
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none"
-            }
-          }
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
         {
-          "refId": "A",
+          "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_returns_per_task{project=\"$project\"}",
-          "legendFormat": "возвратов на задачу"
+          "expr": "reins_check_ms_p95{project=\"$project\"} offset -1s",
+          "legendFormat": "p95"
         }
       ]
     },
     {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Цена сценария",
-      "description": "Среднее число токенов на один сценарий.",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "reins"
-      },
-      "interval": "1d",
-      "gridPos": {
-        "x": 12,
-        "y": 24,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2,
-            "fillOpacity": 0,
-            "showPoints": "always",
-            "pointSize": 6,
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "reins"
-          },
-          "expr": "reins_cost_per_scenario{project=\"$project\"}",
-          "legendFormat": "токенов"
-        }
-      ]
-    },
-    {
-      "id": 9,
+      "id": 13,
       "type": "timeseries",
       "title": "Текст от хуков",
-      "description": "Байты текста, который хуки дали агенту за день.",
+      "description": "Байты текста, который хуки дали агенту за день, по месту.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -499,7 +809,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -515,7 +825,7 @@
             "pointSize": 6,
             "spanNulls": false,
             "stacking": {
-              "mode": "none"
+              "mode": "normal"
             }
           }
         },
@@ -537,16 +847,16 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_context_bytes{project=\"$project\"}",
-          "legendFormat": "байт"
+          "expr": "reins_context_bytes_by{project=\"$project\"} offset -1s",
+          "legendFormat": "{{name}}"
         }
       ]
     },
     {
-      "id": 10,
+      "id": 14,
       "type": "timeseries",
-      "title": "Сбои и споры",
-      "description": "Сбои харнеса, итоги, которые оспорил человек, повторы ловушек.",
+      "title": "Цена сценария",
+      "description": "Среднее число токенов на один сценарий.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -554,7 +864,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 32,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -563,9 +873,9 @@
           "unit": "short",
           "min": 0,
           "custom": {
-            "drawStyle": "bars",
+            "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 60,
+            "fillOpacity": 0,
             "showPoints": "always",
             "pointSize": 6,
             "spanNulls": false,
@@ -592,31 +902,13 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_harness_failures{project=\"$project\"}",
-          "legendFormat": "сбои харнеса"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "reins"
-          },
-          "expr": "reins_disputed{project=\"$project\"}",
-          "legendFormat": "оспоренные итоги"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "reins"
-          },
-          "expr": "reins_pitfall_repeats{project=\"$project\"}",
-          "legendFormat": "повторы ловушек"
+          "expr": "reins_cost_per_scenario{project=\"$project\"} offset -1s",
+          "legendFormat": "токенов"
         }
       ]
     },
     {
-      "id": 11,
+      "id": 15,
       "type": "timeseries",
       "title": "Память и работа без модели",
       "description": "Доля использованных записей памяти, доля шагов без модели, эффект предложений крафта.",
@@ -627,7 +919,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -665,7 +957,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_memory_use{project=\"$project\"}",
+          "expr": "reins_memory_use{project=\"$project\"} offset -1s",
           "legendFormat": "память"
         },
         {
@@ -674,7 +966,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_no_model_share{project=\"$project\"}",
+          "expr": "reins_no_model_share{project=\"$project\"} offset -1s",
           "legendFormat": "без модели"
         },
         {
@@ -683,7 +975,7 @@
             "type": "prometheus",
             "uid": "reins"
           },
-          "expr": "reins_proposal_effect{project=\"$project\"}",
+          "expr": "reins_proposal_effect{project=\"$project\"} offset -1s",
           "legendFormat": "эффект предложений"
         }
       ]

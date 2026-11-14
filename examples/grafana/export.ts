@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// The export of the series of `reins metrics` (form 2) to a local VictoriaMetrics.
+// The export of the series of `reins metrics` (form 3) to a local VictoriaMetrics.
 // The journal is the source: the store of the stand is a view of it. Each run removes the series
 // `reins_*` from the store and writes the whole window again, so a point of the current day
-// always has its last value.
+// always has its last value. Before the export the script runs `reins probes`: the run writes the
+// counts of the barrier to the journal, so each day of an export has a point of the barrier.
 //
 //   node examples/grafana/export.ts [days=90] [url=http://127.0.0.1:8428] [project=here|<project>]
 //
@@ -13,11 +14,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 type Value = { value: number | null; n: number; parts?: Record<string, number> };
-type SeriesPoint = { from: string; to: string; measures?: Record<string, number | null>; [name: string]: unknown };
-export type Series = { metrics: number; step: string; project: string; names: string[]; measures?: string[]; points: SeriesPoint[] };
+type SeriesPoint = { from: string; to: string; measures?: Record<string, number | null>; by?: Record<string, Record<string, number>>; [name: string]: unknown };
+export type Series = { metrics: number; step: string; project: string; names: string[]; measures?: string[]; by?: string[]; points: SeriesPoint[] };
 export type Line = { metric: Record<string, string>; values: number[]; timestamps: number[] };
 
 const NAME = /^[a-z][a-z0-9_]{0,59}$/;
+// The name of a rule, a place or a label: the value of the label `name` of a series.
+const KEY = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
 
 // One line of the import of VictoriaMetrics for each number that has a value in the window.
 // A point without a value (null) gives no sample: the graph has a gap there, not a zero.
@@ -44,6 +47,10 @@ export function toLines(series: Series): Line[] {
       for (const [part, count] of Object.entries(v.parts ?? {})) if (NAME.test(part)) put(`${name}_parts`, { part }, ts, count);
     }
     for (const name of series.measures ?? []) if (NAME.test(name)) put(name, {}, ts, point.measures?.[name]);
+    for (const name of series.by ?? []) {
+      if (!NAME.test(name)) continue;
+      for (const [key, value] of Object.entries(point.by?.[name] ?? {})) if (KEY.test(key)) put(`${name}_by`, { name: key }, ts, value);
+    }
   }
   return [...lines.values()];
 }
@@ -71,8 +78,13 @@ async function main(): Promise<void> {
   }
   const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'cli.ts');
   const more = args.has('project') ? [`project=${args.get('project')}`] : [];
+  try {
+    execFileSync(process.execPath, [cli, 'probes'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    // No probes: the series has no point of the barrier for this run.
+  }
   const series = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', `days=${days}`, 'step=day', ...more], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean };
-  if (series.ok !== true || series.metrics !== 2) {
+  if (series.ok !== true || series.metrics !== 3) {
     console.log(JSON.stringify({ ok: false, error: 'bad_series', metrics: series.metrics ?? null }));
     process.exitCode = 1;
     return;

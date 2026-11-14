@@ -4,15 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { localUrl, toLines, type Series } from '../examples/grafana/export.ts';
-import { EIGHT, MEASURES } from '../src/journal/metrics.ts';
+import { BY, EIGHT, MEASURES } from '../src/journal/metrics.ts';
 
 const DAY1 = '2026-11-12T00:00:00.000Z';
 const DAY2 = '2026-11-13T00:00:00.000Z';
 const series: Series = {
-  metrics: 2, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'],
+  metrics: 3, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
   points: [
     { from: DAY1, to: DAY2, verified_share: { value: 0.04, n: 156, parts: { verified_form: 69, verified_result: 7 } }, cost_per_scenario: { value: null, n: 0 }, measures: { asks_per_task: 0.86, hook_ms_p50: null } },
-    { from: DAY2, to: '2026-11-14T00:00:00.000Z', verified_share: { value: 0.23, n: 125 }, cost_per_scenario: { value: 38333, n: 37 }, measures: { asks_per_task: 0.95, hook_ms_p50: 125 } },
+    { from: DAY2, to: '2026-11-14T00:00:00.000Z', verified_share: { value: 0.23, n: 125 }, cost_per_scenario: { value: 38333, n: 37 }, measures: { asks_per_task: 0.95, hook_ms_p50: 125 }, by: { questions_asked: { 'protect.harness': 12, 'default.write': 3, 'bad"name': 1 }, not_named: { x: 1 } } },
   ],
 };
 
@@ -23,6 +23,14 @@ test('grafana export: each number with a value gives a sample at the start of it
   assert.deepEqual(of('reins_verified_share_n')?.values, [156, 125]);
   assert.deepEqual(of('reins_verified_share_parts', 'verified_form'), { metric: { __name__: 'reins_verified_share_parts', project: 'all', step: 'day', part: 'verified_form' }, values: [69], timestamps: [Date.parse(DAY1)] });
   assert.deepEqual(of('reins_asks_per_task')?.values, [0.86, 0.95]);
+});
+
+test('grafana export: a number with a name of its own gives a series for each name', () => {
+  const by = toLines(series).filter((l) => (l.metric.__name__ ?? '').endsWith('_by'));
+  assert.deepEqual(by, [
+    { metric: { __name__: 'reins_questions_asked_by', project: 'all', step: 'day', name: 'protect.harness' }, values: [12], timestamps: [Date.parse(DAY2)] },
+    { metric: { __name__: 'reins_questions_asked_by', project: 'all', step: 'day', name: 'default.write' }, values: [3], timestamps: [Date.parse(DAY2)] },
+  ]);
 });
 
 test('grafana export: a point without a value gives no sample, not a zero', () => {
@@ -48,12 +56,14 @@ test('grafana export: the store is on this machine only', () => {
 test('grafana export: the dashboard asks only for the numbers that the series has', () => {
   const dir = path.join(import.meta.dirname, '..', 'examples', 'grafana');
   const dash = JSON.parse(fs.readFileSync(path.join(dir, 'dashboards', 'reins.json'), 'utf8')) as { panels: { targets: { expr: string }[] }[] };
-  const known = new Set<string>([...EIGHT, ...MEASURES].flatMap((n) => [`reins_${n}`, `reins_${n}_n`, `reins_${n}_parts`]));
-  const asked = dash.panels.flatMap((p) => p.targets.map((t) => t.expr.replace(/\{.*$/, '')));
+  const known = new Set<string>([...[...EIGHT, ...MEASURES].flatMap((n) => [`reins_${n}`, `reins_${n}_n`, `reins_${n}_parts`]), ...BY.map((n) => `reins_${n}_by`)]);
+  const asked = dash.panels.flatMap((p) => p.targets.flatMap((t) => t.expr.match(/reins_[a-z0-9_]+/g) ?? []));
   assert.ok(asked.length >= 10);
   for (const name of asked) assert.ok(known.has(name), name);
   // Each measure of the series is on the dashboard.
-  for (const name of MEASURES) assert.ok(asked.includes(`reins_${name}`), name);
+  for (const name of MEASURES) assert.ok(asked.includes(`reins_${name}`) || asked.includes(`reins_${name}_by`), name);
+  for (const name of BY) assert.ok(asked.includes(`reins_${name}_by`), name);
+  for (const name of EIGHT) assert.ok(asked.includes(`reins_${name}`), name);
   // The ports of the stand listen on this machine only.
   const compose = fs.readFileSync(path.join(dir, 'docker-compose.yml'), 'utf8');
   const ports = compose.split('\n').filter((l) => /^\s+- [\d.:]+:\d+$/.test(l));
