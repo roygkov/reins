@@ -74,6 +74,15 @@ Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, з�
 
 Плагин регистрирует хук перед каждым инструментом. Вместе с плагином `agentic` вопросы о записи удваиваются: барьеры должен держать один из двух.
 
+## Графики мер
+
+Стенд `examples/grafana` показывает ряды `reins metrics` в локальной Grafana. Ядро о стенде не знает: источник это журнал, хранилище стенда это его копия. Оба порта слушают только `127.0.0.1`.
+
+    docker compose -f examples/grafana/docker-compose.yml up -d
+    node examples/grafana/export.ts [days=90] [project=here|<project>]
+
+Дашборд: `http://127.0.0.1:3000/d/reins`. Экспорт удаляет ряды `reins_*` проекта из хранилища и пишет окно заново. Экспорт отклоняет адрес хранилища не на этой машине. Дашборд правь в файле `examples/grafana/dashboards/reins.json`.
+
 ## Правка схем
 
 Правь генератор, не файлы `.drawio`. Источник схем один: генератор; файлы `.drawio` это его вывод. PDF в репозитории нет.

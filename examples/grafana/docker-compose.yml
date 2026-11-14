@@ -1,0 +1,39 @@
+# The stand of the measures of the harness: a local VictoriaMetrics and a local Grafana.
+# Both ports listen on 127.0.0.1 only: the data of the harness does not leave the machine.
+#
+#   docker compose -f examples/grafana/docker-compose.yml up -d
+#   node examples/grafana/export.ts
+#   open http://127.0.0.1:3000/d/reins
+name: reins-measures
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.115.0
+    command:
+      - -retentionPeriod=2y
+      - -search.latencyOffset=0s
+      - -search.maxStalenessInterval=23h
+    ports:
+      - 127.0.0.1:8428:8428
+    volumes:
+      - vm:/victoria-metrics-data
+    restart: unless-stopped
+  grafana:
+    image: grafana/grafana-oss:11.6.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/reins/dashboards/reins.json
+    ports:
+      - 127.0.0.1:3000:3000
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/etc/reins/dashboards:ro
+    depends_on:
+      - victoriametrics
+    restart: unless-stopped
+volumes:
+  vm:

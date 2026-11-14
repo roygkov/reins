@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: reins
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /etc/reins/dashboards

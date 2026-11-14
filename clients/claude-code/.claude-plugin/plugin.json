@@ -1,5 +1,5 @@
 {
   "name": "reins",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Runs a scenario of the reins harness: the harness prepares the input and checks the report."
 }

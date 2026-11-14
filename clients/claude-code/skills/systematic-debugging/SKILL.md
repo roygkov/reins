@@ -20,6 +20,8 @@ and follow the procedure:
    `/reins:run memory-note`):
    - a permanent property of the system that somebody will hit again:
      `reins memory add pitfall '<fact and workaround>' task=<task> path=<path from the root of the repository>`;
+   - the same pitfall is in memory already (step 1 found it) and somebody hit it again: write the record with
+     the key `repeats=<id of the older record>`. The harness counts such records as repeats of a pitfall;
    - a single event that is corrected and visible in the git history: do not write it.
    A record of the agent waits for the veto of the human.
    A choice between ways to repair is a decision: give the human the command `reins memory decide`.
