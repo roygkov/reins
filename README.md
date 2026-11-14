@@ -68,9 +68,9 @@ Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, з�
 2. `claude plugin marketplace add ~/IdeaProjects/reins`
 3. `claude plugin install reins@reins`
 
-Адаптер и ядро копия берёт из `source` при каждом вызове. Сам вход `hooks/hook.ts` и файл `hooks/hooks.json` в копии не меняются: после их правки подними `version` в `plugin.json` и запусти `claude plugin update reins@reins`.
+Адаптер и ядро копия берёт из `source` при каждом вызове. Первый файл хука `hooks/start.mjs`, вход `hooks/hook.ts` и файл `hooks/hooks.json` в копии не меняются: после их правки подними `version` в `plugin.json` и запусти `claude plugin update reins@reins`.
 
-Старт сессии сверяет копию плагина у клиента с плагином в этом репозитории: версию и файлы `hooks/hook.ts` и `hooks/hooks.json`. При отличии первая строка контекста сессии называет обе версии и команду обновления.
+Старт сессии сверяет копию плагина у клиента с плагином в этом репозитории: версию и файлы `hooks/start.mjs`, `hooks/hook.ts` и `hooks/hooks.json`. При отличии первая строка контекста сессии называет обе версии и команду обновления.
 
 Без ключа `source` установленная копия на каждое действие задаёт вопрос «the adapter did not start».
 

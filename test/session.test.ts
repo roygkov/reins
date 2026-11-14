@@ -266,7 +266,7 @@ test('session: an event with a broken input never blocks the client', () => {
 test('session: the plugin registers the session events', () => {
   const hooks = JSON.parse(fs.readFileSync(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url), 'utf8')).hooks;
   for (const [name, mode] of [['SessionStart', 'session-start'], ['UserPromptSubmit', 'prompt'], ['Stop', 'stop'], ['SessionEnd', 'session-end']]) {
-    assert.match(hooks[name as string][0].hooks[0].command, new RegExp(`hook\\.ts" ${mode}$`), name);
+    assert.match(hooks[name as string][0].hooks[0].command, new RegExp(`start\\.mjs" ${mode}$`), name);
   }
 });
 

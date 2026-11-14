@@ -56,7 +56,7 @@ export function staleCopy(copy: string | undefined, own: string = path.join(HARN
     }
   };
   const [theirs, ours] = [version(copy), version(own)];
-  const files = ['hooks/hook.ts', 'hooks/hooks.json'].filter((name) => text(copy, name) !== text(own, name));
+  const files = ['hooks/start.mjs', 'hooks/hook.ts', 'hooks/hooks.json'].filter((name) => text(copy, name) !== text(own, name));
   if (theirs === ours && files.length === 0) return null;
   if (theirs !== ours) return `reins: the client runs the plugin ${theirs}, the harness has the plugin ${ours}. Say this to the human at the start of your answer: run \`claude plugin update reins@reins\` and start the client again.`;
   return `reins: the client runs a copy of the plugin ${theirs} where ${files.join(' and ')} differ from the harness. Say this to the human at the start of your answer: raise \`version\` in plugin.json, run \`claude plugin update reins@reins\` and start the client again.`;

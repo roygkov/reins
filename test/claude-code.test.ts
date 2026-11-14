@@ -11,6 +11,8 @@ import { readJournal } from '../src/journal/writer.ts';
 import { loadCases } from './cases.ts';
 
 const HOOK = fileURLToPath(new URL('../clients/claude-code/hooks/hook.ts', import.meta.url));
+// The first file of a hook as the plugin registers it: it turns the cache of compiled code on.
+const START = fileURLToPath(new URL('../clients/claude-code/hooks/start.mjs', import.meta.url));
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-code-'));
 after(() => fs.rmSync(SB, { recursive: true, force: true }));
@@ -140,7 +142,7 @@ test('claude-code: the plugin registers the hook before every tool', () => {
   assert.deepEqual(Object.keys(hooks).sort(), ['PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit']);
   assert.equal(hooks.PreToolUse[0].matcher, '.*');
   assert.equal(hooks.PreToolUse[0].hooks[0].onFailure, 'block');
-  assert.match(hooks.PreToolUse[0].hooks[0].command, /hooks\/hook\.ts" pre$/);
+  assert.match(hooks.PreToolUse[0].hooks[0].command, /hooks\/start\.mjs" pre$/);
 });
 
 test('claude-code: in the mode without permission questions a run of the tool approves nothing', () => {
@@ -305,7 +307,7 @@ test('claude-code: the start of a session says that the copy of the plugin of th
     const dir = path.join(b.root, name);
     fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
     fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
-    for (const file of ['hooks/hook.ts', 'hooks/hooks.json', '.claude-plugin/plugin.json']) fs.copyFileSync(path.join(own, file), path.join(dir, file));
+    for (const file of ['hooks/start.mjs', 'hooks/hook.ts', 'hooks/hooks.json', '.claude-plugin/plugin.json']) fs.copyFileSync(path.join(own, file), path.join(dir, file));
     change(dir);
     return dir;
   };
@@ -386,7 +388,7 @@ test('claude-code: a tool that ran and failed after a question is still the "yes
   assert.deepEqual(decisions(b), [{ decision: 'answered', session: 'abc' }]);
   // The client tells the harness about a failed tool.
   const hooks = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url)), 'utf8')).hooks;
-  assert.match(hooks.PostToolUseFailure[0].hooks[0].command, /hook\.ts" post$/);
+  assert.match(hooks.PostToolUseFailure[0].hooks[0].command, /start\.mjs" post$/);
 });
 
 test('claude-code: a question of a subordinate ends with the subordinate, not with the turn', () => {
@@ -529,6 +531,26 @@ test('claude-code: an adapter that does not load asks the human, and the journal
   const out = spawnSync(process.execPath, [path.join(cache, 'hook.ts'), 'pre'], { input: '{}', env: { ...env, REINS_CONFIG: config }, cwd: b.cwd, encoding: 'utf8' }).stdout;
   assert.equal(JSON.parse(out).hookSpecificOutput.permissionDecision, 'ask');
   assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure').length, 4);
+});
+
+test('claude-code: the hook keeps the compiled code of the harness in the state directory', () => {
+  const b = box();
+  const cache = path.join(b.state, 'compile-cache');
+  const first = (at: Box, tool: string, input: unknown): Out => run(START, at, ['pre'], event(at, 'PreToolUse', tool, input));
+  assert.equal(first(b, 'Read', { file_path: path.join(b.cwd, 'a.ts') }).code, 0);
+  // The first call writes the cache at its exit: the next call reads it and does not compile again.
+  const count = (dir: string): number => fs.readdirSync(dir, { withFileTypes: true }).reduce((sum, e) => sum + (e.isDirectory() ? count(path.join(dir, e.name)) : 1), 0);
+  assert.ok(fs.existsSync(cache) && count(cache) > 0);
+  // The decision is the same with the cache as without it.
+  assert.equal(decision(first(b, 'mcp__tracker__add_comment', { change: '7' })), decision(pre(b, 'mcp__tracker__add_comment', { change: '7' })));
+  assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'policy.decision').length, 3);
+  // A cache that cannot be written does not stop the hook: the state directory is a file here.
+  const broken = box();
+  fs.writeFileSync(path.join(broken.root, 'not-a-dir'), '');
+  fs.writeFileSync(broken.config, JSON.stringify({ ...JSON.parse(fs.readFileSync(broken.config, 'utf8')), state_dir: path.join(broken.root, 'not-a-dir') }));
+  const out = first(broken, 'Bash', { command: 'rm -rf /tmp/x' });
+  assert.equal(out.code, 0);
+  assert.equal(out.json.hookSpecificOutput.permissionDecision, 'ask');
 });
 
 test('claude-code: the journal has the time of a decision of the hook and the size of the text given to the agent', () => {
