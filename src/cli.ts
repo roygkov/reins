@@ -46,7 +46,7 @@ import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { BY, EIGHT, MEASURES, eight, ofProject, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
-import { addRecord, brokenRecords, closeCase, countUses, importRecords, isShared, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
+import { addRecord, brokenRecords, census, noteShown, closeCase, countUses, importRecords, isShared, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
 // What a refusal of the memory says besides its code: the field of a text, the cause, the limit.
@@ -499,8 +499,8 @@ function main(args: string[]): Out {
     // The form 2: each point carries `measures` besides the eight numbers; `measures` names them.
     // The form 3: each point carries `by`, the numbers with a name of their own; `by` names them.
     // The form 4: `measures` and `by` carry what the models spent, by model and by kind.
-    // The form 5: the measure `fails_disputed`.
-    return { ok: true, metrics: 5, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 5: the measure `fails_disputed`. The form 6: the measures of the memory.
+    return { ok: true, metrics: 6, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();
@@ -524,12 +524,19 @@ function main(args: string[]): Out {
         more: found.more,
       };
     }
+    // The count of the memory now, written to the journal: the series of the metrics shows it by day.
+    // `worst` names the records that were given many times and that no report cited.
+    if (first === 'census' && rest.length === 0) {
+      const c = census(rt);
+      rt.journal.write({ kind: 'memory.counted', project: rt.project, data: { active: c.active, cited: c.cited, dead: c.dead, unseen: c.unseen } });
+      return { ok: true, ...c };
+    }
     if (first === 'show' && rest.length === 1) {
       const record = listRecords(rt).find((r) => r.id === rest[0]);
       if (record === undefined) throw new Stop('unknown_record');
       // The human reads a record in any state. The journal counts only a record in use: a record
       // that is out of use was not given to the agent for the work.
-      if (record.state === 'active') rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: 1 } });
+      if (record.state === 'active') noteShown(rt, record.id);
       return { ok: true, record };
     }
     if (first === 'veto' && rest.length === 1 && rest[0] !== undefined) {
@@ -722,7 +729,7 @@ function main(args: string[]): Out {
     return { ok: true, task: r.task.id, state: r.task.state, probe: true, answer: r.answer, checks_left: r.left, returns_left: Math.max(0, (r.task.manifest?.done.retries ?? 0) - r.task.returns) };
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory census', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

@@ -13,7 +13,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import type { Runtime } from '../src/core/runtime.ts';
 import { beforeAction } from '../src/client/before.ts';
 import { sessionStart } from '../src/client/session.ts';
-import { addRecord, findRecords, listRecords, memoryDir, recordsForInput, restoreRecord, searchRecords, shareRecord, vetoRecord, wrongRecord } from '../src/memory/store.ts';
+import { addRecord, census, countUses, findRecords, listRecords, memoryDir, recordsForInput, restoreRecord, searchRecords, shareRecord, vetoRecord, wrongRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -196,6 +196,28 @@ test('recall: the command line finds records by words, in every project', () => 
   assert.deepEqual(run(b.cwd, ['memory', 'find', 'one cache']).records, []);
 });
 
+test('recall: the count of the memory names the records that were given many times and never cited', () => {
+  const b = box();
+  const dead = note(b, 'a record that the agent gets and never cites');
+  const live = note(b, 'a record that a report cites');
+  const draft = note(b, 'a record that nobody was given');
+  // A record that is given by the search is counted; the third record is never found.
+  for (let i = 0; i < 5; i += 1) searchRecords(b.rt, ['report', 'cites'], 20, NOW);
+  for (let i = 0; i < 4; i += 1) searchRecords(b.rt, ['never', 'cites'], 20, NOW);
+  countUses(b.rt, `the work used ${live}`, NOW);
+  // Four gives are not many yet.
+  assert.deepEqual(census(b.rt, NOW), { active: 3, cited: 1, dead: 0, unseen: 1, worst: [] });
+  searchRecords(b.rt, ['never', 'cites'], 20, NOW);
+  assert.deepEqual(census(b.rt, NOW), { active: 3, cited: 1, dead: 1, unseen: 1, worst: [{ id: dead, type: 'pitfall', given: 5 }] });
+  assert.ok(draft !== dead);
+  // The command writes the count to the journal.
+  const said = JSON.parse(spawnSync(process.execPath, [CLI, 'memory', 'census'], { encoding: 'utf8', cwd: b.cwd, env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config } }).stdout);
+  assert.deepEqual([said.ok, said.active, said.cited, said.dead, said.unseen], [true, 3, 1, 1, 1]);
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.counted');
+  assert.deepEqual(rows.map((r) => r.data), [{ active: 3, cited: 1, dead: 1, unseen: 1 }]);
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+});
+
 test('recall: a search gives only records in use, a limited count of them, and writes the read down', () => {
   const b = box();
   const draft = note(b, 'a draft about the gateway that waits for a veto');
@@ -205,12 +227,14 @@ test('recall: a search gives only records in use, a limited count of them, and w
   assert.equal(listRecords(b.rt, NOW).find((r) => r.id === draft)?.state, 'pending');
   assert.deepEqual(searchRecords(b.rt, ['gateway'], 20, NOW), { records: [], more: 0 });
   assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.read').length, 0, 'a search that found nothing is no read');
+  // It is a miss of the memory, with the count of the words of the search.
+  assert.deepEqual(readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.search_missed').map((r) => r.data), [{ n: 1 }]);
   // The newest first, the count has a limit, and the rest is counted.
   for (let i = 0; i < 5; i += 1) note(b, `gateway note ${i}`, [], NOW - 10_000 + i);
   const found = searchRecords(b.rt, ['gateway', 'note'], 3, NOW);
   assert.deepEqual([found.records.map((r) => r.text), found.more], [['gateway note 4', 'gateway note 3', 'gateway note 2'], 2]);
   const reads = readJournal(b.rt.journal.file).filter((r) => r.kind === 'memory.read');
-  assert.deepEqual(reads.map((r) => r.data), [{ n: 3 }], 'the journal counts the records that the agent got');
+  assert.deepEqual(reads.map((r) => r.data), [{ n: 3, how: 'find' }], 'the journal counts the records that the agent got, and names the way of the read');
   for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
   // No word is no search.
   assert.deepEqual(searchRecords(b.rt, ['  '], 20, NOW), { records: [], more: 0 });
@@ -234,7 +258,7 @@ test('recall: a search gives short rows, and one command gives a record whole', 
   assert.deepEqual([shown.ok, shown.record.text, shown.record.because, shown.record.rejected, shown.record.state], [true, long, 'the pool has ten places and the peak has thirty', 'a bigger pool', 'active']);
   assert.deepEqual(run(['memory', 'show', 'm0000000000']), { ok: false, error: 'unknown_record' });
   // A record that the agent got is counted as given.
-  assert.deepEqual(readJournal(path.join(b.root, 'state', 'journal.jsonl')).filter((r) => r.kind === 'memory.read').map((r) => r.data), [{ n: 1 }, { n: 1 }]);
+  assert.deepEqual(readJournal(path.join(b.root, 'state', 'journal.jsonl')).filter((r) => r.kind === 'memory.read').map((r) => r.data), [{ n: 1, how: 'find' }, { n: 1, how: 'show' }]);
   // A record for every project says so in its row.
   run(['memory', 'share', row.id]);
   assert.equal(run(['memory', 'find', 'gateway']).records[0].scope, 'common');

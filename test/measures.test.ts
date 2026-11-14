@@ -108,15 +108,21 @@ test('measures: a point of the series carries the numbers by rule, by place and 
     row('executor.cost', { tokens: 200, ms: 0, calls: 1, model: 'claude-haiku-5-5', input: 50, output: 150, cache_write: 0, cache_read: 0 }),
     // A row of an older journal: no model, no kinds.
     row('executor.cost', { tokens: 300, ms: 0, calls: 1 }),
+    row('memory.read', { n: 12, how: 'start', bytes: 2400 }), row('memory.read', { n: 3, how: 'task', bytes: 900 }),
+    row('memory.read', { n: 2, how: 'find' }), row('memory.search_missed', { n: 2 }),
+    // A read of an older journal names no way.
+    row('memory.read', { n: 4 }),
+    row('memory.record_changed', { record: 'm0000000001', type: 'pitfall', state: 'active', wrong: 1 }),
+    row('memory.counted', { active: 300, cited: 40, dead: 9, unseen: 120 }), row('memory.counted', { active: 301, cited: 41, dead: 8, unseen: 119 }),
   ];
   const points = series(rows, from, from + 2 * day, day);
   assert.equal(points.length, 2);
   assert.deepEqual(Object.keys(points[0]?.measures ?? {}), [...MEASURES]);
   assert.deepEqual(Object.keys(points[0]?.by ?? {}), [...BY]);
-  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 } });
-  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0 });
+  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 } });
+  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119 });
   // A day without rows: no name by rule, no value of the barrier.
-  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {} });
+  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {} });
   assert.equal(points[1]?.measures.probe_misses, null);
   assert.equal(points[1]?.measures.denied, 0);
 });

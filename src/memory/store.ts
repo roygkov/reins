@@ -94,6 +94,8 @@ const ENCODED = ['paths', 'anchor', 'anchors', 'because', 'rejected', 'revisit',
 export const memoryDir = (rt: Runtime): string => rt.memoryDir ?? path.join(rt.stateDir, 'memory');
 const fileOf = (rt: Runtime, type: string, id: string): string => path.join(memoryDir(rt), type, `${id}.md`);
 const usesFile = (rt: Runtime): string => path.join(rt.stateDir, 'memory-state', 'uses.json');
+// How many times each record was given to the agent: the measure of a record that takes the place and helps nobody.
+const givesFile = (rt: Runtime): string => path.join(rt.stateDir, 'memory-state', 'gives.json');
 
 // Secrets do not go into the memory: known forms of tokens and of "name = value" pairs are cut.
 export function scrub(text: string): string {
@@ -205,6 +207,51 @@ export function commitMemory(): void {
       && git(['-c', 'commit.gpgsign=false', 'commit', '-q', '--no-verify', '-m', `reins memory: ${names}${ids.size > 5 ? ` and ${ids.size - 5} more` : ''}`, '--', ...files]).ok;
     if (!done) rt.journal.write({ kind: 'harness.failure', project: rt.project, data: { where: 'memory_commit' } });
   }
+}
+
+function readGives(rt: Runtime): Record<string, number> {
+  try {
+    const value: unknown = JSON.parse(fs.readFileSync(givesFile(rt), 'utf8'));
+    return value !== null && typeof value === 'object' ? (value as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+// A read of the memory that gave records to the agent: the row of the journal names the way of
+// the read (`how`) and, where the text is a part of the context, its size; each record gets one
+// more "given". A count that cannot be written is lost: the read itself must not fail on it.
+export type ReadHow = 'start' | 'cases' | 'state' | 'task' | 'find' | 'show' | 'paths';
+function noteRead(rt: Runtime, how: ReadHow, ids: string[], bytes?: number): void {
+  if (ids.length === 0) return;
+  rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: ids.length, how, ...(bytes !== undefined ? { bytes } : {}) } });
+  try {
+    fs.mkdirSync(path.dirname(givesFile(rt)), { recursive: true });
+    locked(`${givesFile(rt)}.lock`, () => {
+      const gives = readGives(rt);
+      for (const id of ids) gives[id] = (gives[id] ?? 0) + 1;
+      const tmp = `${givesFile(rt)}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(gives));
+      fs.renameSync(tmp, givesFile(rt));
+    });
+  } catch {
+    // No count.
+  }
+}
+export function noteShown(rt: Runtime, id: string): void {
+  noteRead(rt, 'show', [id]);
+}
+
+// The count of the memory now: the records in use, how many of them a report cited, how many
+// were given `DEAD_GIVES` times or more and never cited (`dead`), how many were never given
+// (`unseen`). `worst`: the dead records, the most given first.
+const DEAD_GIVES = 5;
+export type Census = { active: number; cited: number; dead: number; unseen: number; worst: { id: string; type: RecordType; given: number }[] };
+export function census(rt: Runtime, now: number = Date.now()): Census {
+  const gives = readGives(rt);
+  const active = listRecords(rt, now).filter((r) => r.state === 'active');
+  const dead = active.filter((r) => r.uses === 0 && (gives[r.id] ?? 0) >= DEAD_GIVES).map((r) => ({ id: r.id, type: r.type, given: gives[r.id] ?? 0 })).sort((a, b) => b.given - a.given || a.id.localeCompare(b.id));
+  return { active: active.length, cited: active.filter((r) => r.uses > 0).length, dead: dead.length, unseen: active.filter((r) => (gives[r.id] ?? 0) === 0).length, worst: dead.slice(0, 20) };
 }
 
 function readUses(rt: Runtime): Record<string, { n: number; last: string }> {
@@ -506,7 +553,7 @@ export function findRecords(rt: Runtime, query: { paths: string[]; project?: str
   const project = query.project ?? rt.project;
   const found = listRecords(rt, now).filter((r) => r.state === 'active' && (r.project === project || r.scope === 'common') && (query.all === true || about(r, query.paths)));
   // A read that found nothing is no event: only a read that gave records is written down.
-  if (found.length > 0 && query.silent !== true) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: found.length } });
+  if (query.silent !== true) noteRead(rt, 'paths', found.map((r) => r.id));
   return found;
 }
 
@@ -524,6 +571,7 @@ export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Dat
   // The cases and the state have their own places in the start of a session: see `casesForStart` and `stateForStart`.
   const found = findRecords(rt, { paths: [], all: true, silent: true }, now).filter((r) => r.type !== 'case' && r.type !== 'state').sort(byWeight);
   const lines: string[] = [];
+  const ids: string[] = [];
   let size = 0;
   for (const r of found) {
     const where = [r.type, ...(r.paths[0] !== undefined ? [r.paths[0]] : []), ...(r.scope === 'common' ? ['common'] : [])].join(', ');
@@ -531,9 +579,10 @@ export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Dat
     if (size + Buffer.byteLength(line) + 1 > maxBytes) break;
     size += Buffer.byteLength(line) + 1;
     lines.push(line);
+    ids.push(r.id);
   }
   // The journal counts the records that the agent got, not those that did not fit.
-  if (lines.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: lines.length } });
+  noteRead(rt, 'start', ids, size);
   return { lines, more: found.length - lines.length };
 }
 
@@ -551,7 +600,9 @@ export function searchRecords(rt: Runtime, words: string[], limit = 20, now: num
   }).sort(byWeight);
   const records = found.slice(0, limit);
   // The journal counts the records that the agent got: the share of used records rests on it.
-  if (records.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: records.length } });
+  noteRead(rt, 'find', records.map((r) => r.id));
+  // A search that found nothing is no read; it is a miss of the memory, with the count of the words.
+  if (records.length === 0) rt.journal.write({ kind: 'memory.search_missed', project: rt.project, data: { n: wanted.length } });
   return { records, more: Math.max(0, found.length - limit) };
 }
 
@@ -622,6 +673,7 @@ export function casesForStart(rt: Runtime, maxBytes: number, now: number = Date.
     .map((r) => ({ r, carried: r.carried_day === day ? r.carried ?? 0 : (r.carried ?? 0) + 1 }))
     .sort((a, b) => b.carried - a.carried || b.r.created.localeCompare(a.r.created) || a.r.id.localeCompare(b.r.id));
   const lines: string[] = [];
+  const given: string[] = [];
   const shown: { id: string; carried: number }[] = [];
   let size = 0;
   const one = (text: string, max: number): string => text.replace(/\s+/g, ' ').slice(0, max);
@@ -630,6 +682,7 @@ export function casesForStart(rt: Runtime, maxBytes: number, now: number = Date.
     if (size + Buffer.byteLength(line) + 1 > maxBytes) break;
     size += Buffer.byteLength(line) + 1;
     lines.push(line);
+    given.push(r.id);
     if (r.carried_day !== day) shown.push({ id: r.id, carried });
   }
   // Only a case that got a line was shown: a case that did not fit is not carried by this start.
@@ -640,7 +693,7 @@ export function casesForStart(rt: Runtime, maxBytes: number, now: number = Date.
       if (file !== undefined) write(rt, { ...file, carried, carried_day: day });
     }
   }
-  if (lines.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: lines.length } });
+  noteRead(rt, 'cases', given, size);
   return { lines, more: cases.length - lines.length };
 }
 
@@ -655,7 +708,7 @@ export function stateForStart(rt: Runtime, maxBytes: number, now: number = Date.
   if (state === undefined) return [];
   const head = `State of this project (${state.id}, written ${state.created.slice(0, 10)}):`;
   const body = [state.text, ...(state.next !== undefined ? ['Next:', state.next] : []), ...(state.unverified !== undefined ? ['Not verified:', state.unverified] : [])].join('\n');
-  rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: 1 } });
+  noteRead(rt, 'state', [state.id], Math.min(maxBytes, Buffer.byteLength(head) + 1 + Buffer.byteLength(body)));
   if (Buffer.byteLength(head) + 1 + Buffer.byteLength(body) <= maxBytes) return [head, ...body.split('\n')];
   // The mark of the cut is a part of the size. Whole characters only: the cut is counted in bytes.
   const mark = `… cut: \`reins memory show ${state.id}\` gives the rest.`;
@@ -730,7 +783,7 @@ export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes:
     out.push({ id: r.id, type: r.type, text: r.text });
   }
   // The journal counts the records that the agent got, after the limit of the size.
-  if (out.length > 0) rt.journal.write({ kind: 'memory.read', project: rt.project, data: { n: out.length } });
+  noteRead(rt, 'task', out.map((r) => r.id), size);
   return out;
 }
 

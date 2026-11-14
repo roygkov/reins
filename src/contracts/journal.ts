@@ -24,7 +24,7 @@ export const EVENT_KINDS = [
   // executors and cost
   'executor.started', 'executor.report_received', 'executor.report_judged', 'executor.level_raised', 'executor.cost', 'executor.tool_failed', 'executor.tool_output',
   // memory
-  'memory.read', 'memory.record_used', 'memory.record_changed',
+  'memory.read', 'memory.search_missed', 'memory.counted', 'memory.record_used', 'memory.record_changed',
   // craft
   'craft.pattern_found', 'craft.proposal_created', 'craft.proposal_resolved', 'craft.effect_measured',
   // the harness itself
@@ -106,6 +106,10 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'executor.tool_failed': { tool: 'token' },
   'executor.tool_output': { tool: 'token', size: 'number' },
   'memory.read': { n: 'number' },
+  // A search of the memory that found nothing: the count of the words of the search.
+  'memory.search_missed': { n: 'number' },
+  // The count of the memory at one moment: the records in use, those that a report cited, those that were given many times and never cited, those that were never given.
+  'memory.counted': { active: 'number', cited: 'number', dead: 'number', unseen: 'number' },
   'memory.record_used': { record: 'token' },
   'memory.record_changed': { record: 'token', state: ['pending', 'active', 'stale', 'replaced', 'vetoed', 'closed'] },
   'craft.pattern_found': { pattern: 'token', n: 'number' },

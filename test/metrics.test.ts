@@ -22,7 +22,7 @@ test('metrics: only a check of the result counts as verified, and the parts name
 test('metrics: a record that was replaced, went stale or came back is not a written record', () => {
   const changed = (data: Record<string, unknown>): JournalRow => row('memory.record_changed', { record: 'm1', type: 'pitfall', ...data });
   const rows = [changed({ state: 'active' }), changed({ state: 'pending' }), changed({ state: 'replaced' }), changed({ state: 'stale' }), changed({ state: 'active', restored: 1 }), changed({ state: 'vetoed' })];
-  assert.deepEqual(summarize(rows).memory, { written: 2, vetoed: 1, reads: 0 });
+  assert.deepEqual(summarize(rows).memory, { written: 2, vetoed: 1, reads: 0, given: {}, bytes: {}, finds: { asked: 0, missed: 0 }, wrong: 0, census: null });
 });
 
 test('metrics: a refusal at a protected place is counted apart from a question about it', () => {
@@ -73,7 +73,7 @@ test('metrics: a series gives the eight numbers for each day, by the same formul
   assert.deepEqual(points.map((p) => p.harness_failures.value), [0, 0, 1]);
   // After the bounds of its bucket a point has the eight numbers, then the measures of the harness itself.
   for (const p of points) assert.deepEqual(Object.keys(p).slice(2), [...EIGHT, 'measures', 'by']);
-  for (const p of points) assert.deepEqual(Object.keys(p.measures), ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed']);
+  for (const p of points) assert.deepEqual(Object.keys(p.measures), ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen']);
   // One bucket over the whole span gives what the week gives for the same rows.
   const [all] = series(rows, from, from + 7 * DAY, 7 * DAY);
   const week = eight(rows, from + 7 * DAY - 1);

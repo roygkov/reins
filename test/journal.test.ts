@@ -16,8 +16,8 @@ for (const c of loadCases<Case>('journal-cases')) {
 }
 
 test('journal: the list of kinds is closed and matches the specification', () => {
-  assert.equal(EVENT_KINDS.length, 50);
-  assert.equal(new Set(EVENT_KINDS).size, 50);
+  assert.equal(EVENT_KINDS.length, 52);
+  assert.equal(new Set(EVENT_KINDS).size, 52);
   const perSource = Object.fromEntries(SOURCES.map((s) => [s, EVENT_KINDS.filter((k) => sourceOf(k) === s).length]));
-  assert.deepEqual(perSource, { task: 13, policy: 7, check: 6, executor: 7, memory: 3, craft: 4, harness: 10 });
+  assert.deepEqual(perSource, { task: 13, policy: 7, check: 6, executor: 7, memory: 5, craft: 4, harness: 10 });
 });

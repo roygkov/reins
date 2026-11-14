@@ -15,7 +15,11 @@ export type Metrics = {
   protected: { ask: number; deny: number }; // the attempts at a protected place: a question to the human, or a refusal
   failures: number;
   shape_changes: number;
-  memory: { written: number; vetoed: number; reads: number };
+  // `given`: the records that the reads gave, `bytes`: the size of the text of the memory in the
+  // context, both by the way of the read (a row of an older journal names no way: `unknown`).
+  // `finds`: the searches of the agent and how many found nothing. `wrong`: the marks "this was
+  // wrong" of the human. `census`: the last count of the memory in the period.
+  memory: { written: number; vetoed: number; reads: number; given: Record<string, number>; bytes: Record<string, number>; finds: { asked: number; missed: number }; wrong: number; census: { active: number; cited: number; dead: number; unseen: number } | null };
   // What the tools of the connectors gave back: the calls and the bytes of each tool, the largest
   // sum first. The tools of the client itself write no row, so they are not here.
   tool_output: Record<string, { n: number; bytes: number }>;
@@ -63,7 +67,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
     unstable_checks: 0, fails_disputed: 0,
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
-    memory: { written: 0, vetoed: 0, reads: 0 },
+    memory: { written: 0, vetoed: 0, reads: 0, given: {}, bytes: {}, finds: { asked: 0, missed: 0 }, wrong: 0, census: null },
     tool_output: {},
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
     asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
@@ -183,6 +187,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
       case 'memory.record_changed':
         // The file of a removed record that went away past its term is no second veto.
         if (data.gone !== undefined) break;
+        if (typeof data.wrong === 'number') m.memory.wrong += 1;
         // A pitfall that is written: a new record, not a step, a share or a mark on an old one.
         if (data.type === 'pitfall' && (data.state === 'active' || data.state === 'pending') && data.scope === undefined && data.wrong === undefined && data.restored === undefined) {
           m.pitfalls.written += 1;
@@ -194,8 +199,20 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         // A record that another one replaced, that went stale or that came back was written before, too.
         else if (data.scope === undefined && data.wrong === undefined && data.step === undefined && data.restored === undefined && (data.state === 'active' || data.state === 'pending')) m.memory.written += 1;
         break;
-      case 'memory.read':
+      case 'memory.read': {
         m.memory.reads += 1;
+        const how = typeof data.how === 'string' ? data.how : 'unknown';
+        if (typeof data.n === 'number') m.memory.given[how] = (m.memory.given[how] ?? 0) + data.n;
+        if (typeof data.bytes === 'number') m.memory.bytes[how] = (m.memory.bytes[how] ?? 0) + data.bytes;
+        if (how === 'find') m.memory.finds.asked += 1;
+        break;
+      }
+      case 'memory.search_missed':
+        m.memory.finds.asked += 1;
+        m.memory.finds.missed += 1;
+        break;
+      case 'memory.counted':
+        if (typeof data.active === 'number' && typeof data.cited === 'number' && typeof data.dead === 'number' && typeof data.unseen === 'number') m.memory.census = { active: data.active, cited: data.cited, dead: data.dead, unseen: data.unseen };
         break;
       case 'executor.tool_output': {
         // A row without a name or without a size says nothing about a tool.
@@ -292,13 +309,13 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // The numbers of a period that have a name of their own inside one measure (the form 3): the
 // questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
 // place, the disputed results by label; the tokens and the answers of the models by the name of
 // the model, the tokens by kind (the form 4). A name without rows is absent.
-export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds'] as const;
+export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes'] as const;
 export type By = Record<(typeof BY)[number], Record<string, number>>;
 export function measures(rows: JournalRow[]): Measures {
   return measured(rows).measures;
@@ -325,6 +342,14 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       tokens_total: m.tokens.total,
       model_calls: m.tokens.calls,
       fails_disputed: m.fails_disputed,
+      memory_finds: m.memory.finds.asked,
+      memory_find_misses: m.memory.finds.missed,
+      memory_wrong: m.memory.wrong,
+      memory_bytes: Object.values(m.memory.bytes).reduce((sum, n) => sum + n, 0),
+      memory_active: m.memory.census?.active ?? null,
+      memory_cited: m.memory.census?.cited ?? null,
+      memory_dead: m.memory.census?.dead ?? null,
+      memory_unseen: m.memory.census?.unseen ?? null,
     },
     by: {
       questions_asked: pick(m.questions, (at) => at.asked),
@@ -334,6 +359,8 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       model_tokens: pick(m.tokens.by_model, (at) => at.tokens),
       model_calls: pick(m.tokens.by_model, (at) => at.calls),
       token_kinds: pick(m.tokens.by_kind, (n) => n),
+      memory_given: pick(m.memory.given, (n) => n),
+      memory_bytes: pick(m.memory.bytes, (n) => n),
     },
   };
 }

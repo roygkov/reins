@@ -216,7 +216,7 @@ test('week: the pack sets how long a removed record is kept, and the sweep remov
   assert.deepEqual(rows.map((r) => r.data), [{ record: old, type: 'decision', state: 'vetoed', gone: 1 }]);
   for (const row of rows) assert.deepEqual(validateRow(row), []);
   // The end of the file is no veto and no new record in the numbers.
-  assert.deepEqual(summarize(rows).memory, { written: 0, vetoed: 0, reads: 0 });
+  assert.deepEqual(summarize(rows).memory, { written: 0, vetoed: 0, reads: 0, given: {}, bytes: {}, finds: { asked: 0, missed: 0 }, wrong: 0, census: null });
   // A second sweep finds nothing; the record cannot come back.
   sweep(b.rt, NOW);
   assert.equal(readJournalSince(b.rt.stateDir).filter((r) => r.kind === 'memory.record_changed' && r.data?.gone === 1).length, 1);
