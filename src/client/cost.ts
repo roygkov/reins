@@ -8,7 +8,13 @@ import { currentScenario } from '../core/sessions.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
 
-export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number };
+// `model`: the name of the model that spent, as the client gives it. `parts`: the tokens by kind;
+// `cache_read` is not a part of `tokens` (the tokens that were read from the cache cost a small
+// share and are not counted in the limit of a task).
+export type CostParts = { input?: number; output?: number; cache_write?: number; cache_read?: number };
+export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number; model?: string; parts?: CostParts };
+const MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/;
+const PARTS = ['input', 'output', 'cache_write', 'cache_read'] as const;
 export type CostReply = { task?: string; tokens?: number; over?: boolean };
 
 // The limit of tokens of a task now: what the human gave on top of the first limit counts.
@@ -33,6 +39,12 @@ export function noteCost(rt: Runtime, e: CostEvent): CostReply {
   const task = mutateTask(rt, id, (t) => ({ ...t, cost: { tokens: (t.cost?.tokens ?? 0) + tokens } }));
   if (task === null) return {};
   const row: RowInput = { kind: 'executor.cost', project: rt.project, task: id, executor: 'main', data: { tokens, ms: e.ms ?? 0, calls: e.calls ?? 1 } };
+  const data = row.data as Record<string, unknown>;
+  if (e.model !== undefined && MODEL.test(e.model)) data.model = e.model;
+  for (const part of PARTS) {
+    const n = e.parts?.[part];
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) data[part] = Math.round(n);
+  }
   if (e.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(e.session)) row.session = e.session;
   if (task.scenario !== undefined) {
     row.scenario = task.scenario;

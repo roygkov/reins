@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "editable": false,
   "refresh": "",
   "time": {
@@ -1170,6 +1170,337 @@
     {
       "id": 15,
       "type": "timeseries",
+      "title": "Токены по моделям",
+      "description": "Токены за день по имени модели: вход, выход и запись в кэш, у сценариев и свободных запросов. Чтение из кэша сюда не входит. Строки журнала до 14.11.2026 не называют модель: они идут как unknown.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "неделю назад"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    8
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_model_tokens_by{project=\"$project\"} offset -1s",
+          "legendFormat": "{{name}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_tokens_total{project=\"$project\"} offset 604799s",
+          "legendFormat": "неделю назад"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Ответы моделей",
+      "description": "Число ответов модели за день по имени модели. До 14.11.2026 строка считала один просмотр файла сессии, а не один ответ.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "неделю назад"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    8
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_model_calls_by{project=\"$project\"} offset -1s",
+          "legendFormat": "{{name}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_model_calls{project=\"$project\"} offset 604799s",
+          "legendFormat": "неделю назад"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Токены по виду",
+      "description": "Токены за день по виду: вход, выход, запись в кэш, чтение из кэша. Данные есть с 14.11.2026.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_token_kinds_by{project=\"$project\"} offset -1s",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Доля чтения из кэша",
+      "description": "Доля входа, которую модель прочитала из кэша. Высокая доля: длинный контекст стоит дешевле.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_token_kinds_by{project=\"$project\", name=\"cache_read\"} offset -1s / ignoring(name) sum without(name) (reins_token_kinds_by{project=\"$project\", name=~\"cache_read|cache_write|input\"} offset -1s)",
+          "legendFormat": "чтение из кэша"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
       "title": "Цена сценария",
       "description": "Среднее число токенов на один сценарий.",
       "datasource": {
@@ -1179,7 +1510,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -1275,7 +1606,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 20,
       "type": "timeseries",
       "title": "Память и работа без модели",
       "description": "Доля использованных записей памяти, доля шагов без модели, эффект предложений крафта.",
@@ -1286,7 +1617,7 @@
       "interval": "1d",
       "gridPos": {
         "x": 12,
-        "y": 56,
+        "y": 72,
         "w": 12,
         "h": 8
       },

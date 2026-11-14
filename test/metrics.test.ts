@@ -73,7 +73,7 @@ test('metrics: a series gives the eight numbers for each day, by the same formul
   assert.deepEqual(points.map((p) => p.harness_failures.value), [0, 0, 1]);
   // After the bounds of its bucket a point has the eight numbers, then the measures of the harness itself.
   for (const p of points) assert.deepEqual(Object.keys(p).slice(2), [...EIGHT, 'measures', 'by']);
-  for (const p of points) assert.deepEqual(Object.keys(p.measures), ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise']);
+  for (const p of points) assert.deepEqual(Object.keys(p.measures), ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls']);
   // One bucket over the whole span gives what the week gives for the same rows.
   const [all] = series(rows, from, from + 7 * DAY, 7 * DAY);
   const week = eight(rows, from + 7 * DAY - 1);

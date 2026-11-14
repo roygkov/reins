@@ -220,7 +220,9 @@ function pre(): void {
 }
 
 // What the model spent since the last look: the new lines of the transcript of the session. A
-// line of the model carries its usage; the tokens that were read from the cache are not counted.
+// line of the model carries its usage and the name of the model; the tokens that were read from
+// the cache are not counted in the cost, they go to the row as a number of their own. Each model
+// of the part gets its own row.
 const MAX_MARKS = 50;
 
 function spent(rt: Runtime, session: string | undefined): void {
@@ -257,7 +259,7 @@ function spent(rt: Runtime, session: string | undefined): void {
   if (part === null) return;
   const buffer = part;
   const end = buffer.length;
-  let tokens = 0;
+  const byModel = new Map<string, { tokens: number; calls: number; input: number; output: number; cache_write: number; cache_read: number }>();
   let last: unknown;
   for (const line of buffer.subarray(0, end).toString('utf8').split('\n')) {
     let value: unknown;
@@ -276,9 +278,23 @@ function spent(rt: Runtime, session: string | undefined): void {
     // One answer of the model can stand in several lines: it is counted once.
     if (message.id !== undefined && message.id === last) continue;
     last = message.id;
-    for (const key of ['input_tokens', 'output_tokens', 'cache_creation_input_tokens']) if (typeof usage[key] === 'number') tokens += usage[key];
+    const model = typeof message.model === 'string' ? message.model : '';
+    const at2 = byModel.get(model) ?? { tokens: 0, calls: 0, input: 0, output: 0, cache_write: 0, cache_read: 0 };
+    const n = (key: string): number => (typeof usage[key] === 'number' && Number.isFinite(usage[key]) && (usage[key] as number) > 0 ? (usage[key] as number) : 0);
+    at2.input += n('input_tokens');
+    at2.output += n('output_tokens');
+    at2.cache_write += n('cache_creation_input_tokens');
+    at2.cache_read += n('cache_read_input_tokens');
+    at2.tokens += n('input_tokens') + n('output_tokens') + n('cache_creation_input_tokens');
+    at2.calls += 1;
+    byModel.set(model, at2);
   }
-  noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens });
+  // A look that found nothing still tells the core: it answers with the task of the session.
+  if (byModel.size === 0) noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens: 0 });
+  for (const [model, at2] of byModel) {
+    const { tokens, calls, ...parts } = at2;
+    noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens, calls, ...(model !== '' ? { model } : {}), parts });
+  }
 }
 
 function post(): void {

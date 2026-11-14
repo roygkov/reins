@@ -626,10 +626,10 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 3, 'day', 'all', 14]);
-  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise']);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 4, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls']);
   assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
-  assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed']);
+  assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds']);
   assert.deepEqual(Object.keys(r.json.points[0].by), r.json.by);
   assert.deepEqual(r.json.names, ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']);
   // The buckets follow one another without a gap; the last one ends at the end of the day of today.

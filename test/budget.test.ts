@@ -164,6 +164,16 @@ test('budget: the clients report what the model spent', () => {
   fs.appendFileSync(transcript, line(500, 200));
   post();
   assert.deepEqual([loadTask(b.rt, opened.task)?.cost?.tokens, loadTask(b.rt, opened.task)?.waiting], [1110, 'limit']);
+  // A row of the first client carries the kinds of the tokens and the count of the answers; these lines name no model.
+  const ofClaude = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost' && r.client !== 'stdio');
+  assert.deepEqual(ofClaude.map((r) => r.data), [{ tokens: 150, ms: 0, calls: 1, input: 100, output: 40, cache_write: 10, cache_read: 9000 }, { tokens: 710, ms: 0, calls: 1, input: 500, output: 200, cache_write: 10, cache_read: 9000 }]);
+  // Each model of the new lines gets its own row with its name; a name that is no token is left out.
+  const named = (id: string, model: string, output: number) => `${JSON.stringify({ type: 'assistant', message: { id, model, usage: { input_tokens: 1, output_tokens: output } } })}\n`;
+  fs.appendFileSync(transcript, named('a1', 'claude-fable-5-2', 10) + named('a2', 'claude-haiku-5-5', 20) + named('a3', 'claude-fable-5-2', 30) + named('a4', '<synthetic>', 5));
+  post();
+  const last = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost').slice(-3);
+  assert.deepEqual(last.map((r) => [r.data?.model, r.data?.tokens, r.data?.calls]), [['claude-fable-5-2', 42, 2], ['claude-haiku-5-5', 21, 1], [undefined, 6, 1]]);
+  for (const r of last) assert.deepEqual(validateRow(r), []);
 });
 
 // ---- The report of a subordinate executor.

@@ -37,6 +37,11 @@ export type Metrics = {
   // The last run of the commands with a known answer against the barrier in the period: the
   // commands that it let pass wrongly (misses) and that it asked about wrongly (noise).
   probes: { runs: number; n: number | null; misses: number | null; noise: number | null };
+  // What the models spent, of scenarios and of free requests: the tokens that count in the cost
+  // (`total`), the answers of the models (`calls`), both by the name of the model, and the tokens
+  // by kind. A row without a name of a model is of the model `unknown`. `cache_read` is not a
+  // part of `total`. A row of an older journal has no kinds: `by_kind` counts the rows that have them.
+  tokens: { total: number; calls: number; by_model: Record<string, { tokens: number; calls: number }>; by_kind: { input: number; output: number; cache_write: number; cache_read: number } };
 };
 export type Spread = { n: number; p50: number | null; p95: number | null; max: number | null };
 
@@ -62,6 +67,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
     asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
     probes: { runs: 0, n: null, misses: null, noise: null },
+    tokens: { total: 0, calls: 0, by_model: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
   };
   const asked = new Map<string, { asked: number; yes: number }>();
   const question = (rule: string): { asked: number; yes: number } => asked.get(rule) ?? (asked.set(rule, { asked: 0, yes: 0 }), asked.get(rule) as { asked: number; yes: number });
@@ -147,6 +153,17 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         const at = (m.context[data.where] ??= { n: 0, bytes: 0 });
         at.n += 1;
         at.bytes += data.bytes;
+        break;
+      }
+      case 'executor.cost': {
+        const tokens = typeof data.tokens === 'number' ? data.tokens : 0;
+        const calls = typeof data.calls === 'number' ? data.calls : 0;
+        const at = (m.tokens.by_model[typeof data.model === 'string' ? data.model : 'unknown'] ??= { tokens: 0, calls: 0 });
+        at.tokens += tokens;
+        at.calls += calls;
+        m.tokens.total += tokens;
+        m.tokens.calls += calls;
+        for (const kind of ['input', 'output', 'cache_write', 'cache_read'] as const) if (typeof data[kind] === 'number') m.tokens.by_kind[kind] += data[kind];
         break;
       }
       case 'harness.barrier_probed':
@@ -271,12 +288,13 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // The numbers of a period that have a name of their own inside one measure (the form 3): the
 // questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
-// place, the disputed results by label. A name without rows is absent.
-export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed'] as const;
+// place, the disputed results by label; the tokens and the answers of the models by the name of
+// the model, the tokens by kind (the form 4). A name without rows is absent.
+export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds'] as const;
 export type By = Record<(typeof BY)[number], Record<string, number>>;
 export function measures(rows: JournalRow[]): Measures {
   return measured(rows).measures;
@@ -300,12 +318,17 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       checks_no_answer: m.checks.none,
       probe_misses: m.probes.misses,
       probe_noise: m.probes.noise,
+      tokens_total: m.tokens.total,
+      model_calls: m.tokens.calls,
     },
     by: {
       questions_asked: pick(m.questions, (at) => at.asked),
       questions_yes: pick(m.questions, (at) => at.yes),
       context_bytes: pick(m.context, (at) => at.bytes),
       disputed: pick(m.disputed, (n) => n),
+      model_tokens: pick(m.tokens.by_model, (at) => at.tokens),
+      model_calls: pick(m.tokens.by_model, (at) => at.calls),
+      token_kinds: pick(m.tokens.by_kind, (n) => n),
     },
   };
 }

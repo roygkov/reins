@@ -498,7 +498,8 @@ function main(args: string[]): Out {
     const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs);
     // The form 2: each point carries `measures` besides the eight numbers; `measures` names them.
     // The form 3: each point carries `by`, the numbers with a name of their own; `by` names them.
-    return { ok: true, metrics: 3, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 4: `measures` and `by` carry what the models spent, by model and by kind.
+    return { ok: true, metrics: 4, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();
