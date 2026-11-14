@@ -11,20 +11,23 @@ import { isObj } from '../contracts/shape.ts';
 import type { Runtime } from '../core/runtime.ts';
 import { loadTask } from '../core/runtime.ts';
 import { readJournalSince } from '../journal/writer.ts';
-import { addRecord, listRecords, retireRecord } from '../memory/store.ts';
+import { addRecord, census, listRecords, retireRecord } from '../memory/store.ts';
+import { overTargets, series, summarize } from '../journal/metrics.ts';
 
 // `rollback`: an accepted proposal made things worse; the key is the id of that proposal.
 // `repeated_approval`: a rule asked many times and the human said "yes" every time.
 // `tool_fails_often`: one tool ended with an error many times.
 // `repeated_chain`: the same three tools of connectors, in the same order, in several free tasks.
-export type Pattern = { pattern: 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'check_unstable' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'level_too_high' | 'rollback'; key: string; n: number };
+// `record_dead`: a memory record that the agent got many times and that no report cited; the key is the record.
+// `target_exceeded`: a measure of the harness was above its target of the packs on several days; the key is the measure.
+export type Pattern = { pattern: 'record_dead' | 'target_exceeded' | 'repeated_question' | 'repeated_approval' | 'tool_fails_often' | 'repeated_chain' | 'check_fails_often' | 'check_unstable' | 'repeated_contract' | 'record_unused' | 'level_too_low' | 'level_too_high' | 'rollback'; key: string; n: number };
 // A change that the code made ready: the acceptance of the human applies it. A manifest goes into
 // the person pack; a memory record goes stale.
 // The undo of a manifest removes the file that the craft wrote, when it still holds that manifest.
 // `pitfall`: a record for the memory, with the text that the code wrote from the facts of the journal;
 // `record`: the record that the acceptance made. `undo` of a memory change: the record goes out of
 // the work also when a report cited it lately.
-export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale'; undo?: true } | { kind: 'remove_manifest'; path: string; manifest: unknown } | { kind: 'pitfall'; text: string; record?: string };
+export type Change = { kind: 'manifest'; path: string; manifest: unknown } | { kind: 'memory'; record: string; state: 'stale'; undo?: true; dead?: true } | { kind: 'remove_manifest'; path: string; manifest: unknown } | { kind: 'pitfall'; text: string; record?: string };
 export type Effect = 'better' | 'same' | 'worse' | 'not_measured';
 // `rejected_n`: the size of the pattern when the human rejected it. `applied`: the ready change was made.
 // `undone`: the time when the human accepted the undo of this proposal.
@@ -47,6 +50,7 @@ const LEVEL_RANK: Readonly<Record<string, number>> = { weak: 0, medium: 1, stron
 const RAISE_SHARE = 0.5; // ... in this share of its tasks: the level of its manifest is too low
 const MIN_CONTRACTS = 3; // contracts with one name: the work repeats, it can be a scenario
 const UNUSED_DAYS = 30; // a memory record that no report cited for this long
+const MIN_DAYS_OVER = 2; // a measure above its target on this many of the last seven days: it is no accident of one day
 const PERIOD_MS = 14 * DAY;
 const MEASURE_AFTER_MS = 7 * DAY; // an accepted proposal is measured after this long ...
 const MEASURE_UNTIL_MS = 28 * DAY; // ... and no longer tried after this long
@@ -63,7 +67,7 @@ function count(rows: JournalRow[]): Counts {
   // The answers of the checks for one scenario, one work and one report.
   const answers = new Map<string, Set<string>>();
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
-  let question = false;
+  // The questions and the answers by rule are counted by the code of the metrics: the summary, the dashboard and the craft never show two different numbers.
   // The tools of the connectors that each free task called, in order. A task of a scenario repeats by design: it is not counted.
   const steps = new Map<string, string[]>();
   // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
@@ -77,8 +81,6 @@ function count(rows: JournalRow[]): Counts {
     }
     if (row.kind === 'policy.decision') {
       c.decisions += 1;
-      // A question that no human saw (a mode of the client without questions) is no load on the human.
-      question = row.data?.outcome === 'ask' && row.data.unshown !== 1;
       const tool = row.data?.tool;
       if (typeof tool === 'string' && row.task !== undefined && row.scenario === undefined) {
         const list = steps.get(row.task) ?? [];
@@ -86,20 +88,9 @@ function count(rows: JournalRow[]): Counts {
         if (list[list.length - 1] !== tool) list.push(tool);
         steps.set(row.task, list);
       }
-    } else if (row.kind === 'policy.basis') {
-      const rule = row.data?.rule;
-      if (question && typeof rule === 'string') add(c.asked, rule);
-      question = false;
     } else if (row.kind === 'executor.tool_failed') {
       const tool = row.data?.tool;
       if (typeof tool === 'string') add(c.failed, tool);
-    } else if (row.kind === 'task.human_decision') {
-      // The answer of the human to a question of a rule. A row without a rule (an older journal) is not counted.
-      // A rule that guards the harness itself or the form of the client is no matter of the craft: its question is never "too many".
-      const rule = row.data?.rule;
-      if (typeof rule !== 'string' || rule.startsWith('protect.') || rule.startsWith('adapter.')) continue;
-      if (row.data?.decision === 'answered') add(c.yes, rule);
-      else if (row.data?.decision === 'refused') add(c.no, rule);
     } else if (row.scenario === undefined) continue;
     else if (row.kind === 'check.answered' && row.fp !== undefined && typeof row.data?.report === 'string' && typeof row.data.result === 'string' && (answers.set(pairKey(row), (answers.get(pairKey(row)) ?? new Set<string>()).add(row.data.result)), row.data.probe === 1)) continue;
     else if (row.kind === 'check.answered' && row.data?.probe === 1) continue;
@@ -133,6 +124,13 @@ function count(rows: JournalRow[]): Counts {
     for (const key of seen) add(c.chains, key);
   }
   for (const [key, results] of answers) if (results.has('PASS') && results.has('FAIL')) add(c.unstable, key.split(' ')[0] ?? '');
+  // A rule that guards the harness itself or the form of the client is no matter of the craft: its question is never "too many".
+  for (const [rule, q] of Object.entries(summarize(rows).questions)) {
+    if (rule.startsWith('protect.') || rule.startsWith('adapter.')) continue;
+    if (q.asked > 0) c.asked.set(rule, q.asked);
+    if (q.yes > 0) c.yes.set(rule, q.yes);
+    if (q.no > 0) c.no.set(rule, q.no);
+  }
   return c;
 }
 
@@ -190,6 +188,26 @@ function unusedRecords(rt: Runtime, now: number): Pattern[] {
   return out;
 }
 
+// The memory records of the project that the agent got many times and that no report cited: they
+// take the place in the context and help nobody. A decision is not judged by citations.
+function deadRecords(rt: Runtime, now: number): Pattern[] {
+  const own = new Map(listRecords(rt, now).map((r) => [r.id, r]));
+  return census(rt, now).worst.filter((d) => d.type !== 'decision' && own.get(d.id)?.project === rt.project).map((d) => ({ pattern: 'record_dead' as const, key: d.id, n: d.given }));
+}
+
+// The days of a period on which each measure stood above its target of the packs.
+function daysOver(rt: Runtime, rows: JournalRow[], from: number, to: number): Map<string, number> {
+  const targets = rt.merged.targets;
+  if (targets === undefined || to <= from) return new Map();
+  return new Map(overTargets(series(rows, from, to, DAY), targets).over.map((o) => [o.name, o.days_over]));
+}
+
+// A measure of the harness that stood above its target on several of the last seven days.
+function targetPatterns(rt: Runtime, rows: JournalRow[], now: number): Pattern[] {
+  const to = Math.floor(now / DAY) * DAY + DAY;
+  return [...daysOver(rt, rows, to - 7 * DAY, to)].filter(([, days]) => days >= MIN_DAYS_OVER).map(([name, days]) => ({ pattern: 'target_exceeded' as const, key: name, n: days }));
+}
+
 // The manifest of the last contract with this name: the ready content of a scenario.
 function contractManifest(rt: Runtime, name: string): unknown {
   let best: { at: number; manifest: unknown } | undefined;
@@ -211,6 +229,7 @@ function contractManifest(rt: Runtime, name: string): unknown {
 
 function changeOf(rt: Runtime, found: Pattern, now: number): Change | undefined {
   if (found.pattern === 'record_unused') return { kind: 'memory', record: found.key, state: 'stale' };
+  if (found.pattern === 'record_dead') return { kind: 'memory', record: found.key, state: 'stale', dead: true };
   if (found.pattern === 'repeated_contract' && NAME.test(found.key)) {
     const manifest = contractManifest(rt, found.key);
     if (manifest !== undefined) return { kind: 'manifest', path: `manifests/${found.key}.json`, manifest };
@@ -266,7 +285,10 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
   const perWeek = rt.merged.craft?.per_week;
   // An undo is outside the count: it comes from a measure, not from a pattern.
   let week = [...known.values()].filter((p) => p.pattern !== 'rollback' && now - Date.parse(p.created) < 7 * DAY && Date.parse(p.created) <= now).length;
-  for (const found of [...detect(rows, rt.merged.craft), ...unusedRecords(rt, now)]) {
+  const unused = unusedRecords(rt, now);
+  // A record that is unused and dead is one matter: the older pattern speaks about it.
+  const dead = deadRecords(rt, now).filter((d) => !unused.some((u) => u.key === d.key));
+  for (const found of [...detect(rows, rt.merged.craft), ...unused, ...dead, ...targetPatterns(rt, rows, now)]) {
     const before = known.get(`${found.pattern} ${found.key}`);
     if (before !== undefined && !(before.state === 'rejected' && found.n >= 2 * (before.rejected_n ?? before.n))) continue;
     // The questions and the approvals of one rule are one matter for the human: one proposal about the rule is enough.
@@ -310,6 +332,8 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
 function apply(rt: Runtime, p: Proposal, now: number): boolean {
   const change = p.change;
   if (change === undefined) return false;
+  // A dead record goes out of the work only while no report cited it: a citation since the proposal says that it helps.
+  if (change.kind === 'memory' && change.dead === true) return listRecords(rt, now).find((r) => r.id === change.record)?.uses === 0 && retireRecord(rt, change.record, now, 0);
   if (change.kind === 'memory') return retireRecord(rt, change.record, now, change.undo === true ? 0 : (rt.merged.craft?.unused_days ?? UNUSED_DAYS));
   // The human accepted the pitfall: the record is the word of the human, in use at once. The
   // proposal keeps the name of the record: an undo of the proposal takes that record out of the work.
@@ -400,7 +424,12 @@ const compare = (after: number, before: number): Effect => (after < before ? 'be
 
 // What an accepted proposal did: the same scenario or rule before the acceptance and after it,
 // over equal periods. Without enough data after the acceptance the effect is "not measured".
-function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
+function effectOf(p: Proposal, before: Counts, after: Counts, over?: { before: number; after: number }): Effect {
+  if (p.pattern === 'target_exceeded') {
+    // The days above the target before the acceptance and after it. Nobody worked after it: nothing is measured.
+    if (over === undefined || after.decisions === 0) return 'not_measured';
+    return compare(over.after, over.before);
+  }
   if (p.pattern === 'repeated_question' || p.pattern === 'repeated_approval') {
     // No decision of the policy after the acceptance: nobody worked, so nothing is measured.
     if (after.decisions === 0 || (before.asked.get(p.key) ?? 0) === 0) return 'not_measured';
@@ -447,7 +476,7 @@ function effectOf(p: Proposal, before: Counts, after: Counts): Effect {
     // before. A lower level that brings one costs more than it saves.
     return (after.returned.get(p.key) ?? 0) + (after.raised.get(p.key) ?? 0) > 0 ? 'worse' : 'better';
   }
-  if (p.pattern === 'record_unused') {
+  if (p.pattern === 'record_unused' || p.pattern === 'record_dead') {
     // The record went out of the work. The human brought it back: the change was wrong. Nobody
     // brought it back while the agent worked: the memory is smaller at no cost.
     // A change that was not made (a report cited the record meanwhile) changed nothing: nothing is measured.
@@ -494,7 +523,8 @@ export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {
     const span = Math.min(age, PERIOD_MS);
     const rows = readJournalSince(rt.stateDir, at - span);
     const within = (from: number, to: number): JournalRow[] => rows.filter((r) => { const t = Date.parse(r.ts); return t >= from && t < to; });
-    const effect = effectOf(p, count(within(at - span, at)), count(within(at, at + span)));
+    const over = p.pattern === 'target_exceeded' ? { before: daysOver(rt, rows, at - span, at).get(p.key) ?? 0, after: daysOver(rt, rows, at, at + span).get(p.key) ?? 0 } : undefined;
+    const effect = effectOf(p, count(within(at - span, at)), count(within(at, at + span)), over);
     if (effect === p.effect) continue;
     const next: Proposal = { ...p, effect };
     save(rt, next);

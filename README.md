@@ -83,7 +83,7 @@ Claude Code: `claude --plugin-dir ~/IdeaProjects/reins/clients/claude-code`, з�
     docker compose -f examples/grafana/docker-compose.yml up -d
     node examples/grafana/export.ts [days=90] [project=here|<project>]
 
-Дашборд: `http://127.0.0.1:3000/d/reins`. Экспорт сначала запускает `reins probes`: запуск пишет числа барьера в журнал. Экспорт удаляет ряды `reins_*` проекта из хранилища и пишет окно заново. Экспорт отклоняет адрес хранилища не на этой машине. Дашборд правь в файле `examples/grafana/dashboards/reins.json`.
+Дашборд: `http://127.0.0.1:3000/d/reins`. Экспорт сначала запускает `reins probes`: запуск пишет числа барьера в журнал. Экспорт удаляет ряды `reins_*` проекта из хранилища и пишет окно заново. Экспорт отклоняет адрес хранилища не на этой машине. Дашборд правь в файле `examples/grafana/dashboards/reins.json`. Пороги мер задаёт раздел `targets` пакета: дашборд, `reins status`, сводка недели и крафт читают одни числа.
 
 Экспорт по расписанию на macOS: `examples/grafana/schedule.sh install` ставит задачу launchd, которая запускает экспорт раз в час. `schedule.sh remove` снимает её, `schedule.sh status` показывает состояние. Журнал запусков: `~/Library/Logs/reins-measures-export.log`.
 

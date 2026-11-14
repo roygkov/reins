@@ -13,7 +13,8 @@ import { validateRow } from '../src/contracts/journal.ts';
 import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
 import type { JournalRow } from '../src/contracts/journal.ts';
 import { applyDue, detect, listProposals, measure, propose, resolveProposal, proposalLine } from '../src/craft/craft.ts';
-import { addRecord, listRecords, restoreRecord } from '../src/memory/store.ts';
+import { addRecord, countUses, listRecords, restoreRecord, searchRecords } from '../src/memory/store.ts';
+import { writeWeek, weekText } from '../src/craft/weekly.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -661,4 +662,73 @@ test('craft: a check that answers PASS and FAIL for one work and one report is u
   assert.equal(detect([check('FAIL', same, 'r1', { check: 'v1' }), check('PASS', same, 'r1', { check: 'v1' })]).length, 1);
   // A scenario that the packs tell the craft to leave alone gets no proposal.
   assert.deepEqual(detect([check('FAIL', same, 'r1'), check('PASS', same, 'r1')], { keep: ['code-change'] }), []);
+});
+
+// ---- The measures of the harness as patterns.
+
+test('craft: a memory record that the agent got many times and that no report cited is a pattern, and the acceptance makes it stale', () => {
+  const b = box();
+  const dead = addRecord(b.rt, { type: 'pitfall', text: 'the gateway needs a warm cache', paths: [], by: 'human' }, NOW - DAY);
+  const live = addRecord(b.rt, { type: 'pitfall', text: 'the gateway needs a token of the day', paths: [], by: 'human' }, NOW - DAY);
+  const decision = addRecord(b.rt, { type: 'decision', text: 'the gateway keeps one cache', because: 'two caches went out of step', paths: [], by: 'human' }, NOW - DAY);
+  assert.ok(dead.ok && live.ok && decision.ok);
+  // Every record is given five times; one of them is cited by a report.
+  for (let i = 0; i < 5; i += 1) searchRecords(b.rt, ['gateway'], 20, NOW);
+  countUses(b.rt, `the work used ${live.record.id}`, NOW);
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.n, p.change]), [['record_dead', dead.record.id, 5, { kind: 'memory', record: dead.record.id, state: 'stale', dead: true }]], 'a decision is not judged by citations');
+  assert.equal(resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW), true);
+  assert.equal(listRecords(b.rt, NOW).find((r) => r.id === dead.record.id)?.state, 'stale');
+  // A record that a report cited after the proposal stays in the work.
+  const next = box();
+  const late = addRecord(next.rt, { type: 'pitfall', text: 'the gateway needs a warm cache', paths: [], by: 'human' }, NOW - DAY);
+  assert.ok(late.ok);
+  for (let i = 0; i < 5; i += 1) searchRecords(next.rt, ['gateway'], 20, NOW);
+  const open = propose(next.rt, NOW);
+  countUses(next.rt, `the work used ${late.record.id}`, NOW);
+  assert.equal(resolveProposal(next.rt, open[0]?.id ?? '', 'accepted', NOW), true);
+  assert.deepEqual([listRecords(next.rt, NOW).find((r) => r.id === late.record.id)?.state, listProposals(next.rt)[0]?.applied], ['active', false]);
+});
+
+test('craft: a measure above its target of the packs on several days is a pattern, and its effect is the count of such days', () => {
+  const b = box();
+  const hook = (ms: number) => ({ kind: 'policy.decision', data: { outcome: 'allow', action_kind: 'read', env: 'local', ms } });
+  const day0 = Math.floor(NOW / DAY) * DAY;
+  // No target in the packs: no pattern, whatever the numbers.
+  rows(b, day0 - 2 * DAY + 3600_000, times(20, [hook(900)]));
+  rows(b, day0 - DAY + 3600_000, times(20, [hook(900)]));
+  assert.deepEqual(propose(b.rt, NOW), []);
+  b.rt.merged.targets = { hook_ms_p95: 300, harness_failures: 0, not_a_measure: 1 };
+  const made = propose(b.rt, NOW);
+  assert.deepEqual(made.map((p) => [p.pattern, p.key, p.n, p.change]), [['target_exceeded', 'hook_ms_p95', 2, undefined]]);
+  for (const r of readJournal(b.rt.journal.file).filter((x) => x.kind.startsWith('craft.'))) assert.deepEqual(validateRow(r), []);
+  // One day above the target is an accident: no pattern.
+  const one = box();
+  one.rt.merged.targets = { hook_ms_p95: 300 };
+  rows(one, day0 - DAY + 3600_000, times(20, [hook(900)]));
+  assert.deepEqual(propose(one.rt, NOW), []);
+  // The effect: after the acceptance the hook is fast again.
+  const id = made[0]?.id ?? '';
+  assert.equal(resolveProposal(b.rt, id, 'accepted', NOW), true);
+  for (let d = 1; d <= 8; d += 1) rows(b, NOW + d * DAY, times(20, [hook(100)]));
+  const measured = measure(b.rt, NOW + 9 * DAY);
+  assert.deepEqual(measured.map((p) => [p.id, p.effect]), [[id, 'better']]);
+});
+
+test('craft: the summary names the targets, and the packs set how often it is written', () => {
+  const b = box();
+  b.rt.merged.targets = { hook_ms_p95: 300 };
+  const day0 = Math.floor(NOW / DAY) * DAY;
+  rows(b, day0 - DAY + 3600_000, times(5, [{ kind: 'policy.decision', data: { outcome: 'allow', action_kind: 'read', env: 'local', ms: 700 } }]));
+  const text = weekText(b.rt, NOW);
+  assert.match(text, /## Targets\n\n\| measure \| target \| days above \| days with a value \| worst day \|\n\|---\|---\|---\|---\|---\|\n\| hook_ms_p95 \| 300 \| 1 \| 1 \| 700 \|/);
+  // Seven days by the code: the fourth day writes nothing. Three days by the packs: it writes.
+  assert.notEqual(writeWeek(b.rt, NOW), null);
+  assert.equal(writeWeek(b.rt, NOW + 4 * DAY), null);
+  b.rt.merged.craft = { summary_days: 3 };
+  assert.notEqual(writeWeek(b.rt, NOW + 4 * DAY), null);
+  assert.equal(writeWeek(b.rt, NOW + 5 * DAY), null);
+  // The form of the section of the targets.
+  assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', targets: { hook_ms_p95: 300, probe_noise: 0, asks_per_task: 1.5, disputed: -1, 'Bad Name': 1 } }, 'person').errors.map((e) => `${e.code} ${e.path}`).sort(), ['bad_name targets.Bad Name', 'not_integer targets.asks_per_task', 'not_positive targets.disputed']);
+  assert.equal(validateSettings({ pack: 1, level: 'person', name: 'me', targets: [] }, 'person').errors[0]?.code, 'not_object');
 });

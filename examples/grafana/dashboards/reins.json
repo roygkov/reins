@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 6,
+  "version": 7,
   "editable": false,
   "refresh": "",
   "time": {
@@ -73,6 +73,49 @@
           "max": 1
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -179,7 +222,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -237,7 +324,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -313,7 +444,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -371,7 +546,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -407,7 +626,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Вопросов на задачу",
-      "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение. Красная зона: больше 1.",
+      "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение. Красный пунктир: порог из пакета.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -434,24 +653,55 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "off"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
               {
-                "color": "transparent",
-                "value": null
+                "id": "custom.drawStyle",
+                "value": "line"
               },
               {
-                "color": "red",
-                "value": 1.01
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -471,6 +721,15 @@
           },
           "expr": "reins_asks_per_task{project=\"$project\"} offset -1s",
           "legendFormat": "вопросов на задачу"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_max{project=\"$project\", name=\"asks_per_task\"} offset -1s",
+          "legendFormat": "порог"
         }
       ]
     },
@@ -509,7 +768,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -581,7 +884,51 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -617,7 +964,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Барьер: пропуски",
-      "description": "Последний запуск reins probes за день. Пропуск: барьер мягче ожидания. Один пропуск известен. Красная зона: больше 1.",
+      "description": "Последний запуск reins probes за день. Пропуск: барьер мягче ожидания. Красный пунктир: порог из пакета.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -645,24 +992,55 @@
             },
             "axisSoftMax": 3,
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "off"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
               {
-                "color": "transparent",
-                "value": null
+                "id": "custom.drawStyle",
+                "value": "line"
               },
               {
-                "color": "red",
-                "value": 1.01
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -682,6 +1060,15 @@
           },
           "expr": "reins_probe_misses{project=\"$project\"} offset -1s",
           "legendFormat": "пропуски"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_max{project=\"$project\", name=\"probe_misses\"} offset -1s",
+          "legendFormat": "порог"
         }
       ]
     },
@@ -717,24 +1104,55 @@
             },
             "axisSoftMax": 3,
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
               {
-                "color": "transparent",
-                "value": null
+                "id": "custom.drawStyle",
+                "value": "line"
               },
               {
-                "color": "red",
-                "value": 0.01
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -754,6 +1172,15 @@
           },
           "expr": "reins_probe_noise{project=\"$project\"} offset -1s",
           "legendFormat": "шум"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_max{project=\"$project\", name=\"probe_noise\"} offset -1s",
+          "legendFormat": "порог"
         }
       ]
     },
@@ -788,24 +1215,55 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line"
+              "mode": "off"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
               {
-                "color": "transparent",
-                "value": null
+                "id": "custom.drawStyle",
+                "value": "line"
               },
               {
-                "color": "red",
-                "value": 0.01
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -868,7 +1326,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "Время решения хука",
-      "description": "Время процесса хука до решения о действии. Красная зона: больше 300 мс, порог для p95.",
+      "description": "Время процесса хука до решения о действии. Красный пунктир: порог для p95 из пакета.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -895,24 +1353,55 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "off"
             }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
               {
-                "color": "transparent",
-                "value": null
+                "id": "custom.drawStyle",
+                "value": "line"
               },
               {
-                "color": "red",
-                "value": 300
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
               }
             ]
           }
-        },
-        "overrides": []
+        ]
       },
       "options": {
         "legend": {
@@ -950,6 +1439,15 @@
           },
           "expr": "reins_hook_ms_max{project=\"$project\"} offset -1s",
           "legendFormat": "максимум"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_max{project=\"$project\", name=\"hook_ms_p95\"} offset -1s",
+          "legendFormat": "порог"
         }
       ]
     },
@@ -989,6 +1487,49 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -1108,6 +1649,49 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "неделю назад"
             },
             "properties": [
@@ -1212,6 +1796,49 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -1322,6 +1949,49 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "неделю назад"
             },
             "properties": [
@@ -1393,8 +2063,8 @@
     {
       "id": 17,
       "type": "timeseries",
-      "title": "Токены по виду",
-      "description": "Токены за день по виду: вход, выход, запись в кэш, чтение из кэша. Данные есть с 14.11.2026.",
+      "title": "Запись длинного контекста в кэш заново",
+      "description": "Ответы модели, которые записали в кэш 150 тыс. токенов и больше: сессия вернулась после простоя. Красный пунктир: порог из пакета. Данные есть с 14.11.2026.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -1418,6 +2088,117 @@
             "pointSize": 6,
             "spanNulls": false,
             "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_cache_rewrites{project=\"$project\"} offset -1s",
+          "legendFormat": "ответы"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_max{project=\"$project\", name=\"cache_rewrites\"} offset -1s",
+          "legendFormat": "порог"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Токены по виду",
+      "description": "Токены за день по виду: вход, выход, запись в кэш, чтение из кэша. Данные есть с 14.11.2026.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
               "mode": "normal"
             },
             "thresholdsStyle": {
@@ -1425,7 +2206,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1449,7 +2274,7 @@
       ]
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "timeseries",
       "title": "Доля чтения из кэша",
       "description": "Доля входа, которую модель прочитала из кэша. Высокая доля: длинный контекст стоит дешевле.",
@@ -1459,8 +2284,8 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 12,
-        "y": 64,
+        "x": 0,
+        "y": 72,
         "w": 12,
         "h": 8
       },
@@ -1484,7 +2309,51 @@
           },
           "max": 1
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1508,7 +2377,7 @@
       ]
     },
     {
-      "id": 19,
+      "id": 20,
       "type": "timeseries",
       "title": "Цена сценария",
       "description": "Среднее число токенов на один сценарий.",
@@ -1518,7 +2387,7 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 72,
         "w": 12,
         "h": 8
@@ -1543,6 +2412,49 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -1615,7 +2527,7 @@
       ]
     },
     {
-      "id": 20,
+      "id": 21,
       "type": "timeseries",
       "title": "Память: выдано записей",
       "description": "Записи, которые харнес дал агенту за день, по способу: start (старт сессии), cases (дела), state (состояние), task (вход задачи), find и show (поиск агента). Строки до 14.11.2026 идут как unknown.",
@@ -1625,8 +2537,8 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 12,
-        "y": 72,
+        "x": 0,
+        "y": 80,
         "w": 12,
         "h": 8
       },
@@ -1649,7 +2561,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1673,7 +2629,7 @@
       ]
     },
     {
-      "id": 21,
+      "id": 22,
       "type": "timeseries",
       "title": "Память: текст в контексте",
       "description": "Байты текста памяти, которые харнес дал агенту за день, по способу. Это цена памяти в контексте. Данные есть с 14.11.2026.",
@@ -1683,7 +2639,7 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 80,
         "w": 12,
         "h": 8
@@ -1708,6 +2664,49 @@
           }
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -1780,7 +2779,7 @@
       ]
     },
     {
-      "id": 22,
+      "id": 23,
       "type": "timeseries",
       "title": "Память: поиск агента",
       "description": "Сколько раз агент искал в памяти и сколько поисков ничего не нашли. Промах: в памяти нет записи, или слова поиска неудачны.",
@@ -1790,8 +2789,8 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 12,
-        "y": 80,
+        "x": 0,
+        "y": 88,
         "w": 12,
         "h": 8
       },
@@ -1814,7 +2813,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1847,7 +2890,7 @@
       ]
     },
     {
-      "id": 23,
+      "id": 24,
       "type": "timeseries",
       "title": "Память: состав",
       "description": "Перепись памяти при экспорте: записи в работе, записи с цитатой в отчёте, мёртвые записи (выданы 5 раз и больше, ни одной цитаты), ни разу не выданные. Отметки «неверно» ставит человек.",
@@ -1857,7 +2900,7 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 88,
         "w": 12,
         "h": 8
@@ -1881,7 +2924,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1937,11 +3024,20 @@
           },
           "expr": "reins_memory_wrong{project=\"$project\"} offset -1s",
           "legendFormat": "отметки «неверно»"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_target_max{project=\"$project\", name=\"memory_dead\"} offset -1s",
+          "legendFormat": "порог"
         }
       ]
     },
     {
-      "id": 24,
+      "id": 25,
       "type": "timeseries",
       "title": "Память и работа без модели",
       "description": "Доля использованных записей памяти, доля шагов без модели, эффект предложений крафта.",
@@ -1951,8 +3047,8 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 12,
-        "y": 88,
+        "x": 0,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -1975,7 +3071,51 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "порог"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    4,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {

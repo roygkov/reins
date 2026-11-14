@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Runtime } from '../core/runtime.ts';
-import { EIGHT, costByScenario, eight } from '../journal/metrics.ts';
+import { EIGHT, costByScenario, eight, overTargets, series } from '../journal/metrics.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { listRecords } from '../memory/store.ts';
 import { listProposals, proposalLine } from './craft.ts';
@@ -37,6 +37,17 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
     lines.push('| scenario | tasks | tokens | tokens per task | the week before |', '|---|---|---|---|---|');
     for (const c of costs) lines.push(`| ${c.scenario} | ${c.tasks} | ${c.tokens} | ${c.per_task} | ${cell(c.prev_per_task)} |`);
   }
+  // The measures against the targets of the packs, by day, for the seven days.
+  lines.push('', '## Targets', '');
+  const targets = rt.merged.targets;
+  if (targets === undefined || Object.keys(targets).length === 0) lines.push('The packs name no target.');
+  else {
+    const end = Math.floor(now / DAY) * DAY + DAY;
+    const { over, unknown } = overTargets(series(journal, end - 7 * DAY, end, DAY), targets);
+    lines.push('| measure | target | days above | days with a value | worst day |', '|---|---|---|---|---|');
+    for (const o of over) lines.push(`| ${o.name} | ${o.max} | ${o.days_over} | ${o.days} | ${cell(o.worst)} |`);
+    if (unknown.length > 0) lines.push('', `Targets of an unknown measure: ${unknown.join(', ')}.`);
+  }
   const proposals = listProposals(rt);
   const open = proposals.filter((p) => p.state === 'open');
   lines.push('', '## Needs a decision of the human', '');
@@ -65,7 +76,8 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   return `${lines.join('\n')}\n`;
 }
 
-// Writes the summary. Without `force`: only when the last one is seven days old or more; null
+// Writes the summary. Without `force`: only when the last one is seven days old or more (a pack
+// can set fewer days: `craft.summary_days`); null
 // when it is not the time. The name of the file is the day: two sessions of one day write one file.
 export function writeWeek(rt: Runtime, now: number = Date.now(), force = false): string | null {
   const day = new Date(now).toISOString().slice(0, 10);
@@ -75,7 +87,7 @@ export function writeWeek(rt: Runtime, now: number = Date.now(), force = false):
     if (!force) {
       const days = fs.readdirSync(dirOf(rt)).map((name) => NAME.exec(name)?.[1]).filter((d): d is string => d !== undefined).sort();
       const last = days[days.length - 1];
-      if (last !== undefined && now - Date.parse(`${last}T00:00:00Z`) < 7 * DAY) return null;
+      if (last !== undefined && now - Date.parse(`${last}T00:00:00Z`) < (rt.merged.craft?.summary_days ?? 7) * DAY) return null;
     }
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, weekText(rt, now));

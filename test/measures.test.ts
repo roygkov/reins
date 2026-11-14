@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { JournalRow } from '../src/contracts/journal.ts';
-import { BY, MEASURES, series, summarize } from '../src/journal/metrics.ts';
+import { BY, MEASURES, overTargets, series, summarize } from '../src/journal/metrics.ts';
 
 let tick = 0;
 const row = (kind: string, data: Record<string, unknown>, more: Record<string, unknown> = {}): JournalRow =>
@@ -28,7 +28,7 @@ test('measures: the questions that the human saw are counted by the rule that as
     row('policy.decision', { outcome: 'ask', action_kind: 'write', env: 'work' }, { task: 't000002' }), row('policy.basis', { layer: 'core', rule: 'default.read' }), row('policy.basis', { layer: 'person', rule: 'my.rule' }, { task: 't000002' }),
   ];
   const m = summarize(rows);
-  assert.deepEqual(m.questions, { 'protect.harness': { asked: 3, yes: 2 }, 'default.write': { asked: 2, yes: 1 }, 'my.rule': { asked: 1, yes: 0 } });
+  assert.deepEqual(m.questions, { 'protect.harness': { asked: 3, yes: 2, no: 1 }, 'default.write': { asked: 2, yes: 1, no: 0 }, 'my.rule': { asked: 1, yes: 0, no: 0 } });
   // The most asked rule stands first.
   assert.deepEqual(Object.keys(m.questions), ['protect.harness', 'default.write', 'my.rule']);
 });
@@ -120,9 +120,41 @@ test('measures: a point of the series carries the numbers by rule, by place and 
   assert.deepEqual(Object.keys(points[0]?.measures ?? {}), [...MEASURES]);
   assert.deepEqual(Object.keys(points[0]?.by ?? {}), [...BY]);
   assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 } });
-  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119 });
+  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119, cache_rewrites: 0 });
   // A day without rows: no name by rule, no value of the barrier.
   assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {} });
   assert.equal(points[1]?.measures.probe_misses, null);
   assert.equal(points[1]?.measures.denied, 0);
+});
+
+test('measures: an answer that wrote a long context into the cache again is counted', () => {
+  const m = summarize([
+    row('executor.cost', { tokens: 600_000, ms: 0, calls: 1, model: 'claude-fable-5-2', input: 2, output: 500, cache_write: 599_498, cache_read: 46_000 }),
+    row('executor.cost', { tokens: 9000, ms: 0, calls: 1, model: 'claude-fable-5-2', input: 2, output: 500, cache_write: 8498, cache_read: 640_000 }),
+    row('executor.cost', { tokens: 700_000, ms: 0, calls: 1 }),
+  ]);
+  assert.equal(m.tokens.rewrites, 1);
+});
+
+test('measures: the targets of the packs name the days of a series that stood above them', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const from = Date.UTC(2026, 10, 13);
+  const at = (d: number, kind: string, data: Record<string, unknown>): JournalRow => ({ ...row(kind, data), ts: new Date(from + d * day + 3600_000).toISOString() }) as JournalRow;
+  const rows = [
+    at(0, 'policy.decision', { outcome: 'allow', action_kind: 'read', env: 'local', ms: 100 }),
+    at(1, 'policy.decision', { outcome: 'allow', action_kind: 'read', env: 'local', ms: 400 }),
+    at(2, 'policy.decision', { outcome: 'allow', action_kind: 'read', env: 'local', ms: 900 }),
+    at(1, 'harness.failure', { where: 'adapter' }),
+  ];
+  const points = series(rows, from, from + 4 * day, day);
+  assert.deepEqual(overTargets(points, { hook_ms_p95: 300, harness_failures: 0, probe_misses: 1, not_a_measure: 5 }), {
+    over: [
+      { name: 'harness_failures', max: 0, days: 4, days_over: 1, worst: 1 },
+      { name: 'hook_ms_p95', max: 300, days: 3, days_over: 2, worst: 900 },
+      // No run of the probes: no day has a value.
+      { name: 'probe_misses', max: 1, days: 0, days_over: 0, worst: null },
+    ],
+    unknown: ['not_a_measure'],
+  });
+  assert.deepEqual(overTargets(points, {}), { over: [], unknown: [] });
 });

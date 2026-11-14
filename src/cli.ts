@@ -44,7 +44,7 @@ import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
-import { BY, EIGHT, MEASURES, eight, ofProject, series, summarize } from './journal/metrics.ts';
+import { BY, EIGHT, MEASURES, eight, ofProject, overTargets, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, census, noteShown, closeCase, countUses, importRecords, isShared, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
@@ -467,6 +467,13 @@ function main(args: string[]): Out {
       metrics: summarize(rows(Date.now() - days * 24 * 60 * 60 * 1000), Date.now() - days * 24 * 60 * 60 * 1000),
       // The barrier against the commands with a known answer that the packs hold: counts only.
       barrier: (({ n, bad, misses, noise }) => ({ n, bad, misses: misses.length, noise: noise.length }))(runProbes(rt, process.cwd())),
+      // The measures of each day of the period against the targets of the packs.
+      targets: ((): unknown => {
+        const day = 24 * 60 * 60 * 1000;
+        const end = Math.floor(Date.now() / day) * day + day;
+        const from = end - days * day;
+        return overTargets(series(rows(from), from, end, day), rt.merged.targets ?? {});
+      })(),
       // The eight numbers of the week and of the week before it.
       eight: eight(rows(Date.now() - 14 * 24 * 60 * 60 * 1000)),
       // The open tasks are of the machine: a task does not name its project.
@@ -500,7 +507,8 @@ function main(args: string[]): Out {
     // The form 3: each point carries `by`, the numbers with a name of their own; `by` names them.
     // The form 4: `measures` and `by` carry what the models spent, by model and by kind.
     // The form 5: the measure `fails_disputed`. The form 6: the measures of the memory.
-    return { ok: true, metrics: 6, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 7: the measure `cache_rewrites` and the targets of the packs.
+    return { ok: true, metrics: 7, targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();

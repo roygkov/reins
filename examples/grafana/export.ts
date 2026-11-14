@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The export of the series of `reins metrics` (form 6) to a local VictoriaMetrics.
+// The export of the series of `reins metrics` (form 7) to a local VictoriaMetrics.
 // The journal is the source: the store of the stand is a view of it. Each run removes the series
 // `reins_*` from the store and writes the whole window again, so a point of the current day
 // always has its last value. Before the export the script runs `reins probes`: the run writes the
@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 type Value = { value: number | null; n: number; parts?: Record<string, number> };
 type SeriesPoint = { from: string; to: string; measures?: Record<string, number | null>; by?: Record<string, Record<string, number>>; [name: string]: unknown };
-export type Series = { metrics: number; step: string; project: string; names: string[]; measures?: string[]; by?: string[]; points: SeriesPoint[] };
+export type Series = { metrics: number; step: string; project: string; names: string[]; measures?: string[]; by?: string[]; targets?: Record<string, number>; points: SeriesPoint[] };
 export type Line = { metric: Record<string, string>; values: number[]; timestamps: number[] };
 
 const NAME = /^[a-z][a-z0-9_]{0,59}$/;
@@ -48,6 +48,8 @@ export function toLines(series: Series): Line[] {
       for (const [part, count] of Object.entries(v.parts ?? {})) if (NAME.test(part)) put(`${name}_parts`, { part }, ts, count);
     }
     for (const name of series.measures ?? []) if (NAME.test(name)) put(name, {}, ts, point.measures?.[name]);
+    // The target of the packs for a measure: the same number at every point, so the dashboard draws it as a line.
+    for (const [name, max] of Object.entries(series.targets ?? {})) if (NAME.test(name)) put('target_max', { name }, ts, max);
     for (const name of series.by ?? []) {
       if (!NAME.test(name)) continue;
       for (const [key, value] of Object.entries(point.by?.[name] ?? {})) if (KEY.test(key)) put(`${name}_by`, { name: key }, ts, value);
@@ -86,7 +88,7 @@ async function main(): Promise<void> {
     // No probes: the series has no point of the barrier for this run.
   }
   const series = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', `days=${days}`, 'step=day', ...more], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean };
-  if (series.ok !== true || series.metrics !== 6) {
+  if (series.ok !== true || series.metrics !== 7) {
     console.log(JSON.stringify({ ok: false, error: 'bad_series', metrics: series.metrics ?? null }));
     process.exitCode = 1;
     return;

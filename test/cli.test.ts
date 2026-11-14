@@ -603,6 +603,14 @@ test('cli: the barrier is asked about the commands with a known answer of a pack
   assert.deepEqual(r.noise.map((f: { pack: string; n: number; expect: string; got: string }) => [f.pack, f.n, f.expect, f.got]), [['person', 5, 'pass', 'ask']]);
   // The summary has the counts only.
   assert.deepEqual(reins(b, ['status']).json.barrier, { n: 5, bad: 3, misses: 1, noise: 1 });
+  // The packs name no target: the summary has none above. A target of the packs is checked against each day.
+  assert.deepEqual(reins(b, ['status']).json.targets, { over: [], unknown: [] });
+  const pack = path.join(b.root, 'person/pack.json');
+  const before = fs.readFileSync(pack, 'utf8');
+  fs.writeFileSync(pack, JSON.stringify({ ...JSON.parse(before), targets: { probe_misses: 0, probe_noise: 5, no_such: 1 } }));
+  assert.deepEqual(reins(b, ['status']).json.targets, { over: [{ name: 'probe_misses', max: 0, days: 1, days_over: 1, worst: 1 }, { name: 'probe_noise', max: 5, days: 1, days_over: 0, worst: 1 }], unknown: ['no_such'] });
+  assert.deepEqual(reins(b, ['metrics', 'days=1']).json.targets, { probe_misses: 0, probe_noise: 5, no_such: 1 });
+  fs.writeFileSync(pack, before);
   // The run wrote its counts to the journal: the series of the metrics has them. The run without a file wrote nothing.
   assert.deepEqual(reins(b, ['status']).json.metrics.probes, { runs: 1, n: 5, misses: 1, noise: 1 });
   const last = reins(b, ['metrics', 'days=1']).json.points[0].measures;
@@ -633,8 +641,8 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 6, 'day', 'all', 14]);
-  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen']);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 7, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites']);
   assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
   assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes']);
   assert.deepEqual(Object.keys(r.json.points[0].by), r.json.by);

@@ -72,6 +72,8 @@ export type PackSettings = {
   queue?: { wait_days?: number; approval_hours?: number; keep_days?: number };
   scenarios?: { idle_days?: number }; // how long a scenario that nobody calls stays in use
   craft?: CraftSettings;
+  // The targets of the measures of the harness: the name of a measure and the largest value of one day that is in order.
+  targets?: Record<string, number>;
 };
 
 // Rule data of the shell gate that a pack adds: the names that mean production in this
@@ -117,6 +119,7 @@ export type Merged = {
   queueApprovalHours?: number;
   queueKeepDays?: number;
   craft?: CraftSettings; // a number: the lowest pack that names it; the scenarios to leave alone: all that the packs name
+  targets?: Record<string, number>; // the largest value of a measure for one day: the lowest pack that names the measure
   scenarioIdleDays?: number; // a scenario that nobody called for this long is switched off: the longest that a pack names
   connectorNetwork: string[]; // the read connectors that need the network, from the organization pack
   connectorFiles: Record<string, string[]>; // read connector -> its files under the home directory, from the organization pack
@@ -135,9 +138,9 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 // Variables that decide what a script runs and where: a pack does not set them.
 const RESERVED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'IFS', 'SHELL', 'ENV', 'BASH_ENV', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'NODE_OPTIONS', 'PYTHONPATH', 'PYTHONSTARTUP'];
 
-const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults', 'scenarios', 'craft'] as const;
+const TOP = ['pack', 'level', 'name', 'connectors', 'envs', 'limits', 'roles', 'checks', 'memory', 'tools', 'rules', 'models', 'gate', 'journal', 'queue', 'defaults', 'scenarios', 'craft', 'targets'] as const;
 // The numbers of the craft that a pack can set, and the scenarios that the craft leaves alone.
-export const CRAFT_NUMBERS = ['min_questions', 'min_approvals', 'min_tool_failures', 'min_chains', 'min_checks', 'min_contracts', 'min_raises', 'min_smooth', 'unused_days', 'per_week', 'auto_days'] as const;
+export const CRAFT_NUMBERS = ['min_questions', 'min_approvals', 'min_tool_failures', 'min_chains', 'min_checks', 'min_contracts', 'min_raises', 'min_smooth', 'unused_days', 'per_week', 'auto_days', 'summary_days'] as const;
 // `off`: the craft is switched off: it finds nothing, applies nothing and measures nothing. The rest of the harness works.
 export type CraftSettings = { [K in (typeof CRAFT_NUMBERS)[number]]?: number } & { keep?: string[]; off?: true };
 
@@ -411,6 +414,21 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
       else errors.push({ code: 'not_allowed', path: 'craft.off' });
     }
     settings.craft = out;
+  }
+  // The targets: a name of a measure and a whole number that is not negative. Whether the name is
+  // a measure is not the business of a pack: the summary names a target of an unknown measure.
+  if (value.targets !== undefined) {
+    if (!isObj(value.targets)) errors.push({ code: 'not_object', path: 'targets' });
+    else {
+      const out: Record<string, number> = {};
+      for (const [name, max] of Object.entries(value.targets)) {
+        if (!/^[a-z][a-z0-9_]{0,39}$/.test(name)) errors.push({ code: 'bad_name', path: `targets.${name.slice(0, 40)}` });
+        else if (!isInt(max)) errors.push({ code: 'not_integer', path: `targets.${name}` });
+        else if (max < 0) errors.push({ code: 'not_positive', path: `targets.${name}` });
+        else out[name] = max;
+      }
+      settings.targets = out;
+    }
   }
   const idle = section(errors, value.scenarios, 'scenarios', ['idle_days']);
   if (idle !== null) {
@@ -850,6 +868,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
     const all = [...(m.craft?.keep ?? []), ...(keep ?? []).filter((name) => !(m.craft?.keep ?? []).includes(name))];
     m.craft = { ...m.craft, ...numbers, ...(all.length > 0 ? { keep: all } : {}), ...(m.craft?.off === true || s.craft.off === true ? { off: true as const } : {}) };
   }
+  if (s.targets !== undefined) m.targets = { ...m.targets, ...s.targets };
   const idle = s.scenarios?.idle_days;
   if (idle !== undefined && (m.scenarioIdleDays === undefined || idle > m.scenarioIdleDays)) m.scenarioIdleDays = idle;
   const veto = s.memory?.veto_days;

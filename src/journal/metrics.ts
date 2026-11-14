@@ -25,7 +25,7 @@ export type Metrics = {
   tool_output: Record<string, { n: number; bytes: number }>;
   // The questions that the human saw, by the rule that asked, the most asked first: how many were
   // asked and how many got "yes". A rule where every answer is "yes" asks for nothing.
-  questions: Record<string, { asked: number; yes: number }>;
+  questions: Record<string, { asked: number; yes: number; no: number }>;
   // The cost in time: one decision of the hook before an action (from the start of its process)
   // and one run of the done check. `n` counts the rows that carry a time.
   timing: { hook_ms: Spread; check_ms: Spread };
@@ -46,8 +46,11 @@ export type Metrics = {
   // (`total`), the answers of the models (`calls`), both by the name of the model, and the tokens
   // by kind. A row without a name of a model is of the model `unknown`. `cache_read` is not a
   // part of `total`. A row of an older journal has no kinds: `by_kind` counts the rows that have them.
-  tokens: { total: number; calls: number; by_model: Record<string, { tokens: number; calls: number }>; by_kind: { input: number; output: number; cache_write: number; cache_read: number } };
+  // `rewrites`: the answers of a model that wrote a whole long context into the cache again
+  // (`REWRITE_TOKENS` or more): a session that came back after its cache was gone.
+  tokens: { total: number; calls: number; rewrites: number; by_model: Record<string, { tokens: number; calls: number }>; by_kind: { input: number; output: number; cache_write: number; cache_read: number } };
 };
+const REWRITE_TOKENS = 150_000;
 export type Spread = { n: number; p50: number | null; p95: number | null; max: number | null };
 
 function spread(values: number[]): Spread {
@@ -72,10 +75,11 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
     asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
     probes: { runs: 0, n: null, misses: null, noise: null },
-    tokens: { total: 0, calls: 0, by_model: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
+    tokens: { total: 0, calls: 0, rewrites: 0, by_model: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
   };
-  const asked = new Map<string, { asked: number; yes: number }>();
-  const question = (rule: string): { asked: number; yes: number } => asked.get(rule) ?? (asked.set(rule, { asked: 0, yes: 0 }), asked.get(rule) as { asked: number; yes: number });
+  type Asked = { asked: number; yes: number; no: number };
+  const asked = new Map<string, Asked>();
+  const question = (rule: string): Asked => asked.get(rule) ?? (asked.set(rule, { asked: 0, yes: 0, no: 0 }), asked.get(rule) as Asked);
   // A decision "ask" names its rule in the basis row that follows it for the same task and session.
   const waiting = new Set<string>();
   const place = (row: JournalRow): string => `${row.session ?? ''} ${row.task ?? ''}`;
@@ -150,6 +154,8 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
       case 'task.human_decision':
         // The "yes" of the human to a question about one action names the rule of the question.
         if (data.decision === 'answered' && typeof data.rule === 'string') question(data.rule).yes += 1;
+        // The "no" of the human to such a question.
+        if (data.decision === 'refused' && typeof data.rule === 'string') question(data.rule).no += 1;
         break;
       case 'task.result_disputed': {
         const label = String(data.label ?? 'unknown');
@@ -172,6 +178,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         m.tokens.total += tokens;
         m.tokens.calls += calls;
         for (const kind of ['input', 'output', 'cache_write', 'cache_read'] as const) if (typeof data[kind] === 'number') m.tokens.by_kind[kind] += data[kind];
+        if (typeof data.cache_write === 'number' && data.cache_write >= REWRITE_TOKENS) m.tokens.rewrites += 1;
         break;
       }
       case 'harness.barrier_probed':
@@ -309,7 +316,7 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // The numbers of a period that have a name of their own inside one measure (the form 3): the
 // questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
@@ -350,6 +357,7 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       memory_cited: m.memory.census?.cited ?? null,
       memory_dead: m.memory.census?.dead ?? null,
       memory_unseen: m.memory.census?.unseen ?? null,
+      cache_rewrites: m.tokens.rewrites,
     },
     by: {
       questions_asked: pick(m.questions, (at) => at.asked),
@@ -380,6 +388,26 @@ export function series(rows: JournalRow[], from: number, to: number, step: numbe
     const end = Math.min(start + step, to);
     return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end), ...measured(bucket) };
   });
+}
+
+// The targets of the packs against the points of a series: for each target the days whose value
+// is above it and the worst value. A day without a value is not counted. `unknown`: the targets
+// whose name is no number of the series.
+export type Over = { name: string; max: number; days: number; days_over: number; worst: number | null };
+export function overTargets(points: Point[], targets: Record<string, number>): { over: Over[]; unknown: string[] } {
+  const over: Over[] = [];
+  const unknown: string[] = [];
+  for (const [name, max] of Object.entries(targets).sort(([a], [b]) => a.localeCompare(b))) {
+    const isEight = (EIGHT as readonly string[]).includes(name);
+    if (!isEight && !(MEASURES as readonly string[]).includes(name)) {
+      unknown.push(name);
+      continue;
+    }
+    const values = points.map((p) => (isEight ? p[name as (typeof EIGHT)[number]].value : p.measures[name as (typeof MEASURES)[number]])).filter((v): v is number => typeof v === 'number');
+    const above = values.filter((v) => v > max);
+    over.push({ name, max, days: values.length, days_over: above.length, worst: values.length === 0 ? null : Math.max(...values) });
+  }
+  return { over, unknown };
 }
 
 export function eight(rows: JournalRow[], now: number = Date.now(), days = 7): Eight {
