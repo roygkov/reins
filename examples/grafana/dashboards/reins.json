@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": false,
   "refresh": "",
   "time": {
@@ -65,11 +65,54 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           },
           "max": 1
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "неделю назад"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    8
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -89,6 +132,15 @@
           },
           "expr": "reins_verified_share{project=\"$project\"} offset -1s",
           "legendFormat": "verified_result"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_verified_share{project=\"$project\"} offset 604799s",
+          "legendFormat": "неделю назад"
         }
       ]
     },
@@ -121,6 +173,9 @@
             "spanNulls": false,
             "stacking": {
               "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -176,6 +231,9 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -249,6 +307,9 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -304,6 +365,9 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -343,7 +407,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Вопросов на задачу",
-      "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение.",
+      "description": "Вопросы, которые увидел человек, на одну открытую задачу. Цель: снижение. Красная зона: больше 1.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -368,7 +432,23 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
             }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1.01
+              }
+            ]
           }
         },
         "overrides": []
@@ -423,6 +503,9 @@
             "spanNulls": false,
             "stacking": {
               "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
@@ -453,7 +536,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Доля ответов «да» по правилам",
-      "description": "Правило, где каждый ответ «да», спрашивает лишнее. Старые строки журнала не называют правило в ответе: их доля занижена.",
+      "description": "Красная зона: от 95%. Правило, где каждый ответ «да», спрашивает лишнее. Старые строки журнала не называют правило в ответе: их доля занижена.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -478,9 +561,25 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
             }
           },
-          "max": 1
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.95
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -517,8 +616,8 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Проверочные команды барьера",
-      "description": "Последний запуск reins probes за день. Пропуск: барьер мягче ожидания. Шум: барьер строже ожидания.",
+      "title": "Барьер: пропуски",
+      "description": "Последний запуск reins probes за день. Пропуск: барьер мягче ожидания. Один пропуск известен. Красная зона: больше 1.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -543,7 +642,24 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "axisSoftMax": 3,
+            "thresholdsStyle": {
+              "mode": "line+area"
             }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1.01
+              }
+            ]
           }
         },
         "overrides": []
@@ -566,23 +682,14 @@
           },
           "expr": "reins_probe_misses{project=\"$project\"} offset -1s",
           "legendFormat": "пропуски"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "reins"
-          },
-          "expr": "reins_probe_noise{project=\"$project\"} offset -1s",
-          "legendFormat": "шум"
         }
       ]
     },
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Сбои и споры",
-      "description": "Сбои харнеса, проверки без ответа, повторы ловушек, итоги, которые оспорил человек.",
+      "title": "Барьер: шум",
+      "description": "Последний запуск reins probes за день. Шум: барьер строже ожидания. Красная линия: ноль, любой столбец выше неё плох.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
@@ -607,7 +714,95 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "axisSoftMax": 3,
+            "thresholdsStyle": {
+              "mode": "line"
             }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_probe_noise{project=\"$project\"} offset -1s",
+          "legendFormat": "шум"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Сбои и споры",
+      "description": "Сбои харнеса, проверки без ответа, повторы ловушек, итоги, которые оспорил человек. Красная линия: ноль, любой столбец выше неё плох.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "fillOpacity": 60,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
           }
         },
         "overrides": []
@@ -661,17 +856,17 @@
       ]
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "timeseries",
       "title": "Время решения хука",
-      "description": "Время процесса хука до решения о действии.",
+      "description": "Время процесса хука до решения о действии. Красная зона: больше 300 мс, порог для p95.",
       "datasource": {
         "type": "prometheus",
         "uid": "reins"
       },
       "interval": "1d",
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 40,
         "w": 12,
         "h": 8
@@ -689,7 +884,23 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
             }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
           }
         },
         "overrides": []
@@ -734,7 +945,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "timeseries",
       "title": "Время проверки готовности",
       "description": "Время проверки итога.",
@@ -744,8 +955,8 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 12,
-        "y": 40,
+        "x": 0,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -762,10 +973,53 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "неделю назад"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    8
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -794,11 +1048,20 @@
           },
           "expr": "reins_check_ms_p95{project=\"$project\"} offset -1s",
           "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_check_ms_p50{project=\"$project\"} offset 604799s",
+          "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "timeseries",
       "title": "Текст от хуков",
       "description": "Байты текста, который хуки дали агенту за день, по месту.",
@@ -808,7 +1071,7 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 48,
         "w": 12,
         "h": 8
@@ -826,10 +1089,53 @@
             "spanNulls": false,
             "stacking": {
               "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "неделю назад"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    8
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -849,11 +1155,20 @@
           },
           "expr": "reins_context_bytes_by{project=\"$project\"} offset -1s",
           "legendFormat": "{{name}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_context_bytes{project=\"$project\"} offset 604799s",
+          "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "timeseries",
       "title": "Цена сценария",
       "description": "Среднее число токенов на один сценарий.",
@@ -863,8 +1178,8 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 12,
-        "y": 48,
+        "x": 0,
+        "y": 56,
         "w": 12,
         "h": 8
       },
@@ -881,10 +1196,53 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "неделю назад"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "line"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    8
+                  ]
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -904,11 +1262,20 @@
           },
           "expr": "reins_cost_per_scenario{project=\"$project\"} offset -1s",
           "legendFormat": "токенов"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_cost_per_scenario{project=\"$project\"} offset 604799s",
+          "legendFormat": "неделю назад"
         }
       ]
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "timeseries",
       "title": "Память и работа без модели",
       "description": "Доля использованных записей памяти, доля шагов без модели, эффект предложений крафта.",
@@ -918,7 +1285,7 @@
       },
       "interval": "1d",
       "gridPos": {
-        "x": 0,
+        "x": 12,
         "y": 56,
         "w": 12,
         "h": 8
@@ -936,6 +1303,9 @@
             "spanNulls": false,
             "stacking": {
               "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
             }
           }
         },
