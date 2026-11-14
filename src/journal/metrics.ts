@@ -49,7 +49,15 @@ export type Metrics = {
   // `rewrites`: the answers of a model that wrote a whole long context into the cache again
   // (`REWRITE_TOKENS` or more): a session that came back after its cache was gone.
   tokens: { total: number; calls: number; rewrites: number; by_model: Record<string, { tokens: number; calls: number }>; by_kind: { input: number; output: number; cache_write: number; cache_read: number } };
+  // The context of the sessions: the prompt of an answer of a model is the context of its session
+  // at that moment. `sessions`: the sessions that have such an answer; `min`, `max`, `avg`: of the
+  // largest context of each session. `harness_share`: the text that the hooks gave to these
+  // sessions, as tokens by an estimate (`BYTES_PER_TOKEN`), against the sum of the largest contexts.
+  session_context: { sessions: number; min: number | null; max: number | null; avg: number | null; harness_share: number | null };
 };
+// The harness counts its text in bytes, a model counts tokens. One token of a text in English is
+// about four bytes; a text in Cyrillic has more bytes for a token, so its share reads too high.
+export const BYTES_PER_TOKEN = 4;
 const REWRITE_TOKENS = 150_000;
 export type Spread = { n: number; p50: number | null; p95: number | null; max: number | null };
 
@@ -58,6 +66,39 @@ function spread(values: number[]): Spread {
   const sorted = [...values].sort((a, b) => a - b);
   const at = (q: number): number => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)] ?? 0;
   return { n: sorted.length, p50: at(0.5), p95: at(0.95), max: sorted[sorted.length - 1] ?? 0 };
+}
+
+// The context of each session of the rows. The context of one answer is the number that the
+// adapter names (`context`); a row of an older journal with one answer and its kinds gives the
+// same number: what the model read and wrote as its prompt. `bytes`: the text of the hooks in the session.
+type SessionContext = { calls: number; min: number; max: number; sum: number; bytes: number };
+function sessionContexts(rows: JournalRow[], since = 0): Map<string, SessionContext> {
+  const sessions = new Map<string, SessionContext>();
+  const texts = new Map<string, number>();
+  for (const row of rows) {
+    const time = Date.parse(row.ts);
+    if (Number.isNaN(time) || time < since || typeof row.session !== 'string' || row.session === '') continue;
+    const data = row.data ?? {};
+    if (row.kind === 'harness.context_given' && typeof data.bytes === 'number') texts.set(row.session, (texts.get(row.session) ?? 0) + data.bytes);
+    if (row.kind !== 'executor.cost') continue;
+    const kind = (name: string): number => (typeof data[name] === 'number' ? (data[name] as number) : 0);
+    const context = typeof data.context === 'number' ? data.context : data.calls === 1 && typeof data.cache_read === 'number' ? kind('input') + kind('cache_write') + kind('cache_read') : 0;
+    if (!(context > 0)) continue;
+    const at = sessions.get(row.session) ?? { calls: 0, min: context, max: context, sum: 0, bytes: 0 };
+    sessions.set(row.session, { calls: at.calls + 1, min: Math.min(at.min, context), max: Math.max(at.max, context), sum: at.sum + context, bytes: 0 });
+  }
+  // A session with a text and no answer of a model in the rows keeps its text: the answer can
+  // stand in another period. It has no context here (`calls` is zero).
+  for (const [session, bytes] of texts) sessions.set(session, { ...(sessions.get(session) ?? { calls: 0, min: 0, max: 0, sum: 0 }), bytes });
+  return sessions;
+}
+function contextOf(sessions: Map<string, SessionContext>): Metrics['session_context'] {
+  const measured = [...sessions.values()].filter((at) => at.calls > 0);
+  const peaks = measured.map((at) => at.max);
+  if (peaks.length === 0) return { sessions: 0, min: null, max: null, avg: null, harness_share: null };
+  const sum = peaks.reduce((a, b) => a + b, 0);
+  const text = measured.reduce((a, at) => a + at.bytes, 0) / BYTES_PER_TOKEN;
+  return { sessions: peaks.length, min: Math.min(...peaks), max: Math.max(...peaks), avg: Math.round(sum / peaks.length), harness_share: Math.round((text / sum) * 10_000) / 10_000 };
 }
 
 // The rows of one project. A row that an adapter writes before it knows the project (the
@@ -76,6 +117,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
     probes: { runs: 0, n: null, misses: null, noise: null },
     tokens: { total: 0, calls: 0, rewrites: 0, by_model: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
+    session_context: contextOf(sessionContexts(rows, since)),
   };
   type Asked = { asked: number; yes: number; no: number };
   const asked = new Map<string, Asked>();
@@ -316,19 +358,22 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened', 'session_context_min', 'session_context_max', 'session_context_avg', 'sessions_measured', 'harness_context_share'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // The numbers of a period that have a name of their own inside one measure (the form 3): the
 // questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
 // place, the disputed results by label; the tokens and the answers of the models by the name of
-// the model, the tokens by kind (the form 4). A name without rows is absent.
-export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes'] as const;
+// the model, the tokens by kind (the form 4); the context of each session: its largest, smallest
+// and middle prompt, and the text of the hooks in it as tokens by an estimate (the form 10). The
+// name of a session is the start of its number. A name without rows is absent.
+export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes', 'session_context', 'session_context_min', 'session_context_avg', 'session_harness_tokens'] as const;
 export type By = Record<(typeof BY)[number], Record<string, number>>;
 export function measures(rows: JournalRow[]): Measures {
   return measured(rows).measures;
 }
 function measured(rows: JournalRow[]): { measures: Measures; by: By } {
   const m = summarize(rows);
+  const sessions = Object.fromEntries([...sessionContexts(rows)].map(([session, at]) => [session.slice(0, 8), at] as const));
   const pick = <T>(from: Record<string, T>, value: (at: T) => number): Record<string, number> => Object.fromEntries(Object.entries(from).map(([name, at]) => [name, value(at)] as const).filter(([, n]) => n !== 0));
   return {
     measures: {
@@ -361,6 +406,12 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       // The use of the harness: the actions that the barrier decided about, and the tasks that were opened.
       actions: m.decisions.allow + m.decisions.ask + m.decisions.defer + m.decisions.deny + m.protected_attempts,
       tasks_opened: m.tasks.opened,
+      // The context of the sessions of the period: of the largest context of each session.
+      session_context_min: m.session_context.min,
+      session_context_max: m.session_context.max,
+      session_context_avg: m.session_context.avg,
+      sessions_measured: m.session_context.sessions,
+      harness_context_share: m.session_context.harness_share,
     },
     by: {
       questions_asked: pick(m.questions, (at) => at.asked),
@@ -372,6 +423,10 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       token_kinds: pick(m.tokens.by_kind, (n) => n),
       memory_given: pick(m.memory.given, (n) => n),
       memory_bytes: pick(m.memory.bytes, (n) => n),
+      session_context: pick(sessions, (at) => at.max),
+      session_context_min: pick(sessions, (at) => at.min),
+      session_context_avg: pick(sessions, (at) => (at.calls === 0 ? 0 : Math.round(at.sum / at.calls))),
+      session_harness_tokens: pick(sessions, (at) => Math.round(at.bytes / BYTES_PER_TOKEN)),
     },
   };
 }

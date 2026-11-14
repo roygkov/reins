@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The export of the series of `reins metrics` (form 9) to a local VictoriaMetrics.
+// The export of the series of `reins metrics` (form 10) to a local VictoriaMetrics.
 // The journal is the source: the store of the stand is a view of it. Each run removes the series
 // `reins_*` from the store and writes the whole window again, so a point of the current day
 // always has its last value. Before the export the script runs `reins probes`: the run writes the
@@ -60,6 +60,9 @@ export function toLines(series: Series): Line[] {
     }
     for (const name of series.by ?? []) {
       if (!NAME.test(name)) continue;
+      // A number by session goes to the series by hours only: that series holds two days. A series
+      // by days lives for months, and a label for every session would grow without end.
+      if (name.startsWith('session_') && series.step !== 'hour') continue;
       for (const [key, value] of Object.entries(point.by?.[name] ?? {})) if (KEY.test(key)) put(`${name}_by`, { name: key }, ts, value);
     }
   }
@@ -97,7 +100,7 @@ async function main(): Promise<void> {
   const read = (words: string[]): (Series & { ok?: boolean; projects?: string[] }) | null => {
     try {
       const value = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', ...words], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean; projects?: string[] };
-      return value.ok === true && value.metrics === 9 ? value : null;
+      return value.ok === true && value.metrics === 10 ? value : null;
     } catch {
       return null;
     }

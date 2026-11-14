@@ -518,7 +518,9 @@ function main(args: string[]): Out {
     // The form 7: the measure `cache_rewrites` and the targets of the packs.
     // The form 8: the measures of the use (`actions`, `tasks_opened`) and the step of an hour.
     // The form 9: `projects`, the projects of the window, when the series is of the machine.
-    return { ok: true, metrics: 9, ...(project === undefined ? { projects } : {}), targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 10: the context of the sessions (the smallest, the largest and the middle one, by
+    // session too) and the share of the text of the harness in it.
+    return { ok: true, metrics: 10, ...(project === undefined ? { projects } : {}), targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();

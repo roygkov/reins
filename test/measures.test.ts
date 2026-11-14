@@ -119,12 +119,43 @@ test('measures: a point of the series carries the numbers by rule, by place and 
   assert.equal(points.length, 2);
   assert.deepEqual(Object.keys(points[0]?.measures ?? {}), [...MEASURES]);
   assert.deepEqual(Object.keys(points[0]?.by ?? {}), [...BY]);
-  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 } });
-  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119, cache_rewrites: 0, actions: 4, tasks_opened: 1 });
+  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 }, session_context: { s1: 50 }, session_context_min: { s1: 50 }, session_context_avg: { s1: 50 }, session_harness_tokens: { s1: 2280 } });
+  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119, cache_rewrites: 0, actions: 4, tasks_opened: 1, session_context_min: 50, session_context_max: 50, session_context_avg: 50, sessions_measured: 1, harness_context_share: 45.6 });
   // A day without rows: no name by rule, no value of the barrier.
-  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {} });
+  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {}, session_context: {}, session_context_min: {}, session_context_avg: {}, session_harness_tokens: {} });
   assert.equal(points[1]?.measures.probe_misses, null);
   assert.equal(points[1]?.measures.denied, 0);
+});
+
+test('measures: the context of a session is the largest prompt of its answers, and the harness has a share in it', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const from = Date.UTC(2026, 10, 13);
+  const rows = [
+    // The adapter names the context of the answer in the row.
+    row('executor.cost', { tokens: 900, ms: 0, calls: 1, context: 100_000 }), row('executor.cost', { tokens: 900, ms: 0, calls: 1, context: 150_000 }),
+    // A row of an older journal has no context: one answer with its kinds gives the same number.
+    row('executor.cost', { tokens: 1200, ms: 0, calls: 1, input: 10, output: 200, cache_write: 990, cache_read: 49_000 }, { session: 's2abcdefgh-0001' }),
+    // Several answers in one row without a context, a row without kinds, a row without a session: no context.
+    row('executor.cost', { tokens: 5000, ms: 0, calls: 2, input: 10, output: 200, cache_write: 4790, cache_read: 900_000 }, { session: 's2abcdefgh-0001' }),
+    row('executor.cost', { tokens: 300, ms: 0, calls: 1 }), row('executor.cost', { tokens: 300, ms: 0, calls: 1, context: 999_000 }, { session: undefined }),
+    // The text of the hooks in the session: 8000 bytes are about 2000 tokens.
+    row('harness.context_given', { where: 'session_start', bytes: 7000 }), row('harness.context_given', { where: 'command', bytes: 1000 }),
+    // A session that has a text and no answer of a model has no context to have a share in.
+    row('harness.context_given', { where: 'session_start', bytes: 4000 }, { session: 's3' }),
+  ];
+  const m = summarize(rows);
+  assert.deepEqual(m.session_context, { sessions: 2, min: 50_000, max: 150_000, avg: 100_000, harness_share: 0.01 });
+  const points = series(rows, from, from + 2 * day, day);
+  assert.deepEqual([points[0]?.measures.session_context_min, points[0]?.measures.session_context_max, points[0]?.measures.session_context_avg, points[0]?.measures.sessions_measured, points[0]?.measures.harness_context_share], [50_000, 150_000, 100_000, 2, 0.01]);
+  // By session: the name is the start of the number of the session.
+  assert.deepEqual(points[0]?.by.session_context, { s1: 150_000, s2abcdef: 50_000 });
+  assert.deepEqual(points[0]?.by.session_context_min, { s1: 100_000, s2abcdef: 50_000 });
+  assert.deepEqual(points[0]?.by.session_context_avg, { s1: 125_000, s2abcdef: 50_000 });
+  // The text of a session without an answer in the period stays by session: the answer can stand in another period.
+  assert.deepEqual(points[0]?.by.session_harness_tokens, { s1: 2000, s3: 1000 });
+  // A day without an answer of a model: no value, not a zero.
+  assert.deepEqual([points[1]?.measures.session_context_min, points[1]?.measures.session_context_max, points[1]?.measures.session_context_avg, points[1]?.measures.sessions_measured, points[1]?.measures.harness_context_share], [null, null, null, 0, null]);
+  assert.deepEqual(summarize([]).session_context, { sessions: 0, min: null, max: null, avg: null, harness_share: null });
 });
 
 test('measures: an answer that wrote a long context into the cache again is counted', () => {

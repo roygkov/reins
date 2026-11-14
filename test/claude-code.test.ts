@@ -569,6 +569,30 @@ test('claude-code: the journal has the time of a decision of the hook and the si
   for (const r of decided) assert.ok(typeof r.data?.ms === 'number' && r.data.ms > 0 && r.data.ms < 60_000, JSON.stringify(r.data));
 });
 
+test('claude-code: the journal has the context of an answer of the session, the text of a refusal and the output of a command of the harness', () => {
+  const b = box();
+  const usage = (read: number): string => `${JSON.stringify({ type: 'assistant', message: { id: `m${read}`, model: 'claude-fable-5-2', usage: { input_tokens: 5, output_tokens: 40, cache_creation_input_tokens: 95, cache_read_input_tokens: read } } })}\n`;
+  // The file of the session carries the name of the session: its answers are the context of the session.
+  const own = path.join(b.root, 'live.jsonl');
+  fs.writeFileSync(own, usage(70_000) + usage(90_000));
+  const after = (file: string, tool = 'Read', input: unknown = {}, more: Record<string, unknown> = {}): Out =>
+    run(HOOK, b, ['post'], JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: 'PostToolUse', tool_name: tool, tool_input: input, transcript_path: file, ...more }));
+  after(own);
+  // The file of a subordinate has another name: its answers are not the context of the session.
+  const sub = path.join(b.root, 'agent-1.jsonl');
+  fs.writeFileSync(sub, usage(3000));
+  after(sub);
+  const cost = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'executor.cost');
+  // Two answers in one look: the row carries the largest context of them.
+  assert.deepEqual(cost.map((r) => [r.data?.calls, r.data?.context]), [[2, 90_100], [1, undefined]]);
+  // A refusal is a text for the agent; the output of a command of the harness is one too.
+  assert.equal(decision(run(HOOK, b, ['pre'], JSON.stringify({ session_id: 'live', cwd: b.cwd, hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(b.state, 'tasks', 'x.json') } }))), 'deny');
+  after(own, 'Bash', { command: 'cd /x && reins status' }, { tool_response: { stdout: 'x'.repeat(500), stderr: '' } });
+  after(own, 'Bash', { command: 'ls -la' }, { tool_response: { stdout: 'y'.repeat(500), stderr: '' } });
+  const given = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.context_given').map((r) => [r.data?.where, (r.data?.bytes as number) > 0, r.session]);
+  assert.deepEqual(given, [['decision', true, 'live'], ['command', true, 'live']]);
+});
+
 test('claude-code: a failure of the adapter at an event names the kind of the error as a code', () => {
   const b = box();
   run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));

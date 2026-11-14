@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 8,
+  "version": 9,
   "editable": false,
   "refresh": "",
   "time": {
@@ -3474,6 +3474,440 @@
           "legendFormat": "эффект предложений"
         }
       ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Контекст сессий по часам",
+      "description": "Наибольший контекст каждой сессии за час, в токенах: что модель прочитала как запрос одного ответа. Линия на сессию, имя это начало номера сессии. Падение линии это сжатие контекста. Панель всегда показывает два дня.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1h",
+      "timeFrom": "2d",
+      "gridPos": {
+        "x": 12,
+        "y": 104,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_session_context_by{project=\"$project\", step=\"hour\"} offset -1s",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "table",
+      "title": "Сессии за два дня: контекст и доля харнеса",
+      "description": "По каждой сессии за два дня: наименьший, наибольший и средний контекст в токенах; текст харнеса в токенах по оценке (4 байта на токен) и его доля в наибольшем контексте. Среднее это среднее часовых средних. Доля это оценка: сжатие контекста убирает часть текста, а журнал этого не видит.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "timeFrom": "2d",
+      "gridPos": {
+        "x": 0,
+        "y": 112,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Доля харнеса"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Макс",
+            "desc": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "min_over_time(reins_session_context_min_by{project=\"$project\", step=\"hour\"}[2d])",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "max_over_time(reins_session_context_by{project=\"$project\", step=\"hour\"}[2d])",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "avg_over_time(reins_session_context_avg_by{project=\"$project\", step=\"hour\"}[2d])",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "sum_over_time(reins_session_harness_tokens_by{project=\"$project\", step=\"hour\"}[2d])",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "sum_over_time(reins_session_harness_tokens_by{project=\"$project\", step=\"hour\"}[2d]) / max_over_time(reins_session_context_by{project=\"$project\", step=\"hour\"}[2d])",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "name",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "project": true,
+              "project 1": true,
+              "project 2": true,
+              "project 3": true,
+              "project 4": true,
+              "project 5": true,
+              "step": true,
+              "step 1": true,
+              "step 2": true,
+              "step 3": true,
+              "step 4": true,
+              "step 5": true,
+              "__name__": true,
+              "__name__ 1": true,
+              "__name__ 2": true,
+              "__name__ 3": true,
+              "__name__ 4": true,
+              "__name__ 5": true
+            },
+            "renameByName": {
+              "name": "Сессия",
+              "Value #A": "Мин",
+              "Value #B": "Макс",
+              "Value #C": "Среднее",
+              "Value #D": "Текст харнеса, токены",
+              "Value #E": "Доля харнеса"
+            },
+            "indexByName": {
+              "name": 0,
+              "Value #A": 1,
+              "Value #B": 2,
+              "Value #C": 3,
+              "Value #D": 4,
+              "Value #E": 5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Контекст сессии по дням: мин, макс, среднее",
+      "description": "По сессиям дня: наименьший, наибольший и средний из наибольших контекстов сессий, в токенах. Столбцы справа: число сессий с ответом модели.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 0,
+        "y": 120,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "сессий"
+            },
+            "properties": [
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 25
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_session_context_min{project=\"$project\", step=\"day\"} offset -1s",
+          "legendFormat": "мин"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_session_context_max{project=\"$project\", step=\"day\"} offset -1s",
+          "legendFormat": "макс"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_session_context_avg{project=\"$project\", step=\"day\"} offset -1s",
+          "legendFormat": "среднее"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_sessions_measured{project=\"$project\", step=\"day\"} offset -1s",
+          "legendFormat": "сессий"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Доля харнеса в контексте (оценка)",
+      "description": "Текст, который харнес дал сессиям дня (хуки, отказы, вывод команд reins), в токенах по оценке 4 байта на токен, делённый на сумму наибольших контекстов этих сессий. Текст на кириллице даёт завышенную долю.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "reins"
+      },
+      "interval": "1d",
+      "gridPos": {
+        "x": 12,
+        "y": 120,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "decimals": 2,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "always",
+            "pointSize": 6,
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "reins_harness_context_share{project=\"$project\", step=\"day\"} offset -1s",
+          "legendFormat": "доля харнеса"
+        }
+      ]
     }
-  ]
+  ],
+  "timepicker": {
+    "quick_ranges": [
+      {
+        "display": "Последние 24 часа",
+        "from": "now-24h",
+        "to": "now"
+      },
+      {
+        "display": "Последние 2 дня",
+        "from": "now-2d",
+        "to": "now"
+      },
+      {
+        "display": "Последние 7 дней",
+        "from": "now-7d",
+        "to": "now"
+      },
+      {
+        "display": "Последние 14 дней",
+        "from": "now-14d",
+        "to": "now"
+      },
+      {
+        "display": "Последние 30 дней",
+        "from": "now-30d",
+        "to": "now"
+      },
+      {
+        "display": "Последние 90 дней",
+        "from": "now-90d",
+        "to": "now"
+      }
+    ]
+  }
 }

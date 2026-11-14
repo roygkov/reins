@@ -641,10 +641,10 @@ test('cli: the metrics are a series of the eight numbers by day or by week, in a
   const before = Date.now();
   const r = reins(b, ['metrics']);
   assert.equal(r.code, 0, r.stdout);
-  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 9, 'day', 'all', 14]);
-  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened']);
+  assert.deepEqual([r.json.ok, r.json.metrics, r.json.step, r.json.project, r.json.points.length], [true, 10, 'day', 'all', 14]);
+  assert.deepEqual(r.json.measures, ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened', 'session_context_min', 'session_context_max', 'session_context_avg', 'sessions_measured', 'harness_context_share']);
   assert.deepEqual(Object.keys(r.json.points[0].measures), r.json.measures);
-  assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes']);
+  assert.deepEqual(r.json.by, ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes', 'session_context', 'session_context_min', 'session_context_avg', 'session_harness_tokens']);
   assert.deepEqual(Object.keys(r.json.points[0].by), r.json.by);
   assert.deepEqual(r.json.names, ['verified_share', 'returns_per_task', 'gate_yes_share', 'no_model_share', 'cost_per_scenario', 'memory_use', 'proposal_effect', 'harness_failures']);
   // The buckets follow one another without a gap; the last one ends at the end of the day of today.

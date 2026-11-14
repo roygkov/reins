@@ -12,7 +12,9 @@ import { heldFreeTask, sessionTask } from './session.ts';
 // `cache_read` is not a part of `tokens` (the tokens that were read from the cache cost a small
 // share and are not counted in the limit of a task).
 export type CostParts = { input?: number; output?: number; cache_write?: number; cache_read?: number };
-export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number; model?: string; parts?: CostParts };
+// `context`: the largest prompt of the answers of the event, when they are answers of the session
+// itself and not of a subordinate: the context of the session at that moment.
+export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number; model?: string; parts?: CostParts; context?: number };
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/;
 const PARTS = ['input', 'output', 'cache_write', 'cache_read'] as const;
 export type CostReply = { task?: string; tokens?: number; over?: boolean };
@@ -45,6 +47,7 @@ export function noteCost(rt: Runtime, e: CostEvent): CostReply {
     const n = e.parts?.[part];
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0) data[part] = Math.round(n);
   }
+  if (typeof e.context === 'number' && Number.isFinite(e.context) && e.context > 0) data.context = Math.round(e.context);
   if (e.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(e.session)) row.session = e.session;
   if (task.scenario !== undefined) {
     row.scenario = task.scenario;

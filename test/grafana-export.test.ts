@@ -9,7 +9,7 @@ import { BY, EIGHT, MEASURES } from '../src/journal/metrics.ts';
 const DAY1 = '2026-11-12T00:00:00.000Z';
 const DAY2 = '2026-11-13T00:00:00.000Z';
 const series: Series = {
-  metrics: 9, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
+  metrics: 10, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
   points: [
     { from: DAY1, to: DAY2, verified_share: { value: 0.04, n: 156, parts: { verified_form: 69, verified_result: 7 } }, cost_per_scenario: { value: null, n: 0 }, measures: { asks_per_task: 0.86, hook_ms_p50: null } },
     { from: DAY2, to: '2026-11-14T00:00:00.000Z', verified_share: { value: 0.23, n: 125 }, cost_per_scenario: { value: 38333, n: 37 }, measures: { asks_per_task: 0.95, hook_ms_p50: 125 }, by: { questions_asked: { 'protect.harness': 12, 'default.write': 3, 'bad"name': 1 }, not_named: { x: 1 } } },
@@ -50,6 +50,25 @@ test('grafana export: a name that is not a plain token gives no series', () => {
   // The state against the target: only a day with a value has one; a series by hours carries no target.
   assert.deepEqual(toLines(series).filter((l) => l.metric.__name__ === 'reins_target_over').map((l) => [l.metric.name, l.values, l.timestamps]), [['hook_ms_p50', [1], [Date.parse(DAY2)]]]);
   assert.deepEqual(toLines({ ...series, step: 'hour' }).filter((l) => (l.metric.__name__ ?? '').startsWith('reins_target')), []);
+});
+
+test('grafana export: a number by session goes to the series by hours only', () => {
+  const point = { from: DAY1, to: DAY2, by: { session_context: { '0ac7e3a3': 225_000 }, context_bytes: { session_start: 9000 } } };
+  const of = (step: string): string[] => toLines({ metrics: 10, step, project: 'all', names: [], by: ['session_context', 'context_bytes'], points: [point] }).map((l) => `${l.metric.__name__} ${l.metric.name}`);
+  assert.deepEqual(of('hour'), ['reins_session_context_by 0ac7e3a3', 'reins_context_bytes_by session_start']);
+  // A series by days lives for months: a label for every session would grow without end.
+  assert.deepEqual(of('day'), ['reins_context_bytes_by session_start']);
+});
+
+test('grafana export: the list of periods of the dashboard has no period shorter than a step of the series', () => {
+  const dash = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'examples', 'grafana', 'dashboards', 'reins.json'), 'utf8')) as { timepicker?: { quick_ranges?: { display: string; from: string; to: string }[] }; panels: { title: string; interval?: string; timeFrom?: string; targets: { expr: string }[] }[] };
+  const ranges = dash.timepicker?.quick_ranges ?? [];
+  assert.ok(ranges.length >= 4);
+  // A point of the series stands at the start of its hour or day: a period of minutes shows no point.
+  const hours = (from: string): number => { const m = /^now-(\d+)([hd])$/.exec(from); return m === null ? 0 : Number(m[1]) * (m[2] === 'd' ? 24 : 1); };
+  for (const r of ranges) assert.ok(r.to === 'now' && hours(r.from) >= 24 && r.display !== '', JSON.stringify(r));
+  // A panel of the series by hours has its own period, of two days at most: the series holds two days.
+  for (const p of dash.panels.filter((p) => p.targets.some((t) => t.expr.includes('step="hour"')))) assert.match(p.timeFrom ?? '', /^(24h|2d)$/, p.title);
 });
 
 test('grafana export: the store is on this machine only', () => {
