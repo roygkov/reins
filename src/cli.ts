@@ -46,7 +46,7 @@ import { fire, tick } from './core/triggers.ts';
 import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
 import { BY, EIGHT, MEASURES, eight, ofProject, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
-import { addRecord, brokenRecords, closeCase, countUses, importRecords, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
+import { addRecord, brokenRecords, closeCase, countUses, importRecords, isShared, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
 
 type Out = Record<string, unknown>;
 // What a refusal of the memory says besides its code: the field of a text, the cause, the limit.
@@ -538,6 +538,8 @@ function main(args: string[]): Out {
     }
     // Words of the human: a record for every project, and "this was wrong".
     if (first === 'share' && rest.length === 1 && rest[0] !== undefined) {
+      // A record that is shared already is no unknown record: the answer says that nothing changed.
+      if (isShared(rt, rest[0])) return { ok: true, record: rest[0], scope: 'common', already: true };
       if (!shareRecord(rt, rest[0])) throw new Stop('unknown_record');
       return { ok: true, record: rest[0], scope: 'common' };
     }

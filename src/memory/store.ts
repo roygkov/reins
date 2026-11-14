@@ -675,6 +675,12 @@ export function shareRecord(rt: Runtime, id: string, _now: number = Date.now()):
   return true;
 }
 
+// A record that is in use and is for every project already: a second word "share" changes nothing.
+export function isShared(rt: Runtime, id: string): boolean {
+  const record = stored(rt).find((r) => r.id === id);
+  return record !== undefined && record.scope === 'common' && record.state !== 'vetoed' && record.state !== 'replaced';
+}
+
 const WRONG_LIMIT = 2; // a record that was wrong this many times is out of use
 
 // The human says "this was wrong" about a record. The record loses its place among the others;
