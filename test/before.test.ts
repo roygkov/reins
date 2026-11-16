@@ -1,6 +1,7 @@
 // The decision before an action: a tool call of a client becomes an action, and the policy decides.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { resolveQueued } from '../src/core/queue.ts';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -689,6 +690,24 @@ test('before: a task of a scenario that reads through a connector outside its ma
   afterAction(un, again, CLIENT, false);
   assert.equal(loadTask(un, second.task.id)?.extraReads, undefined);
   for (const rt of [b.rt, wide.rt, unseen.rt]) for (const row of readJournal(rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+test('before: an approval from the queue lets the task of a scenario read through that connector, as the "yes" in a window does', () => {
+  const b = box();
+  const narrow: Runtime = { ...b.rt, merged: { ...b.rt.merged, scenarios: b.rt.merged.scenarios.map((s) => (s.name === 'change-review' ? { ...s, manifest: { ...s.manifest, permissions: { ...s.manifest.permissions, read: ['code-host'] } } } : s)) } };
+  const opened = openScenario(narrow, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  // A client without a window: the question waits in the queue of the human.
+  const read = (id: string) => beforeAction(narrow, { ...call(b, 'wiki__get_page', { id }), session: 's1', headless: true }, CLIENT);
+  const first = read('1');
+  assert.deepEqual([first.outcome, first.rule], ['defer', 'scenario.read-scope']);
+  resolveQueued(narrow, first.queued ?? '', 'approved');
+  assert.equal(read('1').rule, 'queue.approved');
+  // The answer holds for the task and the connector: a read of another page does not wait again.
+  assert.deepEqual(loadTask(narrow, opened.task.id)?.extraReads, ['tracker']);
+  const next = read('2');
+  assert.deepEqual([next.outcome, next.rule], ['allow', 'default.read']);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
 });
 
 test('before: the basis of a decision that a pack gave names the level of the pack', () => {

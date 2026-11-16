@@ -1,5 +1,6 @@
 'use strict';
-// Ported from agentic v0.5.8 (a4ba285), plugin/lib/gate.js. The logic is unchanged.
+// Ported from agentic v0.5.8 (a4ba285), plugin/lib/gate.js. One change of the logic: the
+// list `words` of a form in evalUserForms (docs/contracts.md, S7).
 // Production gate: decides allow / ask / deny for shell segments and MCP calls. This file is the dispatcher: it
 // tokenizes the command, runs the data rules (data/gate.json), rm, the human's forms and the evaluators of
 // gate-git.js, gate-data.js and gate-mcp.js over every segment, ranks the decisions and holds the grant scopes.

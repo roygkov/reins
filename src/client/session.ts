@@ -172,9 +172,10 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push(`Actions that wait in the queue of the human (${waits.length}; say them to the human; \`reins queue approve|reject <id>\` resolves one):`);
     for (const q of waits.slice(0, 5)) context.push(`- ${q.id}: ${q.tool} (${q.rule}${q.until !== undefined ? `, until ${q.until}` : ''})`);
   }
-  // The summary of the week is a file and a notice: once in seven days the harness writes it and says where it is.
+  // The summary of the week is a file and a notice: once in `craft.summary_days` days (seven by default) the harness writes it and says where it is.
   // A client without a window has no human who reads the notice: the summary waits for a session with one.
-  const week = process.env.REINS_HEADLESS === '1' ? null : writeWeek(rt);
+  // The client names itself in the event; the variable holds for a command that the harness started without a window.
+  const week = e.headless === true || process.env.REINS_HEADLESS === '1' ? null : writeWeek(rt);
   if (week !== null) notify(rt, `reins: the summary of the week is written: ${week}`);
   if (week !== null) context.push(`The harness wrote the summary of the week: ${week}. Say this to the human; \`reins week\` prints it.`);
   return { context };

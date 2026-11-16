@@ -612,6 +612,20 @@ test('claude-code: a failure of the adapter at an event names the kind of the er
   }
 });
 
+test('claude-code: a failure of the adapter at an event of the session is in the journal, and the client goes on', () => {
+  const b = box();
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
+  // The place of the sessions is a file, not a directory: the request of the human cannot be noted.
+  fs.rmSync(path.join(b.state, 'sessions'), { recursive: true, force: true });
+  fs.writeFileSync(path.join(b.state, 'sessions'), 'not a directory');
+  const out = run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  assert.equal(out.code, 0, 'an event of the session never blocks the client');
+  assert.equal(out.stdout, '');
+  const rows = readJournal(path.join(b.state, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure');
+  assert.deepEqual(rows.map((r) => [r.data?.where, r.data?.event]), [['adapter', 'prompt']]);
+  assert.match(rows[0]?.data?.error as string, /^(E[A-Z]+|ERR_[A-Z_]+|[A-Z][A-Za-z]*Error)$/);
+});
+
 test('claude-code: an adapter that loads and breaks outside its guards is a failure of the run', () => {
   const b = box();
   const tree = path.join(b.root, 'harness');

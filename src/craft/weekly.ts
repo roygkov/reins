@@ -1,5 +1,6 @@
 // The summary of the week: the one thing of the craft that the human reads. It is a file. The
-// harness writes it at the start of a session, once in seven days; `reins week` writes it at once.
+// harness writes it at the start of a session, once in `craft.summary_days` days of the pack
+// (seven when no pack gives it); `reins week` writes it at once.
 // The parts are those that the code has: the numbers of the week, the proposals that need a
 // decision, the memory records in their veto window, the accepted proposals and their effect.
 // Specification: docs/spec/harness-craft, page 7.

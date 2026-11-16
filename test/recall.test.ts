@@ -125,7 +125,9 @@ test('recall: the command line shares a record and marks one as wrong, and both 
   // The second word changes nothing and says so; a record that is not in memory stays unknown.
   assert.deepEqual(run(['memory', 'share', id]), { ok: true, record: id, scope: 'common', already: true });
   assert.equal(run(['memory', 'share', 'm0000000000']).error, 'unknown_record');
-  assert.deepEqual(run(['memory', 'wrong', id]).error, 'unknown_record', 'a decision takes no mark');
+  // A decision takes no mark, and the answer says so: the record is there, so "unknown" would be false.
+  const marked = run(['memory', 'wrong', id]);
+  assert.deepEqual([marked.ok, marked.error, marked.reason], [false, 'no_mark', 'decision']);
   assert.deepEqual(run(['memory', 'wrong', 'm0000000000']).error, 'unknown_record');
   for (const command of [`reins memory share ${id}`, `reins memory wrong ${id}`]) {
     const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command } }, { shell: { kind: 'shell', command: 'command' } });

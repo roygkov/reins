@@ -222,6 +222,25 @@ test('budget: a contract task that needs a write that its contract does not name
   for (const x of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(x), []);
 });
 
+test('budget: a tool that failed in a row asks about a write that the contract names, and the contract task goes on', () => {
+  const b = box();
+  (b.rt.merged.context as { maxToolFailures?: number }).maxToolFailures = 2;
+  const named = { ...CONTRACT, permissions: { read: ['code-host'], write: [{ action: 'comment', target: 'change/7', env: 'work', limit: 5, confirm: 'none' }] } };
+  const proposed = proposeContract(b.rt, named, { session: 's1' });
+  assert.ok(proposed.ok, JSON.stringify(proposed));
+  const id = proposed.task.id;
+  approveContract(b.rt, id);
+  assert.equal(comment(b).outcome, 'allow', 'the contract names this write');
+  const call = { cwd: b.cwd, tool: 'tracker__add_comment', input: { change: '7' }, session: 's1' };
+  afterAction(b.rt, call, CLIENT, true, true);
+  afterAction(b.rt, call, CLIENT, true, true);
+  // The question of the failures stands in place of the envelope. The write is inside the contract: the task does not stop.
+  const r = comment(b);
+  assert.deepEqual([r.outcome, r.rule], ['ask', 'default.tool-failures']);
+  assert.deepEqual([loadTask(b.rt, id)?.state, loadTask(b.rt, id)?.waiting], ['executing', undefined]);
+  for (const x of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(x), []);
+});
+
 test('budget: a contract task that reads through a connector that its contract does not name stops, too', () => {
   const b = box();
   const read = (tool: string, session = 's1') => beforeAction(b.rt, { cwd: b.cwd, tool, input: {}, session }, CLIENT);

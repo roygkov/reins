@@ -124,6 +124,12 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'check.answered': { result: CHECK_RESULTS, check_kind: DONE_KINDS },
   'executor.cost': { tokens: 'number', ms: 'number', calls: 'number' },
   'harness.failure': { where: 'token' },
+  // The fields that the code always writes for these kinds: a row without them names nothing.
+  'check.invalidated': { reason: ['work_changed', 'check_changed', 'expired'] },
+  'harness.step_timeout': { where: 'token' },
+  'harness.packs_merged': { levels: 'number', scenarios: 'number', rejected: 'number', merge: 'token' },
+  'harness.manifest_rejected': { level: 'token', manifest: 'token', code: 'token' },
+  'harness.pack_changed': { scenario: 'token', state: ['on', 'off'] },
   // A text that a hook of the client gave to the agent: where (the start of a session, a request, after an action) and its size.
   'harness.context_given': { where: 'token', bytes: 'number' },
   // One run of the commands with a known answer against the barrier: how many were asked, how many the barrier let pass wrongly (misses) and asked about wrongly (noise).

@@ -480,6 +480,9 @@ export function beforeAction(now: Runtime, call: ToolCall, clientTools: ClientTo
     // of a tool can hold the text of a file.
     const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what: whatOf(call, clientTools), task: sessionTask(rt, call.session), ...(noChoice ? {} : { anySession: true }) });
     if (d.pass) {
+      // The approval of a read of a scenario outside its manifest holds for the task and the
+      // connector, as the "yes" in a window does: the next read of that kind does not wait again.
+      if (r.rule === 'scenario.read-scope') keepRead(rt, call);
       // The approval of the human is a fact of the journal. It lets this one call pass; it does
       // not confirm a grant of a task envelope.
       record(rt, call, [{ kind: 'policy.decision', data: { outcome: 'allow', action_kind: 'unknown', env: 'unknown' } }, { kind: 'policy.basis', data: { layer: 'core', rule: 'queue.approved' } }]);
@@ -592,9 +595,11 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   // The envelope of a task does not take this question away.
   const maxFails = rt.merged.context.maxToolFailures;
   const tripped = maxFails !== undefined && !Object.hasOwn(clientTools, call.tool) && (readSession(rt, call.session)?.fails?.[call.tool] ?? 0) >= maxFails && pausedUntil(rt) === null;
-  if (action.via === 'tool' && action.kind === 'write' && !tripped) {
-    const key = grantKey(action.name, action.target, action.env.name);
-    const id = taskFor(rt, key, call.session);
+  // The task whose envelope names this write, also when the question of the failures stands in
+  // place of the envelope: a write that a contract names is inside the contract all the same.
+  const key = action.via === 'tool' && action.kind === 'write' ? grantKey(action.name, action.target, action.env.name) : undefined;
+  const id = key === undefined ? undefined : taskFor(rt, key, call.session);
+  if (key !== undefined && !tripped) {
     const decision = id === undefined ? null : decideAction(rt, id, action, layers, subOf(rt, call, id), call.unshown === true);
     if (id !== undefined && decision !== null) {
       // The question for the whole task: the answer of the human comes back as "the tool ran".
@@ -613,7 +618,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   const contract = held === undefined ? null : loadTask(rt, held);
   // The same holds for a read through a connector that the contract does not name: the human
   // approved the reads of the contract, not of every system.
-  const outside = action.kind === 'write' || (read.connector !== undefined && !(contract?.manifest?.permissions.read ?? []).includes(read.connector));
+  const outside = (action.kind === 'write' && !(tripped && id !== undefined && id === held)) || (read.connector !== undefined && !(contract?.manifest?.permissions.read ?? []).includes(read.connector));
   if (outside && contract !== null && contract.kind === 'contract' && contract.session === call.session && contract.state === 'executing' && contract.widened !== true) {
     applyEvent(rt, contract.id, { type: 'scope' }, 'harness');
     record(rt, call, [
@@ -676,11 +681,21 @@ function whatOf(call: ToolCall, clientTools: ClientTools): string {
   return typeof text === 'string' ? (own?.kind === 'local' ? `${call.tool} ${text}` : text) : call.tool;
 }
 
+// The human let the task of a scenario read through a connector outside its manifest: the task
+// keeps the connector.
+function keepRead(rt: Runtime, call: ToolCall): void {
+  const held = currentScenario(rt, call.session);
+  const connector = packRule(frozenRuntime(rt, held).merged.tools, call.tool)?.connector;
+  if (held !== undefined && connector !== undefined) mutateTask(rt, held, (task) => ((task.extraReads ?? []).includes(connector) ? null : { ...task, extraReads: [...(task.extraReads ?? []), connector] }));
+}
+
 // An action that the policy defers waits in the queue of the human. An approval of the human for
 // this call lets it pass once.
 function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: Action, command: string | undefined, r: Reply): Reply {
   if (r.outcome !== 'defer') return r;
-  const what = command ?? `${action.name} ${action.target} @${action.env.name}`;
+  // A change of a file names the file: the human approves an action that the queue shows.
+  const local = Object.hasOwn(clientTools, call.tool) && clientTools[call.tool]?.kind === 'local';
+  const what = command ?? (local ? whatOf(call, clientTools) : `${action.name} ${action.target} @${action.env.name}`);
   const d = deferCall(rt, { ...call, input: keyInput(call, clientTools) }, { rule: r.rule, what, task: sessionTask(rt, call.session) });
   if (!d.pass) return { ...r, queued: d.id };
   record(rt, call, [
@@ -798,11 +813,7 @@ function settle(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked: bo
     const rule = (pending as { rule?: unknown }).rule;
     // The human let the task of a scenario read through a connector outside its manifest: the
     // answer holds for this task and this connector, so the next read of the same kind does not ask.
-    if (rule === 'scenario.read-scope') {
-      const held = currentScenario(rt, call.session);
-      const connector = packRule(frozenRuntime(rt, held).merged.tools, call.tool)?.connector;
-      if (held !== undefined && connector !== undefined) mutateTask(rt, held, (task) => ((task.extraReads ?? []).includes(connector) ? null : { ...task, extraReads: [...(task.extraReads ?? []), connector] }));
-    }
+    if (rule === 'scenario.read-scope') keepRead(rt, call);
     record(rt, call, [{ kind: 'task.human_decision', data: { decision: 'answered', ...(typeof rule === 'string' && RULE_NAME.test(rule) ? { rule } : {}) } }]);
     return { confirmed: false };
   }

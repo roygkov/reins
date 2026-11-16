@@ -169,7 +169,7 @@ test('week: a journal past its size limit moves to the archive, and a reader of 
   const dir = path.join(fs.mkdtempSync(path.join(SB, 'j-')), 'state');
   let t = NOW - 3 * DAY;
   const journal = openJournal(dir, () => new Date((t += 1000)), { maxBytes: 600 });
-  for (let i = 0; i < 20; i += 1) assert.equal(journal.write({ kind: 'harness.step_timeout', project: 'p1' }).written, true);
+  for (let i = 0; i < 20; i += 1) assert.equal(journal.write({ kind: 'harness.step_timeout', project: 'p1', data: { where: 'collect' } }).written, true);
   const archive = fs.readdirSync(path.join(dir, 'journal-archive'));
   assert.ok(archive.length >= 2, `archive files: ${archive.length}`);
   assert.ok(fs.statSync(journal.file).size <= 600 + 200);

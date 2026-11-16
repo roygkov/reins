@@ -497,5 +497,73 @@
   "errors": [
    "missing data.label"
   ]
+ },
+ {
+  "name": "an invalidated check names its reason",
+  "patch": {
+   "kind": "check.invalidated"
+  },
+  "errors": [
+   "missing data.reason"
+  ]
+ },
+ {
+  "name": "a step over its time names the step",
+  "patch": {
+   "kind": "harness.step_timeout"
+  },
+  "errors": [
+   "missing data.where"
+  ]
+ },
+ {
+  "name": "a merge of the packs carries its counts and its fingerprint",
+  "patch": {
+   "kind": "harness.packs_merged",
+   "data": {
+    "levels": 3
+   }
+  },
+  "errors": [
+   "missing data.merge",
+   "missing data.rejected",
+   "missing data.scenarios"
+  ]
+ },
+ {
+  "name": "a rejected manifest names its level, its name and the code",
+  "patch": {
+   "kind": "harness.manifest_rejected",
+   "data": {
+    "level": "person"
+   }
+  },
+  "errors": [
+   "missing data.code",
+   "missing data.manifest"
+  ]
+ },
+ {
+  "name": "a changed pack names the scenario and its state",
+  "patch": {
+   "kind": "harness.pack_changed",
+   "data": {
+    "scenario": "wrapup",
+    "state": "on"
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "a changed pack without a scenario is not written",
+  "patch": {
+   "kind": "harness.pack_changed",
+   "data": {
+    "state": "off"
+   }
+  },
+  "errors": [
+   "missing data.scenario"
+  ]
  }
 ]

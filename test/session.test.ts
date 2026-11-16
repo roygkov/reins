@@ -404,3 +404,13 @@ test('session: in a client without a question with a choice an action that needs
   assert.equal(beforeAction(b.rt, { cwd: b.cwd, tool: 'unknown__tool', input: { c: 3 }, session: 's1' }, CLIENT).outcome, 'ask');
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
 });
+
+test('session: a start without a window writes no summary of the week, by the word of the event', () => {
+  const b = box();
+  // The client says that it has no window in the event itself: nobody reads the notice there.
+  const blind = sessionStart(b.rt, { session: 's1', cwd: b.cwd, headless: true });
+  assert.doesNotMatch(blind.context.join('\n'), /summary of the week/);
+  assert.equal(fs.existsSync(path.join(b.rt.stateDir, 'summaries')), false);
+  // The summary waits for a session with a window.
+  assert.match(sessionStart(b.rt, { session: 's2', cwd: b.cwd }).context.join('\n'), /summary of the week/);
+});

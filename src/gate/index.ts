@@ -1,5 +1,5 @@
 // Typed entry to the shell gate. The gate itself is the code of agentic v0.5.8, ported as CommonJS
-// without a change of logic (src/gate/*.cjs); its decisions are held by the corpus in
+// (src/gate/*.cjs) with one change of logic: the list `words` of a form (docs/contracts.md, S7); its decisions are held by the corpus in
 // test/data/gate-decisions.json. This file turns a gate result into the input of the policy.
 
 import { createRequire } from 'node:module';

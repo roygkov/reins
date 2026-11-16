@@ -11,7 +11,7 @@ import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { openScenario, raiseLevel, type Runtime } from '../src/core/runtime.ts';
-import { resolveQueued } from '../src/core/queue.ts';
+import { listQueue, resolveQueued } from '../src/core/queue.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { executorStarted } from '../src/client/executors.ts';
 import { beforeCompaction, humanRequest, sessionStart } from '../src/client/session.ts';
@@ -316,6 +316,16 @@ test('client: an approval without a window stays in its project, and with a wind
   resolveQueued(b.rt, waits.queued ?? '', 'approved');
   assert.equal(windowed('s-b').outcome, 'defer');
   assert.equal(windowed('s-a').rule, 'queue.approved');
+});
+
+test('client: a change of a file that a rule of a pack defers names the file in the queue of the human', () => {
+  const b = box();
+  const tools: ClientTools = { ...CLIENT, write_file: { kind: 'local', path: 'path' } };
+  const DEFER = { ...b.rt, merged: { ...b.rt.merged, rules: [{ id: 'later', outcome: 'defer' as const, tool: 'write_file', level: 'person' as const }] } };
+  const r = beforeAction(DEFER, { cwd: b.cwd, tool: 'write_file', input: { path: 'src/a.txt', content: 'x' }, session: 's1' }, tools);
+  assert.equal(r.outcome, 'defer');
+  // The human approves an action that the queue shows: the name of the tool and the file, not only the kind of the action.
+  assert.equal(listQueue(b.rt).find((q) => q.id === r.queued)?.what, 'write_file src/a.txt');
 });
 
 // ---- A failure of the adapter is a fact of the journal.

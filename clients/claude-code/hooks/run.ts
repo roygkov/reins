@@ -344,9 +344,12 @@ function post(): void {
 
 // The events of the session. They never block the client: a failure here costs context, not a barrier.
 function session(mode: string): void {
+  // The directory of the event names the project of the failure row, when the event could be read.
+  let where: string | undefined;
   try {
     const value: unknown = JSON.parse(fs.readFileSync(0, 'utf8'));
     if (!isObj(value) || typeof value.cwd !== 'string' || !value.cwd.startsWith('/')) return;
+    where = value.cwd;
     const rt = runtime(value.cwd);
     if (rt === null) return;
     const e: SessionEvent = { cwd: value.cwd, client: 'claude_code' };
@@ -408,8 +411,9 @@ function session(mode: string): void {
       const report = typeof value.last_assistant_message === 'string' && value.last_assistant_message !== '' ? value.last_assistant_message : undefined;
       executorReported(rt, { cwd: e.cwd, ...(e.session !== undefined ? { session: e.session } : {}), ...(role !== undefined ? { role } : {}), ...(report !== undefined ? { report } : {}) });
     }
-  } catch {
-    // no output: the client goes on
+  } catch (e) {
+    // no output: the client goes on. The failure is a row of the journal, as for the other events.
+    adapterFailed(mode, where, e);
   }
 }
 

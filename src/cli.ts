@@ -504,8 +504,8 @@ function main(args: string[]): Out {
     };
   }
   // The series of the eight numbers: the interface of the metrics for a program outside the
-  // harness. The form has a version (`metrics: 1`); a change of the form raises it. The buckets
-  // are days or weeks of UTC; the last one ends at the end of the day of today.
+  // harness. The form has a version (the field `metrics`); a change of the form raises it. The
+  // buckets are hours, days or weeks of UTC; the last one ends at the end of the day of today.
   if (command === 'metrics') {
     const rt = runtime();
     const words = [first, ...rest].filter((w): w is string => w !== undefined);
@@ -592,7 +592,13 @@ function main(args: string[]): Out {
       return { ok: true, record: rest[0], scope: 'common' };
     }
     if (first === 'wrong' && rest.length === 1 && rest[0] !== undefined) {
-      if (!wrongRecord(rt, rest[0])) throw new Stop('unknown_record');
+      if (!wrongRecord(rt, rest[0])) {
+        // A record that is there and takes no mark is not "unknown": a decision is replaced by a
+        // decision, and a record that is not in use has nothing to lose.
+        const found = listRecords(rt).find((r) => r.id === rest[0]);
+        if (found === undefined) throw new Stop('unknown_record');
+        throw new Stop('no_mark', { reason: found.type === 'decision' ? 'decision' : 'not_active' });
+      }
       return { ok: true, record: rest[0], state: listRecords(rt).find((r) => r.id === rest[0])?.state };
     }
     if (first === 'restore' && rest.length === 1 && rest[0] !== undefined) {
