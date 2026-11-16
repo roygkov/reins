@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { RULE_NAME, type JournalRow } from '../contracts/journal.ts';
-import type { CraftSettings } from '../packs/packs.ts';
+import { closedContext, type CraftSettings } from '../packs/packs.ts';
+import { validateManifest } from '../contracts/manifest.ts';
 import { isObj } from '../contracts/shape.ts';
 import type { Runtime } from '../core/runtime.ts';
 import { loadTask } from '../core/runtime.ts';
@@ -229,12 +230,17 @@ function contractManifest(rt: Runtime, name: string): unknown {
   return best?.manifest;
 }
 
+// The check of a manifest by the code, as the packs check theirs. A contract was checked when
+// the agent proposed it; the packs can change since, so the craft checks again before the queue
+// and before the write.
+const fits = (rt: Runtime, manifest: unknown): boolean => validateManifest(manifest, closedContext(rt.merged)).length === 0;
+
 function changeOf(rt: Runtime, found: Pattern, now: number): Change | undefined {
   if (found.pattern === 'record_unused') return { kind: 'memory', record: found.key, state: 'stale' };
   if (found.pattern === 'record_dead') return { kind: 'memory', record: found.key, state: 'stale', dead: true };
   if (found.pattern === 'repeated_contract' && NAME.test(found.key)) {
     const manifest = contractManifest(rt, found.key);
-    if (manifest !== undefined) return { kind: 'manifest', path: `manifests/${found.key}.json`, manifest };
+    if (manifest !== undefined && fits(rt, manifest)) return { kind: 'manifest', path: `manifests/${found.key}.json`, manifest };
   }
   // A tool that fails again and again is a pitfall for the memory (harness-craft, page 2). The
   // text is written by the code from the facts of the journal: the name of the tool and the
@@ -363,7 +369,7 @@ function apply(rt: Runtime, p: Proposal, now: number): boolean {
   }
   // A new scenario lies in the pack of the person. A file that is there already is not replaced.
   const dir = rt.merged.packs.find((x) => x.level === 'person')?.dir;
-  if (dir === undefined || !NAME.test(p.key)) return false;
+  if (dir === undefined || !NAME.test(p.key) || !fits(rt, change.manifest)) return false;
   try {
     fs.mkdirSync(path.join(dir, 'manifests'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'manifests', `${p.key}.json`), `${JSON.stringify(change.manifest, null, 2)}\n`, { flag: 'wx' });

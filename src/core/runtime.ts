@@ -16,6 +16,7 @@ import { patchSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect, type Sandbox } from './collect.ts';
 import { workState } from './work.ts';
+import { notify } from './notify.ts';
 import { noteUse, scenarioOff } from './idle.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
 
@@ -168,6 +169,13 @@ function commit(rt: Runtime, s: Step, sub?: { role: string; parent: string }): S
   if (s.error === undefined) {
     writeAtomic(taskFile(rt, s.task.id), s.task);
     record(rt, s.task, s.rows, sub);
+    // A task that starts to wait for the human says so outside the client, by the command of the
+    // config: the human may be away from the window. The words are of the harness: the id and the
+    // reason. A wait for a decision of the gate has the notice of the queue.
+    for (const r of s.rows) {
+      const reason = r.kind === 'task.waiting_human' ? r.data?.reason : undefined;
+      if (typeof reason === 'string' && reason !== 'gate') notify(rt, `reins: the task ${s.task.id} waits for you: ${reason}. \`reins tasks\` shows it.`);
+    }
   }
   return s;
 }

@@ -167,6 +167,49 @@ test('craft: a repeated contract becomes a proposal with the manifest, and the a
   for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
 });
 
+test('craft: a manifest that the packs no longer take is checked by the code: it is no ready change, and an acceptance does not write it', () => {
+  const b = box();
+  for (let i = 0; i < 3; i += 1) {
+    const r = proposeContract(b.rt, CONTRACT, {});
+    assert.ok(r.ok);
+    approveContract(b.rt, r.task.id);
+  }
+  // The packs changed since the contracts: no pack gives the connector that the contract reads.
+  const closed: Runtime = { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, readConnectors: [] } } };
+  const file = path.join(b.packs.person ?? '', 'manifests', 'fix-flaky-test.json');
+  // The proposal was made while the packs took the manifest: the acceptance checks it again.
+  const made = propose(b.rt, NOW);
+  assert.equal(made[0]?.change?.kind, 'manifest');
+  assert.equal(resolveProposal(closed, made[0]?.id ?? '', 'accepted', NOW), true);
+  assert.equal(listProposals(b.rt)[0]?.applied, false);
+  assert.equal(fs.existsSync(file), false, 'the manifest is not in the pack');
+  // A proposal that is made under the changed packs carries no ready change.
+  const c = box();
+  for (let i = 0; i < 3; i += 1) {
+    const r = proposeContract(c.rt, CONTRACT, {});
+    assert.ok(r.ok);
+    approveContract(c.rt, r.task.id);
+  }
+  const later = propose({ ...c.rt, merged: { ...c.rt.merged, context: { ...c.rt.merged.context, readConnectors: [] } } }, NOW);
+  assert.deepEqual(later.map((p) => [p.pattern, p.change]), [['repeated_contract', undefined]]);
+});
+
+test('notice: a task that starts to wait for the human sends one notice with the id and the reason, and no text of the work', () => {
+  const b = box();
+  const out = path.join(b.root, 'notices.txt');
+  const rt: Runtime = { ...b.rt, notify: [process.execPath, '-e', "require('fs').appendFileSync(process.argv[1], process.argv[2] + '\\n')", out, '{text}'] };
+  const r = proposeContract(rt, CONTRACT, {});
+  assert.ok(r.ok);
+  // The notice runs apart from the harness: the test waits for its file.
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 50 && !fs.existsSync(out); i += 1) Atomics.wait(wait, 0, 0, 100);
+  Atomics.wait(wait, 0, 0, 300);
+  const lines = fs.readFileSync(out, 'utf8').trim().split('\n');
+  assert.equal(lines.length, 1);
+  assert.match(lines[0] ?? '', new RegExp(`^reins: the task ${r.task.id} waits for you: contract\\.`));
+  assert.doesNotMatch(lines[0] ?? '', /Fix the flaky test/, 'the title of the contract is a text of the agent');
+});
+
 test('craft: the acceptance of an unused record makes it stale', () => {
   const b = box();
   const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);

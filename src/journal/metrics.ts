@@ -7,6 +7,9 @@ import type { JournalRow } from '../contracts/journal.ts';
 export type Metrics = {
   tasks: { opened: number; closed: number; by_label: Record<string, number>; changed_not_verified: number };
   scenarios: Record<string, { opened: number; accepted: number; returns: number }>;
+  // The cost of each scenario: the tokens that its tasks spent, and the count of the tasks that
+  // spent something. A free request is no scenario.
+  scenario_cost: Record<string, { tokens: number; tasks: number }>;
   checks: { PASS: number; FAIL: number; none: number };
   fails_disputed: number; // the tasks where the human said that a FAIL of the done check was wrong
   unstable_checks: number; // the pairs of a work and a report that got both PASS and FAIL
@@ -108,7 +111,7 @@ export const ofProject = (rows: JournalRow[], project: string): JournalRow[] => 
 // The counts of the rows from `since` (milliseconds) on. A row whose time cannot be read is skipped.
 export function summarize(rows: JournalRow[], since = 0): Metrics {
   const m: Metrics = {
-    tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
+    tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, scenario_cost: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
     unstable_checks: 0, fails_disputed: 0,
     decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0, given: {}, bytes: {}, finds: { asked: 0, missed: 0 }, wrong: 0, census: null },
@@ -129,6 +132,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
   const checkMs: number[] = [];
   const outputs = new Map<string, { n: number; bytes: number }>();
   const answers = new Map<string, Set<string>>();
+  const spent = new Map<string, Set<string>>();
   const scenario = (name: string): Metrics['scenarios'][string] => (m.scenarios[name] ??= { opened: 0, accepted: 0, returns: 0 });
   for (const row of rows) {
     const time = Date.parse(row.ts);
@@ -221,6 +225,14 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         m.tokens.calls += calls;
         for (const kind of ['input', 'output', 'cache_write', 'cache_read'] as const) if (typeof data[kind] === 'number') m.tokens.by_kind[kind] += data[kind];
         if (typeof data.cache_write === 'number' && data.cache_write >= REWRITE_TOKENS) m.tokens.rewrites += 1;
+        if (row.scenario !== undefined) {
+          const cost = (m.scenario_cost[row.scenario] ??= { tokens: 0, tasks: 0 });
+          cost.tokens += tokens;
+          const tasks = spent.get(row.scenario) ?? new Set<string>();
+          if (row.task !== undefined) tasks.add(row.task);
+          spent.set(row.scenario, tasks);
+          cost.tasks = tasks.size;
+        }
         break;
       }
       case 'harness.barrier_probed':
@@ -366,7 +378,7 @@ export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // the model, the tokens by kind (the form 4); the context of each session: its largest, smallest
 // and middle prompt, and the text of the hooks in it as tokens by an estimate (the form 10). The
 // name of a session is the start of its number. A name without rows is absent.
-export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes', 'session_context', 'session_context_min', 'session_context_avg', 'session_harness_tokens'] as const;
+export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes', 'session_context', 'session_context_min', 'session_context_avg', 'session_harness_tokens', 'scenario_tokens', 'scenario_cost_tasks'] as const;
 export type By = Record<(typeof BY)[number], Record<string, number>>;
 export function measures(rows: JournalRow[]): Measures {
   return measured(rows).measures;
@@ -427,6 +439,8 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       session_context_min: pick(sessions, (at) => at.min),
       session_context_avg: pick(sessions, (at) => (at.calls === 0 ? 0 : Math.round(at.sum / at.calls))),
       session_harness_tokens: pick(sessions, (at) => Math.round(at.bytes / BYTES_PER_TOKEN)),
+      scenario_tokens: pick(m.scenario_cost, (at) => at.tokens),
+      scenario_cost_tasks: pick(m.scenario_cost, (at) => at.tasks),
     },
   };
 }

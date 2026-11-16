@@ -119,12 +119,29 @@ test('measures: a point of the series carries the numbers by rule, by place and 
   assert.equal(points.length, 2);
   assert.deepEqual(Object.keys(points[0]?.measures ?? {}), [...MEASURES]);
   assert.deepEqual(Object.keys(points[0]?.by ?? {}), [...BY]);
-  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 }, session_context: { s1: 50 }, session_context_min: { s1: 50 }, session_context_avg: { s1: 50 }, session_harness_tokens: { s1: 2280 } });
+  assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 }, session_context: { s1: 50 }, session_context_min: { s1: 50 }, session_context_avg: { s1: 50 }, session_harness_tokens: { s1: 2280 }, scenario_tokens: {}, scenario_cost_tasks: {} });
   assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119, cache_rewrites: 0, actions: 4, tasks_opened: 1, session_context_min: 50, session_context_max: 50, session_context_avg: 50, sessions_measured: 1, harness_context_share: 45.6 });
   // A day without rows: no name by rule, no value of the barrier.
-  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {}, session_context: {}, session_context_min: {}, session_context_avg: {}, session_harness_tokens: {} });
+  assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {}, session_context: {}, session_context_min: {}, session_context_avg: {}, session_harness_tokens: {}, scenario_tokens: {}, scenario_cost_tasks: {} });
   assert.equal(points[1]?.measures.probe_misses, null);
   assert.equal(points[1]?.measures.denied, 0);
+});
+
+test('measures: the cost of each scenario is in the summary and in a point of the series: its tokens and its tasks that spent', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const from = Date.UTC(2026, 10, 13);
+  const rows = [
+    row('executor.cost', { tokens: 1000, ms: 0, calls: 1 }, { scenario: 'code-change', task: 't00000000000a' }),
+    row('executor.cost', { tokens: 500, ms: 0, calls: 1 }, { scenario: 'code-change', task: 't00000000000a' }),
+    row('executor.cost', { tokens: 300, ms: 0, calls: 1 }, { scenario: 'code-change', task: 't00000000000b' }),
+    row('executor.cost', { tokens: 70, ms: 0, calls: 1 }, { scenario: 'wrapup', task: 't00000000000c' }),
+    // A free request is no scenario.
+    row('executor.cost', { tokens: 9000, ms: 0, calls: 1 }, { task: 't00000000000d' }),
+  ];
+  assert.deepEqual(summarize(rows).scenario_cost, { 'code-change': { tokens: 1800, tasks: 2 }, wrapup: { tokens: 70, tasks: 1 } });
+  const points = series(rows, from, from + day, day);
+  assert.deepEqual(points[0]?.by.scenario_tokens, { 'code-change': 1800, wrapup: 70 });
+  assert.deepEqual(points[0]?.by.scenario_cost_tasks, { 'code-change': 2, wrapup: 1 });
 });
 
 test('measures: the context of a session is the largest prompt of its answers, and the harness has a share in it', () => {
