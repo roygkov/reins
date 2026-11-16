@@ -29,7 +29,7 @@ import { ConfigError, loadRuntime } from './client/config.ts';
 import { runProbes } from './client/probes.ts';
 import { runTask, runTasks } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
-import { sessionOfDirectory } from './core/sessions.ts';
+import { sessionOfCommand } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
@@ -64,6 +64,27 @@ class Stop extends Error {
 
 // The code of the harness: the command line lies in its `src`. A script of a pack never writes there.
 const HARNESS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// The variables of the environment where the clients give a command the number of its session.
+// Each client names its variable in the file `client.json` of its directory: the core names no client.
+const SESSION_ENV: readonly string[] = ((): string[] => {
+  const names: string[] = [];
+  try {
+    const root = path.join(HARNESS_ROOT, 'clients');
+    for (const client of fs.readdirSync(root).sort()) {
+      try {
+        const value: unknown = JSON.parse(fs.readFileSync(path.join(root, client, 'client.json'), 'utf8'));
+        const name = value !== null && typeof value === 'object' ? (value as { session_env?: unknown }).session_env : undefined;
+        if (typeof name === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(name)) names.push(name);
+      } catch {
+        // this client names no variable
+      }
+    }
+  } catch {
+    // no clients beside the core
+  }
+  return names;
+})();
 
 function runtime(): Runtime {
   try {
@@ -207,7 +228,7 @@ function open(rt: Runtime, name: string, pairs: string[]): Out {
   const kind = rt.merged.scenarios.find((s) => s.name === name)?.manifest.done.kind;
   if (kind !== undefined && !RUNNABLE.includes(kind)) throw new Stop('check_not_supported', { check: kind });
   // The task belongs to the session that last spoke in this directory.
-  const session = sessionOfDirectory(rt, process.cwd());
+  const session = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
   const opened = openScenario(rt, name, inputs, session === undefined ? {} : { session });
   if (!opened.ok) throw new Stop(opened.error, 'details' in opened ? { details: opened.details } : {});
   return view(rt, opened.task);
@@ -249,7 +270,7 @@ function main(args: string[]): Out {
   // opens that scenario. Several manifests: the human chooses by the name.
   if (command === 'match' && first !== undefined && rest.length === 0) {
     const rt = runtime();
-    const session = sessionOfDirectory(rt, process.cwd());
+    const session = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
     const opened = openByForm(rt, first, session === undefined ? {} : { session });
     if (!opened.ok) throw new Stop(opened.error, 'details' in opened ? { details: opened.details } : 'scenarios' in opened ? { scenarios: opened.scenarios } : {});
     return { ...view(rt, opened.task), scenario: opened.task.scenario ?? '' };
@@ -259,7 +280,7 @@ function main(args: string[]): Out {
     if (loadTask(rt, first) === null) throw new Stop('unknown_task');
     // Reading the input takes the task for the session of this directory: a suspended task comes
     // back, a task of an ended session continues here.
-    resumeTask(rt, first, sessionOfDirectory(rt, process.cwd()));
+    resumeTask(rt, first, sessionOfCommand(rt, process.cwd(), SESSION_ENV));
     const task = loadTask(rt, first);
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
@@ -273,7 +294,7 @@ function main(args: string[]): Out {
       throw new Stop('no_file');
     }
     const rt = runtime();
-    const session = sessionOfDirectory(rt, process.cwd());
+    const session = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
     const r = proposeContract(rt, value, session === undefined ? {} : { session });
     if (!r.ok) throw new Stop(r.error, { details: r.details });
     return view(rt, r.task);

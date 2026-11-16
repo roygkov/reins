@@ -115,6 +115,25 @@ test('loop: the command line binds a task to the session that last spoke in that
   assert.equal(loadTask(b.rt, opened.task)?.session, 'live-2');
 });
 
+test('loop: the command line binds a task to the session that the client names in the environment, not to the last one of the directory', () => {
+  const b = box();
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const prompt = (session: string): void => { spawnSync(process.execPath, [HOOK, 'prompt'], { input: JSON.stringify({ session_id: session, cwd: b.cwd, hook_event_name: 'UserPromptSubmit' }), env, encoding: 'utf8' }); };
+  const open = (more: Record<string, string>, change: string): string | undefined => loadTask(b.rt, JSON.parse(spawnSync(process.execPath, [CLI, 'open', 'change-review', `change_id=${change}`], { env: { ...env, ...more }, cwd: b.cwd, encoding: 'utf8' }).stdout).task)?.session;
+  // Two sessions work in one directory: the second one spoke last.
+  prompt('live-1');
+  prompt('live-2');
+  // The client of the first session gives its commands the number of the session.
+  const name = JSON.parse(fs.readFileSync(new URL('../clients/claude-code/client.json', import.meta.url), 'utf8')).session_env as string;
+  assert.match(name, /^[A-Z][A-Z0-9_]{0,63}$/);
+  assert.equal(open({ [name]: 'live-1' }, '7'), 'live-1');
+  // A number that the harness does not know, or that has not the form of a session, names no session: the directory answers.
+  assert.equal(open({ [name]: 'never-seen' }, '8'), 'live-2');
+  assert.equal(open({ [name]: '../live-1' }, '9'), 'live-2');
+  // Without the variable the directory answers, as before.
+  assert.equal(open({}, '10'), 'live-2');
+});
+
 // ---- A task with a contract.
 
 test('loop: a contract is proposed by the agent and waits for the human', () => {

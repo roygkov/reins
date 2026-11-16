@@ -124,6 +124,19 @@ export function sessionOfDirectory(rt: Runtime, cwd: string): string | undefined
   }
 }
 
+// The session of a command of the command line. A client can give its commands the number of
+// the session in a variable of the environment; `names` are the variables that the clients name.
+// The number is the session of the command when it has the form of a session and the harness
+// knows the session: two sessions in one directory then never take the task of each other.
+// Without such a number the directory answers.
+export function sessionOfCommand(rt: Runtime, cwd: string, names: readonly string[], env: Record<string, string | undefined> = process.env): string | undefined {
+  for (const name of names) {
+    const value = env[name];
+    if (typeof value === 'string' && SESSION.test(value) && readSession(rt, value) !== null) return value;
+  }
+  return sessionOfDirectory(rt, cwd);
+}
+
 export function forgetDirectory(rt: Runtime, cwd: string, session: string | undefined): void {
   try {
     const value = JSON.parse(fs.readFileSync(dirFile(rt, cwd), 'utf8')) as { session?: unknown };
