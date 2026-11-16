@@ -122,5 +122,8 @@ export function executorReported(rt: Runtime, e: ExecutorEvent, now: number = Da
     ...(parent.scenario !== undefined ? { scenario: parent.scenario, scenario_v: parent.version ?? 1 } : {}),
     data: { result: answer.result },
   });
+  // The main executor builds on the report: an answer FAIL waits in the session and goes to it
+  // with its next action (`afterAction`). The roles are few: the list is kept short.
+  if (answer.result === 'FAIL') withSession(rt, e.session, (file) => ({ next: { ...file, judged: [...new Set([...(file.judged ?? []), ended.role])].slice(-8) }, result: undefined }));
   return { task: ended.task, judged: answer.result };
 }

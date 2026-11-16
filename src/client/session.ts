@@ -7,7 +7,7 @@ import { RULE_NAME } from '../contracts/journal.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
-import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, withSession } from '../core/sessions.ts';
+import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, takeJudged, withSession } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
 import { workState } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
@@ -17,12 +17,12 @@ import { noteMerge } from '../core/merged.ts';
 import { listQueue } from '../core/queue.ts';
 import { notify } from '../core/notify.ts';
 import { writeWeek } from '../craft/weekly.ts';
-import { casesForStart, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
+import { casesForStart, countUses, listRecords, recordsForStart, stateForStart } from '../memory/store.ts';
 
 // `capabilities`: what the client can do. `before`: it tells the core before an action.
 // `choice`: it can show the human a question with a choice. Absent: the client can.
 // `headless`: the client runs without a window, nobody answers it.
-export type SessionEvent = { session?: string; cwd: string; client?: string; capabilities?: { before?: boolean; choice?: boolean }; headless?: boolean };
+export type SessionEvent = { session?: string; cwd: string; client?: string; capabilities?: { before?: boolean; choice?: boolean }; headless?: boolean; answer?: string };
 export type ClientLevel = 'full' | 'no_choice' | 'no_before';
 
 // The level of a client (harness-client, page 3). Without the event before an action the harness
@@ -281,7 +281,10 @@ function unfinishedTask(rt: Runtime, e: SessionEvent): { task: string; scenario:
   return { task: task.id, scenario: task.scenario ?? '' };
 }
 
-type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string } };
+// `judged`: the roles of the subordinates whose report got the answer FAIL and that the main
+// executor did not hear: it took no action after their end (a subordinate in the background).
+// The client does not end the turn and says the answer to the agent, once.
+type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string }; judged?: string[] };
 
 export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   settleQuestions(rt, e.session);
@@ -291,7 +294,10 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   const unfinished = unfinishedTask(rt, e);
   const unguarded: Pick<Stopped, 'unguarded' | 'unfinished'> = { ...(seen?.unguarded === true && seen.told !== true ? { unguarded: true } : {}), ...(unfinished !== undefined ? { unfinished } : {}) };
   if (unguarded.unguarded === true) patchSession(rt, e.session, { told: true });
+  // An answer FAIL about a report of a subordinate that waits: the agent hears it before the turn ends.
+  const judged = takeJudged(rt, e.session);
   // The client goes on: this stop is not the end of the request, so its free task stays open.
+  if (judged.length > 0) return { ...unguarded, judged };
   if (unfinished !== undefined) return { ...unguarded };
   const id = current(rt, e.session).id;
   if (id === undefined) return { ...unguarded };
@@ -302,6 +308,9 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   const changed = typeof before === 'string' && now !== null ? now !== before : undefined;
   const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000', ...(changed === true ? { changed: true } : {}) }, 'agent');
   if (!('task' in r) || r.error !== undefined) return { ...unguarded };
+  // The answer of the free task, when the client gives it: a record of the memory that it cites by
+  // its id was used. The count is apart from the reports: no check judged the answer.
+  if (e.answer !== undefined) countUses(rt, e.answer, Date.now(), true);
   const out: Stopped = { task: id, ...unguarded };
   if (r.task.label !== undefined) out.label = r.task.label;
   if (changed !== undefined) out.changed = changed;

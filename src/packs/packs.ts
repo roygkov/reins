@@ -37,7 +37,7 @@ export type ReadWhen = { field: string; pattern: string };
 // A write tool names it for the calls that `read_when` reads as a read.
 // `sensitive`: the tool returns or takes secrets or personal data. `irreversible`: the write cannot
 // be undone. `outward`: another human sees the result of the write.
-export type ToolRule = { kind: 'read'; connector?: string; sensitive?: true } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen; connector?: string; sensitive?: true; irreversible?: true; outward?: true };
+export type ToolRule = { kind: 'read'; env?: string; connector?: string; sensitive?: true } | { kind: 'write'; action: string; target: string; env: string; read_when?: ReadWhen; connector?: string; sensitive?: true; irreversible?: true; outward?: true };
 // The pattern of a pack runs before every call of the tool: a short value bounds the time of a slow pattern.
 // The name of a model of a client: starts with a letter or a digit, no spaces.
 export const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@\[\]-]{0,99}$/;
@@ -57,7 +57,7 @@ export type PackSettings = {
   // network: the read connectors that need the network. files: the files of a connector under the home directory.
   connectors?: { read?: string[]; write?: string[]; env?: Record<string, string[]>; network?: string[]; files?: Record<string, string[]> };
   envs?: { known?: string[]; production?: string[] };
-  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number; probes?: number; tool_failures?: number; session_requests?: number };
+  limits?: { level?: ModelLevel; tokens?: number; writes?: number; executors?: number; reads?: number; free_changes?: number; probes?: number; tool_failures?: number; session_requests?: number; free_tokens?: number };
   roles?: string[];
   checks?: string[];
   memory?: { types?: string[]; veto_days?: number; keep_days?: number; case_end?: string[] };
@@ -311,7 +311,7 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     settings.envs = { ...(known !== undefined && { known }), ...(production !== undefined && { production }) };
   }
 
-  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes', 'probes', 'tool_failures', 'session_requests']);
+  const limits = section(errors, value.limits, 'limits', ['level', 'tokens', 'writes', 'executors', 'reads', 'free_changes', 'probes', 'tool_failures', 'session_requests', 'free_tokens']);
   if (limits !== null) {
     const out: NonNullable<PackSettings['limits']> = {};
     if (limits.level !== undefined) {
@@ -336,6 +336,9 @@ export function validateSettings(value: unknown, level: PackLevel): { settings: 
     // The requests of one session before the harness says to write the state and to start a new session.
     const sessionRequests = limit(errors, limits.session_requests, 'limits.session_requests');
     if (sessionRequests !== undefined) out.session_requests = sessionRequests;
+    // The tokens of one free task before the harness says that the task is large. The work goes on.
+    const freeTokens = limit(errors, limits.free_tokens, 'limits.free_tokens');
+    if (freeTokens !== undefined) out.free_tokens = freeTokens;
     if (tokens !== undefined) out.tokens = tokens;
     if (writes !== undefined) out.writes = writes;
     if (executors !== undefined) out.executors = executors;
@@ -554,7 +557,7 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
       errors.push({ code: rule.kind === undefined ? 'missing' : 'not_in_list', path: `${at}.kind` });
       continue;
     }
-    const allowed = rule.kind === 'read' ? ['kind', 'connector', 'sensitive'] : ['kind', 'action', 'target', 'env', 'read_when', 'connector', 'sensitive', 'irreversible', 'outward'];
+    const allowed = rule.kind === 'read' ? ['kind', 'env', 'connector', 'sensitive'] : ['kind', 'action', 'target', 'env', 'read_when', 'connector', 'sensitive', 'irreversible', 'outward'];
     // A mark is `true` or it is not there: a mark that says `false` would read as a statement that the pack checked.
     const marks: { sensitive?: true; irreversible?: true; outward?: true } = {};
     for (const mark of ['sensitive', 'irreversible', 'outward'] as const) {
@@ -566,7 +569,12 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
     if (rule.kind === 'read') {
       const named = rule.connector;
       if (named !== undefined && !(typeof named === 'string' && reads.includes(named))) errors.push({ code: 'not_in_list', path: `${at}.connector` });
-      out[name] = { kind: 'read', ...(typeof named === 'string' && reads.includes(named) ? { connector: named } : {}), ...(marks.sensitive === true ? { sensitive: true as const } : {}) };
+      // The environment of a read is optional: the journal and a rule of a pack about an environment
+      // see the read under it. Without the field the read is a local one, as before.
+      const of = rule.env;
+      const envOk = typeof of === 'string' && envs.includes(of);
+      if (of !== undefined && !envOk) errors.push({ code: 'not_in_list', path: `${at}.env` });
+      out[name] = { kind: 'read', ...(envOk ? { env: of } : {}), ...(typeof named === 'string' && reads.includes(named) ? { connector: named } : {}), ...(marks.sensitive === true ? { sensitive: true as const } : {}) };
       continue;
     }
     const { action, target, env } = rule;
@@ -882,7 +890,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   narrow('envs', s.envs?.known);
   narrow('roles', s.roles);
 
-  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges' | 'maxProbes' | 'maxToolFailures' | 'maxSessionRequests', value: number | undefined): void => {
+  const lower = (key: 'maxTokens' | 'maxWriteLimit' | 'maxExecutors' | 'maxReads' | 'maxFreeChanges' | 'maxProbes' | 'maxToolFailures' | 'maxSessionRequests' | 'maxFreeTokens', value: number | undefined): void => {
     if (value === undefined) return;
     const before = c[key];
     if (before === undefined || value < before) {
@@ -898,6 +906,7 @@ function apply(m: Merged, pack: LoadedPack, s: PackSettings): void {
   lower('maxProbes', s.limits?.probes);
   lower('maxToolFailures', s.limits?.tool_failures);
   lower('maxSessionRequests', s.limits?.session_requests);
+  lower('maxFreeTokens', s.limits?.free_tokens);
   const level = s.limits?.level;
   if (level !== undefined && (c.maxLevel === undefined || rank(level) < rank(c.maxLevel))) {
     c.maxLevel = level;

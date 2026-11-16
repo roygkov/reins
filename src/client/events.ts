@@ -42,7 +42,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       return { context: sessionStart(rt, e).context };
     }
     case 'request': return humanRequest(rt, e);
-    case 'stop': return agentStopped(rt, e);
+    case 'stop': return agentStopped(rt, { ...e, ...(typeof value.answer === 'string' && value.answer !== '' ? { answer: value.answer } : {}) });
     case 'before_compaction': return beforeCompaction(rt, e);
     case 'session_end': return sessionEnd(rt, e);
     case 'executor_start': {
@@ -66,7 +66,7 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
         // What the model spent since the event before, when the client knows it.
         if (typeof value.tokens === 'number') noteCost(rt, { ...session, tokens: value.tokens });
         // The source of the output: the client tells the agent that the output is data of that source.
-        return { ...(done.source !== undefined ? { source: done.source } : {}), ...(done.offer !== undefined ? { offer: done.offer } : {}) };
+        return { ...(done.source !== undefined ? { source: done.source } : {}), ...(done.offer !== undefined ? { offer: done.offer } : {}), ...(done.judged !== undefined ? { judged: done.judged } : {}), ...(done.over !== undefined ? { over: done.over } : {}) };
       }
       const r = beforeAction(rt, call, tools);
       const out: EventReply = { outcome: r.outcome, rule: r.rule };

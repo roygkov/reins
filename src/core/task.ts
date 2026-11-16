@@ -43,6 +43,7 @@ export type Task = {
   reads?: number; // the reads through connectors that the task made
   extraReads?: string[]; // the read connectors outside the manifest that the human let this task use
   changes?: number; // the changes that a free task made
+  overTold?: boolean; // the free task got the words about its tokens past the limit of the packs
   offered?: boolean; // the free task got its offer of a contract
   checked?: number; // the time of the accepted answer
   check?: string; // the fingerprint of the check that gave it

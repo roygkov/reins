@@ -15,7 +15,7 @@ import { decide, grantKey, plainValue, type Action, type Decision, type Envelope
 import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, mutateTask, redGuards, verifyWork, type Runtime } from '../core/runtime.ts';
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
-import { currentScenario, patchSession, readSession, withSession } from '../core/sessions.ts';
+import { currentScenario, patchSession, readSession, takeJudged, withSession } from '../core/sessions.ts';
 import { readsOnly, touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
 import { guardPattern, inputForm } from '../contracts/manifest.ts';
@@ -347,7 +347,13 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
   }
   const rule = packRule(rt.merged.tools, call.tool);
   if (rule === undefined) return { action: UNKNOWN, layers: [] };
-  if (rule.kind === 'read') return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env: LOCAL_ENV, ...(rule.sensitive === true ? { sensitive: true } : {}) }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
+  if (rule.kind === 'read') {
+    // A row of a read can name the environment that the tool reads. Without it the read is a local one.
+    // The environment is known when the merge of the packs knows it, as for a write: a pack of a lower level can narrow the list.
+    const known = rule.env !== undefined && (rt.merged.context.envs ?? []).includes(rule.env);
+    const env = rule.env === undefined ? LOCAL_ENV : { name: rule.env, known, production: !known || (rt.merged.context.productionEnvs ?? []).includes(rule.env) };
+    return { action: { via: 'tool', kind: 'read', name: 'read', target: '', env, ...(rule.sensitive === true ? { sensitive: true } : {}) }, layers: [], ...(rule.connector !== undefined ? { connector: rule.connector } : {}) };
+  }
   const known = (rt.merged.context.envs ?? []).includes(rule.env);
   // The row of a tool names one environment. The call can name another: a name in its input that
   // holds a marker of the production environment (a cluster, a host, a project). Then the call
@@ -582,8 +588,10 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   // A pause of the human: a question passes without the question. A refusal holds. So does the
   // question about a write into production or into an unknown environment, and about a write that
   // cannot be undone: the human approves each of those, pause or not (the same rule as for an envelope).
+  // A write that another human sees asks too, in every environment: the other human has read it,
+  // and nothing takes that back.
   const paused = pausedUntil(rt) === null ? null : decide({ action, layers, envelope: [] });
-  if (paused !== null && paused.outcome === 'ask' && paused.envelope !== 'production' && paused.envelope !== 'irreversible') {
+  if (paused !== null && paused.outcome === 'ask' && paused.envelope !== 'production' && paused.envelope !== 'irreversible' && !(action.kind === 'write' && action.outward === true)) {
     record(rt, call, [
       { kind: 'policy.decision', data: { outcome: 'allow', action_kind: action.kind, env: action.env.name } },
       { kind: 'policy.basis', data: { layer: 'core', rule: 'paused' } },
@@ -714,14 +722,43 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // of an outer source, never instructions: the client says so to the agent (harness-connector, pages 4 and 6).
 // `offer`: a free task grew by facts (harness-core, page 8): it made the number of changes that
 // the packs name. The client offers the human a contract, once for a task; the work goes on.
-export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean; source?: string; offer?: 'contract' } {
+// `judged`: the roles of the subordinates whose report got the answer FAIL of the check of its
+// citations since the last action of the main executor. The client says it to the main executor, once.
+export function afterAction(rt: Runtime, call: ToolCall, clientTools: ClientTools, asked = true, failed = false): { confirmed: boolean; source?: string; offer?: 'contract'; judged?: string[]; over?: { tokens: number; limit: number } } {
   const base = settle(rt, call, clientTools, asked, failed);
-  const settled: { confirmed: boolean; offer?: 'contract' } = !failed && grew(rt, call, clientTools) ? { ...base, offer: 'contract' } : base;
+  const grown: { confirmed: boolean; offer?: 'contract' } = !failed && grew(rt, call, clientTools) ? { ...base, offer: 'contract' } : base;
+  // A tool that failed prints nothing, and an action of a subordinate is not the main executor: the words wait.
+  const roles = failed || call.sub !== undefined ? [] : takeJudged(rt, call.session);
+  const heard: { confirmed: boolean; offer?: 'contract'; judged?: string[] } = roles.length > 0 ? { ...grown, judged: roles } : grown;
+  const over = failed || call.sub !== undefined ? undefined : spentMuch(rt, call);
+  const settled: { confirmed: boolean; offer?: 'contract'; judged?: string[]; over?: { tokens: number; limit: number } } = over !== undefined ? { ...heard, over } : heard;
   if (failed || Object.hasOwn(clientTools, call.tool)) return settled;
   // The table of the tools that decided the call: the one of the task that the session holds.
   const rule = packRule(frozenRuntime(rt, currentScenario(rt, call.session)).merged.tools, call.tool);
   const reads = rule !== undefined && rule.connector !== undefined && (rule.kind === 'read' || readsNow(rule.read_when, call.input));
   return reads && rule.connector !== undefined ? { ...settled, source: rule.connector } : settled;
+}
+
+// `over`: the free task of the session spent more tokens than the packs name (`limits.free_tokens`).
+// The client says it once for a task; the work goes on: the human sits at the window, and a stop
+// would be a question without a use. A task of a scenario has its own limit, and that one stops.
+function spentMuch(rt: Runtime, call: ToolCall): { tokens: number; limit: number } | undefined {
+  const limit = rt.merged.context.maxFreeTokens;
+  if (limit === undefined) return undefined;
+  const held = currentScenario(rt, call.session);
+  const scenario = held === undefined ? null : loadTask(rt, held);
+  if (scenario !== null && scenario.state !== 'closed' && scenario.state !== 'skipped') return undefined;
+  const id = heldFreeTask(rt, call.session);
+  if (id === undefined) return undefined;
+  const seen = loadTask(rt, id);
+  if (seen === null || seen.overTold === true || (seen.cost?.tokens ?? 0) <= limit) return undefined;
+  let tokens: number | undefined;
+  mutateTask(rt, id, (task) => {
+    if (task.overTold === true || (task.cost?.tokens ?? 0) <= limit) return task;
+    tokens = task.cost?.tokens ?? 0;
+    return { ...task, overTold: true };
+  });
+  return tokens === undefined ? undefined : { tokens, limit };
 }
 
 // Counts a change of the free task of the session. True once: when the count reaches the number of the packs.

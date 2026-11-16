@@ -34,6 +34,7 @@ const CLIENT: ClientTools = {
 const TOOLS = {
   'tracker__get_*': { kind: 'read' },
   'wiki__get_*': { kind: 'read', connector: 'tracker' },
+  'live__get_*': { kind: 'read', env: 'live' },
   'tracker__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'work' },
   'tracker__*': { kind: 'write', action: 'comment', target: 'any/{id}', env: 'work' },
   'live__add_comment': { kind: 'write', action: 'comment', target: 'change/{change}', env: 'live' },
@@ -167,6 +168,7 @@ for (const [name, tools, level, errors] of [
   ['a tool has a known kind', { 'x__get': { kind: 'local' } }, 'organization', ['not_in_list tools.x__get.kind']],
   ['a write tool names an action of the pack, a target and a known environment', { 'x__put': { kind: 'write', action: 'delete', env: 'moon' } }, 'organization', ['not_in_list tools.x__put.action', 'missing tools.x__put.target', 'not_in_list tools.x__put.env']],
   ['a read tool has no action', { 'x__get': { kind: 'read', action: 'comment' } }, 'organization', ['unknown_field tools.x__get.action']],
+  ['a read tool names a known environment or none', { 'x__get': { kind: 'read', env: 'moon' }, 'y__get': { kind: 'read', env: 'live' } }, 'organization', ['not_in_list tools.x__get.env']],
   ['a tool name is plain text with an optional star at the end', { 'x *': { kind: 'read' }, 'a*b': { kind: 'read' }, '*': { kind: 'read' } }, 'organization', ['bad_name tools.x *', 'bad_name tools.a*b', 'bad_name tools.*']],
   ['a target has only plain placeholders', { 'x__put': { kind: 'write', action: 'comment', target: 'c/{a.b}', env: 'work' } }, 'organization', ['bad_name tools.x__put.target']],
   ['the tools are an object', ['x'], 'organization', ['not_object tools']],
@@ -729,4 +731,20 @@ test('before: the basis of a decision that a pack gave names the level of the pa
   const bases = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.basis');
   assert.deepEqual(bases.map((r) => [r.data?.rule, r.pack]), [['org.no-word', 'organization'], ['default.shell', undefined]]);
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});
+
+test('before: a read tool with an environment in its row is written with that environment, and a rule of a pack about the environment sees it', () => {
+  const b = box();
+  const envOf = (tool: string): unknown => {
+    const out = beforeAction(b.rt, { ...call(b, tool, {}), session: 's1' }, CLIENT);
+    assert.equal(out.outcome, 'allow');
+    return readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').at(-1)?.data?.env;
+  };
+  assert.equal(envOf('live__get_note'), 'live');
+  // A row without the field reads as before.
+  assert.equal(envOf('tracker__get_note'), 'local');
+  b.rt.merged.rules.push({ id: 'live-read', outcome: 'ask', env: 'live', level: 'organization' });
+  const asked = beforeAction(b.rt, { ...call(b, 'live__get_note', {}), session: 's1' }, CLIENT);
+  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'live-read']);
+  assert.equal(beforeAction(b.rt, { ...call(b, 'tracker__get_note', {}), session: 's1' }, CLIENT).outcome, 'allow');
 });

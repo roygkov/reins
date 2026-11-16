@@ -220,6 +220,17 @@ test('pause: a write into production or into an unknown environment and a write 
   assert.equal(shell.outcome, 'ask');
 });
 
+test('pause: a write that another human sees still asks, in a known environment too', () => {
+  const b = box();
+  workTool(b, { outward: true });
+  pause(b.rt, 30);
+  const out = beforeAction(b.rt, { ...e(b), tool: 'post_note', input: {} }, CLIENT);
+  assert.deepEqual([out.outcome, out.rule], ['ask', 'default.outward-write']);
+  // The same write without the mark passes during the pause.
+  workTool(b);
+  assert.deepEqual(beforeAction(b.rt, { ...e(b), tool: 'post_note', input: {} }, CLIENT).rule, 'paused');
+});
+
 test('pause: a rule that refuses holds during a pause', () => {
   const b = box();
   b.rt.merged.rules.push({ id: 'never', outcome: 'deny', tool: 'launch_rocket', level: 'person' });

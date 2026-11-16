@@ -369,6 +369,21 @@ test('claude-code: a run without a window that stops before the report of its ta
   assert.equal(run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.decision, undefined);
 });
 
+test('claude-code: a stop with an answer FAIL of a subordinate that the agent did not hear is told to go on, once', () => {
+  const b = box();
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit', { prompt: 'x' }));
+  // The answer waits in the file of the session, as the core leaves it after a report that did not pass.
+  const file = fs.readdirSync(path.join(b.state, 'sessions')).find((name) => name.includes('abc'));
+  assert.ok(file !== undefined);
+  const at = path.join(b.state, 'sessions', file);
+  fs.writeFileSync(at, JSON.stringify({ ...JSON.parse(fs.readFileSync(at, 'utf8')), judged: ['reviewer'] }));
+  const stop = run(HOOK, b, ['stop'], hookEvent(b, 'Stop'));
+  assert.equal(stop.json?.decision, 'block');
+  assert.match(stop.json?.reason ?? '', /subordinate executor "reviewer" got the answer FAIL/);
+  assert.equal(run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json?.decision, undefined);
+});
+
 test('claude-code: a failed tool is written to the journal, a tool that the human broke off is not', () => {
   const b = box();
   run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));

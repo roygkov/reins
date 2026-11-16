@@ -182,7 +182,7 @@ function unusedRecords(rt: Runtime, now: number): Pattern[] {
   const out: Pattern[] = [];
   for (const r of listRecords(rt, now)) {
     if (r.state !== 'active' || r.type === 'decision' || r.project !== rt.project) continue;
-    const fresh = Math.max(Date.parse(r.created), r.verified === undefined ? 0 : Date.parse(r.verified), r.last_use === undefined ? 0 : Date.parse(r.last_use));
+    const fresh = Math.max(Date.parse(r.created), r.verified === undefined ? 0 : Date.parse(r.verified), r.last_use === undefined ? 0 : Date.parse(r.last_use), r.last_free_use === undefined ? 0 : Date.parse(r.last_free_use));
     const days = Math.floor((now - fresh) / DAY);
     if (days >= (rt.merged.craft?.unused_days ?? UNUSED_DAYS)) out.push({ pattern: 'record_unused', key: r.id, n: days });
   }
@@ -334,8 +334,11 @@ export function propose(rt: Runtime, now: number = Date.now()): Proposal[] {
 function apply(rt: Runtime, p: Proposal, now: number): boolean {
   const change = p.change;
   if (change === undefined) return false;
-  // A dead record goes out of the work only while no report cited it: a citation since the proposal says that it helps.
-  if (change.kind === 'memory' && change.dead === true) return listRecords(rt, now).find((r) => r.id === change.record)?.uses === 0 && retireRecord(rt, change.record, now, 0);
+  // A dead record goes out of the work only while no report and no answer of a free task cited it: a citation since the proposal says that it helps.
+  if (change.kind === 'memory' && change.dead === true) {
+    const record = listRecords(rt, now).find((r) => r.id === change.record);
+    return record?.uses === 0 && (record.free_uses ?? 0) === 0 && retireRecord(rt, change.record, now, 0);
+  }
   if (change.kind === 'memory') return retireRecord(rt, change.record, now, change.undo === true ? 0 : (rt.merged.craft?.unused_days ?? UNUSED_DAYS));
   // The human accepted the pitfall: the record is the word of the human, in use at once. The
   // proposal keeps the name of the record: an undo of the proposal takes that record out of the work.
@@ -445,14 +448,15 @@ function effectOf(p: Proposal, before: Counts, after: Counts, over?: { before: n
   if (p.pattern === 'check_fails_often') {
     const a = after.checks.get(p.key);
     const b = before.checks.get(p.key);
-    if (a === undefined || a.all < MIN_CHECKS || b === undefined || b.all === 0) return 'not_measured';
+    // The period before needs the same count as the period after: a share of one check is 0 or 1 and says nothing.
+    if (a === undefined || a.all < MIN_CHECKS || b === undefined || b.all < MIN_CHECKS) return 'not_measured';
     return compare(a.fail / a.all, b.fail / b.all);
   }
   if (p.pattern === 'repeated_contract') {
     const a = after.started.get(p.key) ?? 0;
     const b = before.started.get(p.key) ?? 0;
     // The size of the sample of a measure is a number of the code: a pack does not set how an effect is judged.
-    if (a < MIN_CONTRACTS || b === 0) return 'not_measured';
+    if (a < MIN_CONTRACTS || b < MIN_CONTRACTS) return 'not_measured';
     return compare((after.returned.get(p.key) ?? 0) / a, (before.returned.get(p.key) ?? 0) / b);
   }
   if (p.pattern === 'tool_fails_often') {
@@ -463,7 +467,7 @@ function effectOf(p: Proposal, before: Counts, after: Counts, over?: { before: n
   if (p.pattern === 'level_too_low') {
     const a = after.started.get(p.key) ?? 0;
     const b = before.started.get(p.key) ?? 0;
-    if (a < MIN_RAISES || b === 0) return 'not_measured';
+    if (a < MIN_RAISES || b < MIN_RAISES) return 'not_measured';
     return compare((after.raised.get(p.key) ?? 0) / a, (before.raised.get(p.key) ?? 0) / b);
   }
   if (p.pattern === 'level_too_high') {

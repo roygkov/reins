@@ -16,7 +16,7 @@ import type { Runtime } from './runtime.ts';
 // before: such a word came in this session. unguarded: an action ended and no such word had come.
 // told: the human heard about it at a stop.
 // returns: how many times a stop of a client without a window got the task back.
-export type SessionFile = { returns?: { task: string; n: number }; claims?: string; noChoice?: boolean; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; fails?: Record<string, number>; executors?: { role: string; task: string; at: number }[] };
+export type SessionFile = { returns?: { task: string; n: number }; claims?: string; noChoice?: boolean; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; fails?: Record<string, number>; executors?: { role: string; task: string; at: number }[]; judged?: string[] };
 
 const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
 export const sessionName = (session: string | undefined): string =>
@@ -31,6 +31,17 @@ const realDir = (dir: string): string => {
   }
 };
 const dirFile = (rt: Runtime, cwd: string): string => path.join(rt.stateDir, 'dirs', `${crypto.createHash('sha256').update(realDir(cwd)).digest('hex').slice(0, 24)}.json`);
+
+// The roles of the subordinates whose report got the answer FAIL and that the main executor did
+// not hear yet. The list is taken once: the next reader gets nothing.
+export function takeJudged(rt: Runtime, session: string | undefined): string[] {
+  // A client that names no session has a file too: the report of its subordinate is written there.
+  if ((readSession(rt, session)?.judged ?? []).length === 0) return [];
+  return withSession(rt, session, (file) => {
+    const { judged, ...rest } = file;
+    return { next: rest, result: judged ?? [] };
+  });
+}
 
 export function readSession(rt: Runtime, session: string | undefined): SessionFile | null {
   try {

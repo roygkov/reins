@@ -176,6 +176,26 @@ test('budget: the clients report what the model spent', () => {
   for (const r of last) assert.deepEqual(validateRow(r), []);
 });
 
+test('budget: a free task past the limit of tokens of the packs gets words once, and the work goes on', () => {
+  const b = box();
+  b.rt.merged.context.maxFreeTokens = 100;
+  const free = humanRequest(b.rt, { cwd: b.cwd, session: 's9' }).task;
+  const read = { cwd: b.cwd, tool: 'read_file', input: {}, session: 's9' };
+  noteCost(b.rt, { session: 's9', tokens: 90 });
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false }, 'below the limit');
+  noteCost(b.rt, { session: 's9', tokens: 60 });
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false, over: { tokens: 150, limit: 100 } });
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false }, 'said once for a task');
+  // Nothing stops: the task executes, and the next action is decided as before.
+  assert.equal(loadTask(b.rt, free)?.state, 'executing');
+  assert.equal(beforeAction(b.rt, read, CLIENT).outcome, 'allow');
+  // Without the key of the packs nothing is said.
+  delete b.rt.merged.context.maxFreeTokens;
+  humanRequest(b.rt, { cwd: b.cwd, session: 's9' });
+  noteCost(b.rt, { session: 's9', tokens: 500 });
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false });
+});
+
 // ---- The report of a subordinate executor.
 
 test('budget: the report of a subordinate is a claim: the code judges its citations against the source of the task', () => {
@@ -194,6 +214,47 @@ test('budget: the report of a subordinate is a claim: the code judges its citati
   const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.report_judged');
   assert.deepEqual(rows.map((r) => [r.executor, r.parent, r.role, r.data?.result]), [['sub', id, 'reviewer', 'PASS'], ['sub', id, 'reviewer', 'FAIL'], ['sub', id, 'reviewer', 'FAIL']]);
   for (const r of rows) assert.deepEqual(validateRow(r), []);
+});
+
+test('budget: the answer FAIL about the report of a subordinate goes to the main executor with its next action, once', () => {
+  const b = box();
+  scenario(b);
+  const run = (report: string) => {
+    assert.equal(executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer' }).outcome, 'allow');
+    return executorReported(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer', report });
+  };
+  const read = { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' };
+  run(JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'the first line of the file', text: 'x' }] }));
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false }, 'an answer PASS says nothing');
+  run(JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a line that the file does not have', text: 'x' }] }));
+  // An action of a subordinate does not take the words: they are for the main executor.
+  assert.deepEqual(afterAction(b.rt, { ...read, sub: 'reviewer' }, CLIENT), { confirmed: false });
+  // A tool that failed prints nothing in the client: the words wait.
+  assert.deepEqual(afterAction(b.rt, read, CLIENT, true, true), { confirmed: false });
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false, judged: ['reviewer'] });
+  assert.deepEqual(afterAction(b.rt, read, CLIENT), { confirmed: false }, 'said once');
+});
+
+test('budget: a stop of the main executor that took no action after the answer FAIL gets the answer, once', () => {
+  const b = box();
+  scenario(b);
+  assert.equal(executorStarted(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer' }).outcome, 'allow');
+  executorReported(b.rt, { session: 's1', cwd: b.cwd, role: 'reviewer', report: JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a line that the file does not have', text: 'x' }] }) });
+  // A subordinate in the background ends after the action that started it: the main executor may answer with no more action.
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).judged, ['reviewer']);
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).judged, undefined, 'said once: the second stop ends the turn');
+  assert.deepEqual(afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {}, session: 's1' }, CLIENT), { confirmed: false }, 'and not again with an action');
+});
+
+test('budget: the answer FAIL of a client that names no session reaches the main executor too', async () => {
+  const { takeJudged, withSession } = await import('../src/core/sessions.ts');
+  const b = box();
+  // A client without a session id: the report is written to the file of the session without a name.
+  withSession(b.rt, undefined, (file) => ({ next: { ...file, judged: ['reviewer'] }, result: undefined }));
+  assert.deepEqual(afterAction(b.rt, { cwd: b.cwd, tool: 'read_file', input: {} }, CLIENT).judged, ['reviewer']);
+  assert.deepEqual(takeJudged(b.rt, undefined), [], 'taken once');
+  withSession(b.rt, undefined, (file) => ({ next: { ...file, judged: ['reviewer'] }, result: undefined }));
+  assert.deepEqual(agentStopped(b.rt, { cwd: b.cwd }).judged, ['reviewer']);
 });
 
 test('budget: outside a task with a source a report of a subordinate is not judged', () => {

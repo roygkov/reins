@@ -47,6 +47,8 @@ export type MemoryRecord = {
   history: { at: string; state: RecordState }[];
   uses: number; // how many reports cited the record; from the working state
   last_use?: string; // the time of the last report that cited the record
+  free_uses?: number; // how many answers of free tasks cited the record: no check judged those answers, so the count is apart
+  last_free_use?: string; // the time of the last such answer
   scope?: 'common'; // the record is for every project, not only for the project that wrote it
   wrong?: number; // how many times the human said "this was wrong"
   // A case: what is not finished.
@@ -259,14 +261,20 @@ export type Census = { active: number; cited: number; dead: number; unseen: numb
 export function census(rt: Runtime, now: number = Date.now()): Census {
   const gives = readGives(rt);
   const active = listRecords(rt, now).filter((r) => r.state === 'active');
-  const dead = active.filter((r) => r.type !== 'decision' && r.uses === 0 && (gives[r.id] ?? 0) >= DEAD_GIVES).map((r) => ({ id: r.id, type: r.type, given: gives[r.id] ?? 0 })).sort((a, b) => b.given - a.given || a.id.localeCompare(b.id));
+  const dead = active.filter((r) => r.type !== 'decision' && r.uses === 0 && (r.free_uses ?? 0) === 0 && (gives[r.id] ?? 0) >= DEAD_GIVES).map((r) => ({ id: r.id, type: r.type, given: gives[r.id] ?? 0 })).sort((a, b) => b.given - a.given || a.id.localeCompare(b.id));
   return { active: active.length, cited: active.filter((r) => r.uses > 0).length, dead: dead.length, unseen: active.filter((r) => (gives[r.id] ?? 0) === 0).length, worst: dead.slice(0, 20) };
 }
 
-function readUses(rt: Runtime): Record<string, { n: number; last: string }> {
+// The counts of one record. `n`, `last`: the reports that a check accepted. `free`, `free_last`: the
+// answers of free tasks. A record that only free tasks cited has `n: 0` and an empty `last`.
+type Uses = { n: number; last: string; free?: number; free_last?: string };
+// The time of the last citation of any kind, or 0.
+const lastCited = (uses: Uses | undefined): number => Math.max(0, ...[uses?.last, uses?.free_last].map((t) => (t === undefined || t === '' ? 0 : Date.parse(t))).filter((t) => !Number.isNaN(t)));
+
+function readUses(rt: Runtime): Record<string, Uses> {
   try {
     const value: unknown = JSON.parse(fs.readFileSync(usesFile(rt), 'utf8'));
-    return value !== null && typeof value === 'object' ? (value as Record<string, { n: number; last: string }>) : {};
+    return value !== null && typeof value === 'object' ? (value as Record<string, Uses>) : {};
   } catch {
     return {};
   }
@@ -358,14 +366,14 @@ export function brokenRecords(rt: Runtime): string[] {
 // The state of a record at a time. A draft past its veto window is active. An active record is
 // stale when its place changed or is gone, or when no report cited it for its term. A decision
 // does not age: it holds until another decision replaces it.
-function at(record: Omit<MemoryRecord, 'uses'>, now: number, uses: { n: number; last: string } | undefined): MemoryRecord {
-  const out: MemoryRecord = { ...record, uses: uses?.n ?? 0, ...(uses !== undefined ? { last_use: uses.last } : {}) };
+function at(record: Omit<MemoryRecord, 'uses'>, now: number, uses: Uses | undefined): MemoryRecord {
+  const out: MemoryRecord = { ...record, uses: uses?.n ?? 0, ...(uses !== undefined && uses.last !== '' ? { last_use: uses.last } : {}), ...(uses?.free !== undefined && uses.free > 0 ? { free_uses: uses.free, ...(uses.free_last !== undefined ? { last_free_use: uses.free_last } : {}) } : {}) };
   if (out.state === 'pending' && out.veto_until !== undefined && Date.parse(out.veto_until) < now) out.state = 'active';
   if (out.state !== 'active') return out;
   const root = out.anchor?.root;
   if (out.anchor !== undefined && [out.anchor, ...(out.anchors ?? [])].some((a) => fingerprint(root as string, a.path) !== a.fp)) out.state = 'stale';
   else if (out.type !== 'decision') {
-    const fresh = Math.max(Date.parse(out.created), out.verified === undefined ? 0 : Date.parse(out.verified), uses === undefined ? 0 : Date.parse(uses.last));
+    const fresh = Math.max(Date.parse(out.created), out.verified === undefined ? 0 : Date.parse(out.verified), lastCited(uses));
     if (now - fresh > IDLE_DAYS * DAY) out.state = 'stale';
   }
   return out;
@@ -517,7 +525,7 @@ export function retireRecord(rt: Runtime, id: string, now: number = Date.now(), 
   const record = stored(rt).find((r) => r.id === id);
   const uses = readUses(rt)[id];
   if (record === undefined || record.type === 'decision' || at(record, now, uses).state !== 'active') return false;
-  if (uses !== undefined && now - Date.parse(uses.last) < idleDays * DAY) return false;
+  if (uses !== undefined && now - lastCited(uses) < idleDays * DAY) return false;
   write(rt, { ...record, state: 'stale', history: [...record.history, { at: new Date(now).toISOString(), state: 'stale' }] });
   rt.journal.write({ kind: 'memory.record_changed', project: rt.project, data: { record: id, type: record.type, state: 'stale' } });
   return true;
@@ -798,7 +806,9 @@ export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes:
 
 // A record is used when a report cites it by its id (harness-memory, page 5). One report counts
 // once for one record. Returns the ids that were counted.
-export function countUses(rt: Runtime, report: string, now: number = Date.now()): string[] {
+// `free`: the text is the answer of a free task. No check judged it, so it has a count of its own
+// (`free_uses`): the record stays in the work, and the count of the reports does not grow.
+export function countUses(rt: Runtime, report: string, now: number = Date.now(), free = false): string[] {
   const cited = [...new Set(report.match(/\bm[0-9a-f]{10}\b/g) ?? [])];
   if (cited.length === 0) return [];
   const known = new Set(stored(rt).filter((r) => r.state !== 'vetoed').map((r) => r.id));
@@ -810,12 +820,18 @@ export function countUses(rt: Runtime, report: string, now: number = Date.now())
   fs.mkdirSync(path.dirname(usesFile(rt)), { recursive: true });
   const counted = locked(`${usesFile(rt)}.lock`, () => {
     const uses = readUses(rt);
-    for (const id of ids) uses[id] = { n: (uses[id]?.n ?? 0) + 1, last: new Date(now).toISOString() };
+    for (const id of ids) {
+      const was = uses[id];
+      const time = new Date(now).toISOString();
+      uses[id] = free ? { ...was, n: was?.n ?? 0, last: was?.last ?? '', free: (was?.free ?? 0) + 1, free_last: time } : { ...was, n: (was?.n ?? 0) + 1, last: time };
+    }
     const tmp = `${usesFile(rt)}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(uses));
     fs.renameSync(tmp, usesFile(rt));
   });
   if (!counted) return [];
+  // The row of the journal is the use that a check accepted: the measures count it.
+  if (free) return ids;
   for (const id of ids) rt.journal.write({ kind: 'memory.record_used', project: rt.project, data: { record: id } });
   return ids;
 }

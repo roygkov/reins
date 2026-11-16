@@ -408,6 +408,22 @@ test('craft: without enough data the effect is "not measured", and no row is wri
   assert.deepEqual(measure(b.rt, NOW).map((p) => p.effect), ['better']);
 });
 
+test('craft: the period before the acceptance needs the same count as the period after it', () => {
+  const b = box();
+  const accepted = NOW - 8 * DAY;
+  const check = (result: string) => ({ kind: 'check.answered', scenario: 'change-review', scenario_v: 1, data: { result, check_kind: 'citations' } });
+  // Four checks made the pattern, but only one of them is in the period that the measure reads.
+  rows(b, accepted - 10 * DAY, ['FAIL', 'FAIL', 'FAIL'].map(check));
+  rows(b, accepted - DAY, [check('FAIL')]);
+  const made = propose(b.rt, accepted);
+  assert.deepEqual(made.map((p) => p.pattern), ['check_fails_often']);
+  resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', accepted);
+  rows(b, accepted + DAY, ['FAIL', 'FAIL', 'FAIL', 'PASS'].map(check));
+  // One check before is a share of 0 or of 1: it says nothing, and "worse" would propose an undo.
+  assert.deepEqual(measure(b.rt, NOW), []);
+  assert.equal(listProposals(b.rt)[0]?.effect, 'not_measured');
+});
+
 // ---- Cases of the review.
 
 test('craft: without work after the acceptance the effect of a rule is not measured', () => {
@@ -708,6 +724,15 @@ test('craft: a memory record that the agent got many times and that no report ci
   countUses(next.rt, `the work used ${late.record.id}`, NOW);
   assert.equal(resolveProposal(next.rt, open[0]?.id ?? '', 'accepted', NOW), true);
   assert.deepEqual([listRecords(next.rt, NOW).find((r) => r.id === late.record.id)?.state, listProposals(next.rt)[0]?.applied], ['active', false]);
+  // The same for a record that the answer of a free task cited after the proposal: it is in use.
+  const third = box();
+  const free = addRecord(third.rt, { type: 'pitfall', text: 'the gateway needs a warm cache', paths: [], by: 'human' }, NOW - DAY);
+  assert.ok(free.ok);
+  for (let i = 0; i < 5; i += 1) searchRecords(third.rt, ['gateway'], 20, NOW);
+  const waits = propose(third.rt, NOW);
+  countUses(third.rt, `the answer rests on ${free.record.id}`, NOW, true);
+  assert.equal(resolveProposal(third.rt, waits[0]?.id ?? '', 'accepted', NOW), true);
+  assert.deepEqual([listRecords(third.rt, NOW).find((r) => r.id === free.record.id)?.state, listProposals(third.rt)[0]?.applied], ['active', false]);
 });
 
 test('craft: a dead record that the human brought back is a worse memory, and no undo is proposed: the record is back already', () => {

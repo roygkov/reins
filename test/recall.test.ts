@@ -211,6 +211,28 @@ test('recall: a decision that was given many times and never cited is not a dead
   assert.deepEqual(count.worst, [{ id: pitfall, type: 'pitfall', given: 6 }]);
 });
 
+test('recall: a citation in the answer of a free task is counted apart from the reports, and it keeps the record in the work', async () => {
+  const { agentStopped, humanRequest } = await import('../src/client/session.ts');
+  const b = box();
+  const DAY = 24 * 60 * 60 * 1000;
+  const old = note(b, 'a record that only the answers of free tasks cite', [], NOW - 190 * DAY);
+  const of = () => listRecords(b.rt, NOW).find((r) => r.id === old);
+  assert.equal(of()?.state, 'stale', 'nobody cited it for its term');
+  for (let i = 0; i < 5; i += 1) searchRecords(b.rt, ['answers', 'free'], 20, NOW);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd, answer: `The answer rests on ${old}.` });
+  // The count of the reports stays: no check judged that answer. The record is fresh again.
+  assert.deepEqual([of()?.uses, of()?.free_uses, of()?.state], [0, 1, 'active']);
+  const count = census(b.rt, NOW);
+  assert.deepEqual([count.cited, count.dead], [0, 0], 'not cited by a report, and not dead');
+  // A stop without a request before it ends no free task: nothing is counted twice.
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd, answer: `The answer rests on ${old}.` });
+  assert.equal(of()?.free_uses, 1);
+  // A report counts as before, in its own number.
+  countUses(b.rt, `the work used ${old}`, NOW);
+  assert.deepEqual([of()?.uses, of()?.free_uses], [1, 1]);
+});
+
 test('recall: the count of the memory names the records that were given many times and never cited', () => {
   const b = box();
   const dead = note(b, 'a record that the agent gets and never cites');
