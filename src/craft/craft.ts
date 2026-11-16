@@ -189,10 +189,11 @@ function unusedRecords(rt: Runtime, now: number): Pattern[] {
 }
 
 // The memory records of the project that the agent got many times and that no report cited: they
-// take the place in the context and help nobody. A decision is not judged by citations.
+// take the place in the context and help nobody. A decision is not judged by citations: the
+// count of the memory leaves the decisions out.
 function deadRecords(rt: Runtime, now: number): Pattern[] {
   const own = new Map(listRecords(rt, now).map((r) => [r.id, r]));
-  return census(rt, now).worst.filter((d) => d.type !== 'decision' && own.get(d.id)?.project === rt.project).map((d) => ({ pattern: 'record_dead' as const, key: d.id, n: d.given }));
+  return census(rt, now).worst.filter((d) => own.get(d.id)?.project === rt.project).map((d) => ({ pattern: 'record_dead' as const, key: d.id, n: d.given }));
 }
 
 // The days of a period on which each measure stood above its target of the packs.

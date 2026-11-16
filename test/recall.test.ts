@@ -196,6 +196,19 @@ test('recall: the command line finds records by words, in every project', () => 
   assert.deepEqual(run(b.cwd, ['memory', 'find', 'one cache']).records, []);
 });
 
+test('recall: a decision that was given many times and never cited is not a dead record', () => {
+  const b = box();
+  const pitfall = note(b, 'a pitfall about the retry of the queue');
+  const made = addRecord(b.rt, { type: 'decision', text: 'the retry of the queue waits one minute', because: 'the broker drops a faster retry', paths: [], by: 'human' }, NOW);
+  assert.ok(made.ok, JSON.stringify(made));
+  // Both records are given six times and no report cites them.
+  for (let i = 0; i < 6; i += 1) searchRecords(b.rt, ['retry', 'queue'], 20, NOW);
+  // A decision holds until another decision takes its place: nobody has to cite it. Only the pitfall is dead.
+  const count = census(b.rt, NOW);
+  assert.deepEqual([count.active, count.cited, count.dead, count.unseen], [2, 0, 1, 0]);
+  assert.deepEqual(count.worst, [{ id: pitfall, type: 'pitfall', given: 6 }]);
+});
+
 test('recall: the count of the memory names the records that were given many times and never cited', () => {
   const b = box();
   const dead = note(b, 'a record that the agent gets and never cites');

@@ -251,13 +251,15 @@ export function noteShown(rt: Runtime, id: string): void {
 
 // The count of the memory now: the records in use, how many of them a report cited, how many
 // were given `DEAD_GIVES` times or more and never cited (`dead`), how many were never given
-// (`unseen`). `worst`: the dead records, the most given first.
+// (`unseen`). `worst`: the dead records, the most given first. A decision is never dead: it
+// holds until another decision takes its place, and nobody has to cite it. The harness gives the
+// decisions of a project at every start of a session, so a count of their gives says nothing.
 const DEAD_GIVES = 5;
 export type Census = { active: number; cited: number; dead: number; unseen: number; worst: { id: string; type: RecordType; given: number }[] };
 export function census(rt: Runtime, now: number = Date.now()): Census {
   const gives = readGives(rt);
   const active = listRecords(rt, now).filter((r) => r.state === 'active');
-  const dead = active.filter((r) => r.uses === 0 && (gives[r.id] ?? 0) >= DEAD_GIVES).map((r) => ({ id: r.id, type: r.type, given: gives[r.id] ?? 0 })).sort((a, b) => b.given - a.given || a.id.localeCompare(b.id));
+  const dead = active.filter((r) => r.type !== 'decision' && r.uses === 0 && (gives[r.id] ?? 0) >= DEAD_GIVES).map((r) => ({ id: r.id, type: r.type, given: gives[r.id] ?? 0 })).sort((a, b) => b.given - a.given || a.id.localeCompare(b.id));
   return { active: active.length, cited: active.filter((r) => r.uses > 0).length, dead: dead.length, unseen: active.filter((r) => (gives[r.id] ?? 0) === 0).length, worst: dead.slice(0, 20) };
 }
 
