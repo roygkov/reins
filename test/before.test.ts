@@ -397,6 +397,16 @@ test('before: a command that stops a task is the word of the human: the client a
   }
 });
 
+test('before: a command that fires an event opens tasks of scenarios: it is the word of the human, with a client and without one', () => {
+  const b = box();
+  for (const command of ['reins fire change-opened change_id=7', 'reins fire run change-opened change_id=7', 'node /x/src/cli.ts fire change-opened']) {
+    const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  // A look at the schedule opens only what is due: it stays a command of the agent.
+  assert.equal(beforeAction(b.rt, call(b, 'shell', { command: 'reins tick' }), CLIENT).outcome, 'allow');
+});
+
 test('before: the stop command inside a command substitution or an ANSI quote asks too', () => {
   const b = box();
   for (const command of ['echo `reins stop t000000000000`', 'echo $(reins stop t000000000000)', "reins $'stop' t000000000000"]) {

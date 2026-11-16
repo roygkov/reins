@@ -109,6 +109,17 @@ const stdio = (b: Box, event: Record<string, unknown>) => {
   return p.stdout === '' ? {} : JSON.parse(p.stdout);
 };
 
+test('client: a call that the human broke off is no "yes" in the second client either', () => {
+  const b = box();
+  stdio(b, { event: 'session_start' });
+  stdio(b, { event: 'request' });
+  const asked = stdio(b, { event: 'before', tool: 'some_connector_tool', input: {} });
+  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'default.unknown-tool']);
+  // The tool started and the human broke it off: this says neither "yes" nor "no".
+  stdio(b, { event: 'after', tool: 'some_connector_tool', input: {}, failed: true, interrupted: true });
+  assert.equal(readJournal(b.rt.journal.file).some((r) => r.kind === 'task.human_decision' && r.data?.decision === 'answered'), false);
+});
+
 test('client: a second client drives the same core through its own codec', () => {
   const b = box();
   const start = stdio(b, { event: 'session_start' });

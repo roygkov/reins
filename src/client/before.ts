@@ -280,7 +280,7 @@ function commandGuard(rt: Runtime, command: string, cwd: string, refused: boolea
   if (refused) return null;
   // `reins stop` is the word of the human. The agent can type the command, so the client asks.
   // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-  const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire\s+run)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+  const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
   // The parse of the command says which places it changes: a change of the state, of the memory
   // or of the config is refused, as for a file tool. The match of the text is the second barrier.
   const places = placesGuard(rt, command, cwd);

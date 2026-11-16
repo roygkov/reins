@@ -113,6 +113,19 @@ test('claude-code: one approval of the human covers the named write of a task', 
   assert.equal(decision(pre(b, 'mcp__tracker__add_comment', { change: '8', body: 'y' })), 'ask');
 });
 
+test('claude-code: an input of an event after an action or of the session that cannot be read is written down too, and the client goes on', () => {
+  const b = box();
+  for (const mode of ['post', 'prompt', 'stop']) {
+    for (const raw of ['not json', '[]', JSON.stringify({ hook_event_name: 'X', cwd: 7 })]) {
+      const r = run(HOOK, b, [mode], raw);
+      assert.deepEqual([r.code, r.stdout], [0, ''], `${mode} ${raw}`);
+    }
+  }
+  const rows = readJournal(path.join(b.state, 'journal.jsonl'));
+  assert.deepEqual([...new Set(rows.map((r) => r.kind))], ['harness.client_shape_changed']);
+  assert.deepEqual([...new Set(rows.map((r) => r.data?.event))], ['post', 'prompt', 'stop']);
+});
+
 test('claude-code: an input that cannot be read asks the human and is written down', () => {
   const b = box();
   for (const raw of ['', 'not json', '[]', JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 7, tool_input: {}, cwd: b.cwd })]) {

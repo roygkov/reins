@@ -534,7 +534,7 @@ export function measure(rt: Runtime, now: number = Date.now()): Proposal[] {
     rt.journal.write({ kind: 'craft.effect_measured', project: rt.project, data: { proposal: p.id, effect } });
     out.push(next);
     // A record that the human restored is back already: there is nothing to undo.
-    if (effect === 'worse' && p.pattern !== 'record_unused') proposeUndo(rt, next, now);
+    if (effect === 'worse' && p.pattern !== 'record_unused' && p.pattern !== 'record_dead') proposeUndo(rt, next, now);
   }
   return out;
 }

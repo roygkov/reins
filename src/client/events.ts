@@ -58,10 +58,11 @@ export function handleEvent(rt: Runtime, value: unknown, tools: ClientTools, cli
       if (typeof value.executor === 'string' && value.executor !== '') call.sub = value.executor;
       if (value.headless === true) call.headless = true;
       if (head.event === 'after') {
+        // A call that the human broke off says neither "yes" nor "no" to a question about it.
         if (value.interrupted === true) call.interrupted = true;
         // The size of the output of the tool, when the client gives it.
         if (typeof value.output_size === 'number' && Number.isInteger(value.output_size) && value.output_size >= 0) call.output = value.output_size;
-        const done = afterAction(rt, call, tools, value.asked !== false, value.failed === true);
+        const done = afterAction(rt, call, tools, value.asked !== false && value.interrupted !== true, value.failed === true);
         // What the model spent since the event before, when the client knows it.
         if (typeof value.tokens === 'number') noteCost(rt, { ...session, tokens: value.tokens });
         // The source of the output: the client tells the agent that the output is data of that source.

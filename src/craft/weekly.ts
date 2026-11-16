@@ -50,7 +50,10 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
     if (unknown.length > 0) lines.push('', `Targets of an unknown measure: ${unknown.join(', ')}.`);
   }
   const proposals = listProposals(rt);
-  const open = proposals.filter((p) => p.state === 'open');
+  // A proposal with a term applies itself: it waits for its term, as a draft of the memory does.
+  // Only a proposal without a term needs the word of the human.
+  const timed = proposals.filter((p) => p.state === 'open' && p.auto_at !== undefined);
+  const open = proposals.filter((p) => p.state === 'open' && p.auto_at === undefined);
   lines.push('', '## Needs a decision of the human', '');
   // The actions that wait in the queue: the summary is of the machine, so of all its projects.
   const waits = listQueue(rt, now).filter((q) => q.state === 'waiting');
@@ -65,7 +68,8 @@ export function weekText(rt: Runtime, now: number = Date.now()): string {
   // The summary is of the machine, as the numbers are: the drafts of all the projects of the memory directory.
   const pending = listRecords(rt, now).filter((r) => r.state === 'pending');
   lines.push('', '## Waits for its term', '');
-  if (pending.length === 0) lines.push('Nothing.');
+  if (pending.length === 0 && timed.length === 0) lines.push('Nothing.');
+  for (const p of timed) lines.push(`- ${proposalLine(p)}. \`reins craft reject ${p.id}\` stops it, \`reins craft accept ${p.id}\` applies it now`);
   for (const r of pending) {
     const left = r.veto_until === undefined ? 0 : Math.max(0, Math.ceil((Date.parse(r.veto_until) - now) / DAY));
     lines.push(`- ${r.id} (${r.type}, project ${r.project}, ${left} day(s) left): ${one(r.text, 160)}. \`reins memory veto ${r.id}\``);

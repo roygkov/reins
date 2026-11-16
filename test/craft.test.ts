@@ -281,6 +281,24 @@ test('craft: the same chain of three tools in several free tasks is a candidate 
 
 // ---- The class "with a veto window".
 
+test('craft: the summary of the week puts a proposal with a term among what waits for its term, not among what needs a decision', () => {
+  const b = box();
+  b.rt.merged.craft = { auto_days: 5 };
+  const note = addRecord(b.rt, { type: 'pitfall', text: 'the cache must be cleared first', paths: [], by: 'human' }, NOW - 40 * DAY);
+  assert.ok(note.ok);
+  rows(b, NOW - DAY, times(5, question('default.unknown-tool')));
+  const made = propose(b.rt, NOW);
+  const timed = made.find((p) => p.auto_at !== undefined)?.id ?? '';
+  const plain = made.find((p) => p.auto_at === undefined)?.id ?? '';
+  assert.ok(timed !== '' && plain !== '');
+  const text = weekText(b.rt, NOW);
+  const part = (title: string): string => text.split(`## ${title}\n`)[1]?.split('\n## ')[0] ?? '';
+  // Only the human resolves the one; the other applies itself, and the human can still say "no".
+  assert.ok(part('Needs a decision of the human').includes(plain) && !part('Needs a decision of the human').includes(timed));
+  assert.ok(part('Waits for its term').includes(timed));
+  assert.match(part('Waits for its term'), new RegExp(`applies itself on .*reins craft reject ${timed}`));
+});
+
 test('craft: with a term of the packs a proposal whose change can be taken back applies itself, unless the human rejected it', () => {
   const b = box();
   b.rt.merged.craft = { auto_days: 5 };
@@ -690,6 +708,18 @@ test('craft: a memory record that the agent got many times and that no report ci
   countUses(next.rt, `the work used ${late.record.id}`, NOW);
   assert.equal(resolveProposal(next.rt, open[0]?.id ?? '', 'accepted', NOW), true);
   assert.deepEqual([listRecords(next.rt, NOW).find((r) => r.id === late.record.id)?.state, listProposals(next.rt)[0]?.applied], ['active', false]);
+});
+
+test('craft: a dead record that the human brought back is a worse memory, and no undo is proposed: the record is back already', () => {
+  const b = box();
+  const dead = addRecord(b.rt, { type: 'pitfall', text: 'the gateway needs a warm cache', paths: [], by: 'human' }, NOW - DAY);
+  assert.ok(dead.ok);
+  for (let i = 0; i < 5; i += 1) searchRecords(b.rt, ['gateway'], 20, NOW);
+  const made = propose(b.rt, NOW).filter((p) => p.pattern === 'record_dead');
+  assert.equal(resolveProposal(b.rt, made[0]?.id ?? '', 'accepted', NOW), true);
+  rows(b, NOW + DAY, [...question('default.write'), { kind: 'memory.record_changed', data: { record: dead.record.id, type: 'pitfall', state: 'active' } }]);
+  assert.deepEqual(measure(b.rt, NOW + 8 * DAY).map((p) => [p.pattern, p.effect]), [['record_dead', 'worse']]);
+  assert.equal(listProposals(b.rt).some((p) => p.pattern === 'rollback'), false);
 });
 
 test('craft: a measure above its target of the packs on several days is a pattern, and its effect is the count of such days', () => {

@@ -175,11 +175,21 @@ function adapterFailed(event: string, cwd: string | undefined, e: unknown): void
   }
 }
 
+// The form of the input of a hook changed: a fact of the journal, for every event. The barrier
+// itself is the answer of the event "before"; the other events only lose what they would note.
+function shapeChanged(event: string): void {
+  try {
+    runtime()?.journal.write({ kind: 'harness.client_shape_changed', project: 'p0', data: { client: 'claude_code', event } });
+  } catch {
+    // the journal cannot be reached
+  }
+}
+
 function pre(): void {
   const call = readEvent();
   if (call === null) {
     // The form of the input changed: the barrier still works, as a question for every action.
-    runtime()?.journal.write({ kind: 'harness.client_shape_changed', project: 'p0', data: { client: 'claude_code', event: 'pre' } });
+    shapeChanged('pre');
     say('ask', 'reins: the input of the hook has an unknown form: the human decides');
     return;
   }
@@ -311,7 +321,10 @@ function post(): void {
   let where: string | undefined;
   try {
     const call = readEvent();
-    if (call === null) return;
+    if (call === null) {
+      shapeChanged('post');
+      return;
+    }
     where = call.cwd;
     const rt = runtime(call.cwd);
     // In the mode that skips permission questions the human saw no question: no approval.
@@ -347,8 +360,16 @@ function session(mode: string): void {
   // The directory of the event names the project of the failure row, when the event could be read.
   let where: string | undefined;
   try {
-    const value: unknown = JSON.parse(fs.readFileSync(0, 'utf8'));
-    if (!isObj(value) || typeof value.cwd !== 'string' || !value.cwd.startsWith('/')) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(fs.readFileSync(0, 'utf8'));
+    } catch {
+      value = undefined;
+    }
+    if (!isObj(value) || typeof value.cwd !== 'string' || !value.cwd.startsWith('/')) {
+      shapeChanged(mode);
+      return;
+    }
     where = value.cwd;
     const rt = runtime(value.cwd);
     if (rt === null) return;
