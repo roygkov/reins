@@ -69,6 +69,7 @@ function count(rows: JournalRow[]): Counts {
   const add = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
   // The questions and the answers by rule are counted by the code of the metrics: the summary, the dashboard and the craft never show two different numbers.
   // The tools of the connectors that each free task called, in order. A task of a scenario repeats by design: it is not counted.
+  // A session that holds a scenario writes its decisions to its free task with the mark `in_scenario`: they are not counted either.
   const steps = new Map<string, string[]>();
   // The tasks whose start is in these rows: a raise of a task that started before them is no part of the share.
   const startedTasks = new Set<string>();
@@ -82,7 +83,7 @@ function count(rows: JournalRow[]): Counts {
     if (row.kind === 'policy.decision') {
       c.decisions += 1;
       const tool = row.data?.tool;
-      if (typeof tool === 'string' && row.task !== undefined && row.scenario === undefined) {
+      if (typeof tool === 'string' && row.task !== undefined && row.scenario === undefined && row.data?.in_scenario !== 1) {
         const list = steps.get(row.task) ?? [];
         // The same tool several times in a row is one step.
         if (list[list.length - 1] !== tool) list.push(tool);

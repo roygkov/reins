@@ -165,11 +165,15 @@ test('session: the decision about a tool of a connector names the tool, the deci
   beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__add_comment', input: { change: '7' }, session: 's1' }, CLIENT);
   const tools = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').map((r) => r.data?.tool);
   assert.deepEqual(tools, [undefined, 'tracker__get_change', undefined, undefined, undefined, 'tracker__list_changes', 'tracker__add_comment']);
-  // A session that works on a scenario walks the tools of the scenario by design: its decisions name no tool.
+  // A session that works on a scenario walks the tools of the scenario by design. Its decisions name the
+  // tool, so the human sees which tool a rule asked about, and carry a mark: the craft does not read them as a chain.
   const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
   assert.ok(opened.ok);
   beforeAction(b.rt, { cwd: b.cwd, tool: 'tracker__get_change', input: {}, session: 's1' }, CLIENT);
-  assert.equal(readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').at(-1)?.data?.tool, undefined);
+  const held = readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').at(-1)?.data;
+  assert.deepEqual([held?.tool, held?.in_scenario], ['tracker__get_change', 1]);
+  // A decision outside a scenario carries no mark.
+  assert.ok(readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.decision').slice(0, -1).every((r) => r.data?.in_scenario === undefined));
   for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), []);
 });
 

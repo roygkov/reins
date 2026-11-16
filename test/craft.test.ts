@@ -262,6 +262,8 @@ test('craft: the same chain of three tools in several free tasks is a candidate 
     { kind: 'policy.decision', task: 't000000000006', data: { outcome: 'allow', action_kind: 'read', env: 'local' } },
     // A task that has a row of a scenario is a task of a scenario, also when its decisions name none.
     { kind: 'task.started', task: 't000000000007', scenario: 'mr-review', scenario_v: 1 }, ...chain.map((t) => act('t000000000007', t)),
+    // A session that holds a scenario writes its decisions to its free task, with a mark: they are the walk of the scenario.
+    ...chain.map((t) => ({ kind: 'policy.decision', task: 't000000000008', data: { outcome: 'allow', action_kind: 'read', env: 'local', tool: t, in_scenario: 1 } })),
   ]);
   const found = detect(readJournal(b.rt.journal.file));
   assert.deepEqual(found, [{ pattern: 'repeated_chain', key: 'jira__get_issue > gitlab__get_mr > gitlab__get_diff', n: 3 }]);

@@ -31,7 +31,8 @@ import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '..
 // `subId`: the identifier of the subordinate executor that makes the call, when the client gives one (`sub` is its role).
 // `callId`: the identifier that the client gives to one call of a tool, the same before and after it.
 // `named`: the name of the tool for the journal, set by `beforeAction` for a tool that is not the client's own.
-export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; output?: number; interrupted?: boolean; headless?: boolean; unshown?: boolean; named?: string };
+// `held`: the session holds a scenario at this call: the decision carries the mark `in_scenario`.
+export type ToolCall = { cwd: string; tool: string; input: Record<string, unknown>; session?: string; sub?: string; subId?: string; callId?: string; held?: boolean; output?: number; interrupted?: boolean; headless?: boolean; unshown?: boolean; named?: string };
 
 // What a question keeps while it waits: whose it is, and whether a human sees it.
 // The project is kept with the question: a command `cd <dir> && ...` moves the session, and the
@@ -423,7 +424,7 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   const marked = call.unshown !== true ? rows : rows.map((row) => ((row.kind === 'policy.decision' || row.kind === 'policy.protected_attempt') && row.data?.outcome === 'ask' ? { ...row, data: { ...row.data, unshown: 1 } } : row));
   // The decision about a tool of a connector names the tool: the craft finds chains of tools that repeat.
   const tool = call.named;
-  const named = tool === undefined ? marked : marked.map((row) => (row.kind === 'policy.decision' ? { ...row, data: { ...row.data, tool } } : row));
+  const named = tool === undefined ? marked : marked.map((row) => (row.kind === 'policy.decision' ? { ...row, data: { ...row.data, tool, ...(call.held === true ? { in_scenario: 1 } : {}) } } : row));
   // The basis of a decision that a pack gave names the level of that pack.
   const pack = (row: Pick<RowInput, 'kind' | 'data'>): { pack?: 'organization' | 'project' | 'person' } => {
     const layer = row.kind === 'policy.basis' ? row.data?.layer : undefined;
@@ -463,10 +464,12 @@ export function beforeAction(now: Runtime, call: ToolCall, clientTools: ClientTo
   // it, and the name says about which). The tools of the client itself (read, edit, shell) and the
   // tools of its interface, which the pack describes as plain reads, are in every task and say
   // nothing about the work.
-  // A session that works on a scenario repeats the tools of the scenario by design: no name there.
+  // A session that works on a scenario repeats the tools of the scenario by design. The name is
+  // there too: the human must see which tool a rule asked about. The decision carries a mark, and
+  // the craft does not read a marked decision as a step of a chain of a free task.
   const described = packRule(rt.merged.tools, call.tool);
   const ofWork = described === undefined || described.kind === 'write' || described.connector !== undefined;
-  if (!Object.hasOwn(clientTools, call.tool) && ofWork && RULE_NAME.test(call.tool) && currentScenario(rt, call.session) === undefined) call = { ...call, named: call.tool };
+  if (!Object.hasOwn(clientTools, call.tool) && ofWork && RULE_NAME.test(call.tool)) call = { ...call, named: call.tool, ...(currentScenario(rt, call.session) !== undefined ? { held: true } : {}) };
   let r = decideBefore(rt, call, clientTools);
   // Without a window nobody answers a question: the action waits in the queue of the human.
   // The same holds for a client that cannot show a question with a choice (its level at the start
