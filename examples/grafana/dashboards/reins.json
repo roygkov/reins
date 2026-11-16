@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "version": 9,
+  "version": 10,
   "editable": false,
   "refresh": "",
   "time": {
@@ -51,7 +51,7 @@
         "w": 12,
         "h": 8
       },
-      "description": "Каждая плитка это мера с порогом из пакета. Зелёная: последний день со значением не выше порога. Красная: выше порога. Плитки нет: у меры ещё нет значения. Число сверху: сколько порогов превышено.",
+      "description": "Каждая плитка это мера с порогом из пакета. Зелёная: последний день со значением не выше порога. Красная: выше порога. Плитки нет: у меры ещё нет значения. Число сверху: сколько порогов превышено. Плитки «данные от» и «давность данных» показывают последний экспорт: экспорт идёт раз в час, давность больше трёх часов красная, и тогда остальные плитки показывают прежний день.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -215,6 +215,74 @@
                 "value": []
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "давность данных"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": []
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 5400
+                    },
+                    {
+                      "color": "red",
+                      "value": 10800
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "данные от"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              },
+              {
+                "id": "mappings",
+                "value": []
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
@@ -251,6 +319,28 @@
           },
           "expr": "reins_target_over{project=\"$project\", step=\"day\"} offset -1s",
           "legendFormat": "{{name}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "time() - last_over_time(reins_export_time{project=\"$project\"}[90d])",
+          "legendFormat": "давность данных",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "reins"
+          },
+          "expr": "last_over_time(reins_export_time{project=\"$project\"}[90d]) * 1000",
+          "legendFormat": "данные от",
+          "instant": true,
+          "range": false
         }
       ]
     },

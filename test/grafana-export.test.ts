@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { localUrl, toLines, type Series } from '../examples/grafana/export.ts';
+import { exportTime, localUrl, toLines, type Series } from '../examples/grafana/export.ts';
 import { BY, EIGHT, MEASURES } from '../src/journal/metrics.ts';
 
 const DAY1 = '2026-11-12T00:00:00.000Z';
@@ -71,6 +71,25 @@ test('grafana export: the list of periods of the dashboard has no period shorter
   for (const p of dash.panels.filter((p) => p.targets.some((t) => t.expr.includes('step="hour"')))) assert.match(p.timeFrom ?? '', /^(24h|2d)$/, p.title);
 });
 
+test('grafana export: each run writes its own time, and the health panel shows how old the data is', () => {
+  // The time of the run in seconds, as one sample at that moment: the series of the measures carry
+  // the start of a bucket, which says nothing about the moment of the export.
+  const now = Date.parse('2026-11-16T10:30:05.250Z');
+  assert.deepEqual(exportTime('p1a2b3c4', now), { metric: { __name__: 'reins_export_time', project: 'p1a2b3c4' }, values: [Math.floor(now / 1000)], timestamps: [now] });
+  const dash = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'examples', 'grafana', 'dashboards', 'reins.json'), 'utf8')) as { panels: { id: number; targets: { expr: string; legendFormat: string; instant?: boolean }[]; fieldConfig: { overrides: { matcher: { options: string }; properties: { id: string; value: unknown }[] }[] } }[] };
+  const health = dash.panels.find((p) => p.id === 1);
+  const about = (health?.targets ?? []).filter((t) => t.expr.includes('reins_export_time'));
+  // Two tiles: the age of the data and the moment of the last export. Both are asked at the end of
+  // the period, not at the start of a day: the step of the panel is a day.
+  assert.deepEqual(about.map((t) => [t.legendFormat, t.instant]), [['давность данных', true], ['данные от', true]]);
+  assert.ok(about.every((t) => t.expr.includes('project="$project"') && t.expr.includes('last_over_time(')));
+  // The tile of the age has its own colours: data older than three hours is red, and no text of a target stands on it.
+  const age = health?.fieldConfig.overrides.find((o) => o.matcher.options === 'давность данных')?.properties ?? [];
+  const steps = (age.find((p) => p.id === 'thresholds')?.value as { steps: { color: string; value: number | null }[] } | undefined)?.steps ?? [];
+  assert.deepEqual(steps.map((x) => [x.color, x.value]), [['green', null], ['yellow', 5400], ['red', 10800]]);
+  assert.deepEqual(age.find((p) => p.id === 'mappings')?.value, []);
+});
+
 test('grafana export: the store is on this machine only', () => {
   assert.equal(localUrl('http://127.0.0.1:8428')?.origin, 'http://127.0.0.1:8428');
   assert.equal(localUrl('http://localhost:8428')?.origin, 'http://localhost:8428');
@@ -81,7 +100,7 @@ test('grafana export: the dashboard asks only for the numbers that the series ha
   const dir = path.join(import.meta.dirname, '..', 'examples', 'grafana');
   const dash = JSON.parse(fs.readFileSync(path.join(dir, 'dashboards', 'reins.json'), 'utf8')) as { panels: { targets: { expr: string }[] }[] };
   // The line of a target is a series of its own.
-  const known = new Set<string>(['reins_target_max', 'reins_target_over', ...[...EIGHT, ...MEASURES].flatMap((n) => [`reins_${n}`, `reins_${n}_n`, `reins_${n}_parts`]), ...BY.map((n) => `reins_${n}_by`)]);
+  const known = new Set<string>(['reins_target_max', 'reins_target_over', 'reins_export_time', ...[...EIGHT, ...MEASURES].flatMap((n) => [`reins_${n}`, `reins_${n}_n`, `reins_${n}_parts`]), ...BY.map((n) => `reins_${n}_by`)]);
   const asked = dash.panels.flatMap((p) => p.targets.flatMap((t) => t.expr.match(/reins_[a-z0-9_]+/g) ?? []));
   assert.ok(asked.length >= 10);
   for (const name of asked) assert.ok(known.has(name), name);

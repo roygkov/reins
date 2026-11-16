@@ -69,6 +69,13 @@ export function toLines(series: Series): Line[] {
   return [...lines.values()];
 }
 
+// The moment of one export of a project, in seconds: one sample at that moment. A point of a
+// measure stands at the start of its hour or day, so it does not say when the data was written.
+// The dashboard shows how old the data is: an export that fails leaves the numbers of an earlier day.
+export function exportTime(project: string, now: number = Date.now()): Line {
+  return { metric: { __name__: 'reins_export_time', project }, values: [Math.floor(now / 1000)], timestamps: [now] };
+}
+
 // The store must be on this machine.
 export function localUrl(text: string): URL | null {
   let url: URL;
@@ -112,7 +119,7 @@ async function main(): Promise<void> {
     const series = read([`days=${days}`, 'step=day', ...project]);
     if (series === null) return { error: 'bad_series' };
     const hours = read(['days=2', 'step=hour', ...project]);
-    const lines = [...toLines(series), ...(hours === null ? [] : toLines(hours))];
+    const lines = [...toLines(series), ...(hours === null ? [] : toLines(hours)), exportTime(series.project)];
     try {
       const selector = encodeURIComponent(`{__name__=~"reins_.*",project="${series.project}"}`);
       const removed = await fetch(`${base}/api/v1/admin/tsdb/delete_series?match[]=${selector}`, { method: 'POST' });
