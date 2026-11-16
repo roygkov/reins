@@ -582,6 +582,35 @@ test('cli: the human says that the result of a closed task was wrong, and the jo
   assert.deepEqual(reins(b, ['status']).json.metrics.disputed, { not_verified: 1 });
 });
 
+test('cli: a probe names the state of the work tree that its command is asked in', () => {
+  const b = box();
+  fs.writeFileSync(path.join(b.root, 'person/gate-probes.json'), JSON.stringify([
+    // The work of the human is lost only where there is a changed file: the probe names that state.
+    { command: 'git reset --hard', expect: 'ask', tree: 'changed', note: 'the work of the human is lost' },
+    // The same command in a clean work tree loses nothing: git can take it back.
+    { command: 'git reset --hard', expect: 'pass', tree: 'clean' },
+    // A state that the harness does not know is no probe.
+    { command: 'ls', expect: 'pass', tree: 'burning' },
+    // A probe without a state is asked in the directory of the command, as before.
+    { command: 'ls -la', expect: 'pass' },
+  ]));
+  const r = reins(b, ['probes']).json;
+  assert.deepEqual([r.ok, r.n, r.bad, r.misses, r.noise], [true, 3, 1, [], []]);
+  // The answer does not follow the directory of the command: a clean repository gives the same counts.
+  const repo = path.join(b.root, 'clean-repo');
+  fs.mkdirSync(repo);
+  const git = (...args: string[]): void => { spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, encoding: 'utf8' }); };
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  git('init', '-q');
+  git('add', 'a.txt');
+  git('commit', '-q', '-m', 'first');
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const there = JSON.parse(spawnSync(process.execPath, [CLI, 'probes'], { env, cwd: repo, encoding: 'utf8' }).stdout);
+  assert.deepEqual([there.n, there.bad, there.misses, there.noise], [3, 1, [], []]);
+  // The command of the probe ran nowhere: the file of the repository is as it was.
+  assert.equal(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'a\n');
+});
+
 test('cli: the barrier is asked about the commands with a known answer of a pack', () => {
   const b = box();
   // No file: nothing to ask.
