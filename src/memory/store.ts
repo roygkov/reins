@@ -205,7 +205,14 @@ export function commitMemory(): void {
     // of the repository and the signing do not run, so a rule for the commits of people cannot stop it.
     const done = git(['add', '--', ...files]).ok
       && git(['-c', 'commit.gpgsign=false', 'commit', '-q', '--no-verify', '-m', `reins memory: ${names}${ids.size > 5 ? ` and ${ids.size - 5} more` : ''}`, '--', ...files]).ok;
-    if (!done) rt.journal.write({ kind: 'harness.failure', project: rt.project, data: { where: 'memory_commit' } });
+    // Two runs of the harness can change the same records at once (two sessions that start
+    // together): one commits, and the other finds nothing to commit, which git answers as an
+    // error. That is no failure: the records are in the history. A failure is a commit that did
+    // not pass while a change is still there, or a state that cannot be read.
+    if (done) continue;
+    const left = git(['status', '--porcelain', '--', ...files]);
+    if (left.ok && left.out.trim() === '') continue;
+    rt.journal.write({ kind: 'harness.failure', project: rt.project, data: { where: 'memory_commit' } });
   }
 }
 

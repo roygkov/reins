@@ -389,6 +389,49 @@ test('history: with `memory_commit` the harness commits every change of the memo
   assert.equal(reins(['memory']).error, 'bad_config');
 });
 
+test('history: a commit that another run of the harness made first is no failure', () => {
+  const b = box();
+  const dir = path.join(b.root, 'records');
+  fs.mkdirSync(dir);
+  const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  const git = (...args: string[]): string => spawnSync(real, ['-C', dir, ...args], { encoding: 'utf8' }).stdout.trim();
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 't');
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, memory_dir: dir, memory_commit: true }));
+  // A program `git` that stands before the real one: `mode` says what it does at the commit of the harness.
+  const bin = path.join(b.root, 'bin');
+  fs.mkdirSync(bin);
+  const mode = path.join(b.root, 'mode');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+case " $* " in
+  *" commit "*)
+    case "$(cat '${mode}')" in
+      # Two hooks changed the same records: the other one commits between the look and the commit of this one.
+      other) '${real}' -C '${dir}' -c commit.gpgsign=false commit -q --no-verify -m 'the other run' ;;
+      # The commit itself fails and the change stays.
+      broken) exit 1 ;;
+    esac ;;
+esac
+exec '${real}' "$@"
+`, { mode: 0o755 });
+  const env = { PATH: `${bin}:${process.env.PATH ?? ''}`, HOME: b.root, REINS_CONFIG: b.config };
+  const reins = (args: string[]) => JSON.parse(spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: b.cwd }).stdout);
+  const failures = (): number => readJournal(path.join(b.rt.stateDir, 'journal.jsonl')).filter((r) => r.kind === 'harness.failure' && r.data?.where === 'memory_commit').length;
+  fs.writeFileSync(mode, 'other');
+  assert.equal(reins(['memory', 'decide', 'we keep one cache', 'because=two caches went out of step']).ok, true);
+  // The record is in the history, by the commit of the other run: nothing is left to commit, and nothing failed.
+  assert.equal(git('log', '-1', '--format=%s'), 'the other run');
+  assert.equal(git('status', '--short'), '');
+  assert.equal(failures(), 0);
+  // A commit that fails while the change is still there is a failure, as before.
+  fs.writeFileSync(mode, 'broken');
+  assert.equal(reins(['memory', 'decide', 'we log in UTC', 'because=the servers are in three zones']).ok, true);
+  assert.notEqual(git('status', '--short'), '');
+  assert.equal(failures(), 1);
+});
+
 test('history: a directory of the records that is no repository works as before', () => {
   const b = box();
   const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
