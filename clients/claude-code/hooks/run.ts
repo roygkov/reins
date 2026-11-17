@@ -14,7 +14,7 @@ import { noteCost } from '../../../src/client/cost.ts';
 import { errorToken } from '../../../src/client/failure.ts';
 import { withSession } from '../../../src/core/sessions.ts';
 import { executorReported, executorStarted } from '../../../src/client/executors.ts';
-import { agentStopped, beforeCompaction, humanRequest, sessionEnd, sessionStart, settleQuestions, type SessionEvent } from '../../../src/client/session.ts';
+import { agentStopped, beforeCompaction, humanRequest, rulesOfWork, sessionEnd, sessionStart, settleQuestions, type SessionEvent } from '../../../src/client/session.ts';
 import { isObj } from '../../../src/contracts/shape.ts';
 import type { Runtime } from '../../../src/core/runtime.ts';
 import { fileURLToPath } from 'node:url';
@@ -161,7 +161,7 @@ export function reason(r: Reply): string {
 // where it was given and its size, never the text. The count never stops the hook.
 // `decision`: the reason of a refusal, which the client gives to the agent. `command`: the output
 // of a command of the harness that the agent ran, by its size.
-function given(rt: Runtime, where: 'session_start' | 'request' | 'after' | 'decision' | 'command', text: string | number, session?: string): void {
+function given(rt: Runtime, where: 'session_start' | 'subagent_start' | 'request' | 'after' | 'decision' | 'command', text: string | number, session?: string): void {
   try {
     rt.journal.write({ kind: 'harness.context_given', project: rt.project, ...(session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(session) ? { session } : {}), data: { where, bytes: typeof text === 'number' ? text : Buffer.byteLength(text) } });
   } catch {
@@ -443,6 +443,19 @@ function session(mode: string): void {
     }
     else if (mode === 'session-end') sessionEnd(rt, e);
     else if (mode === 'pre-compact') beforeCompaction(rt, e);
+    else if (mode === 'subagent-start') {
+      // A subordinate executor does not see the start of the session: the rules of work of the
+      // packs go into its own context. A helper of the client (the summary of a compaction) has
+      // no type: it is no executor and gets nothing.
+      if (typeof value.agent_type !== 'string' || value.agent_type === '') return;
+      // A fork starts with the whole conversation of the session, and the start of that session
+      // gave the rules: a second copy would only cost context.
+      if (value.agent_type === 'fork') return;
+      const words = rulesOfWork(rt).join('\n');
+      if (words === '') return;
+      given(rt, 'subagent_start', words, e.session);
+      process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: words } }));
+    }
     else if (mode === 'subagent-stop') {
       // The client also ends its own helpers here (the summary of a compaction): they have no
       // type, they took no place, and their words are no report.
@@ -463,5 +476,5 @@ function session(mode: string): void {
 export function main(mode: string | undefined): void {
   if (mode === 'pre') pre();
   else if (mode === 'post') post();
-  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end', 'subagent-stop', 'pre-compact'].includes(mode)) session(mode);
+  else if (mode !== undefined && ['session-start', 'prompt', 'stop', 'session-end', 'subagent-start', 'subagent-stop', 'pre-compact'].includes(mode)) session(mode);
 }

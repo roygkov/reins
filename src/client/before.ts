@@ -22,7 +22,7 @@ import { acceptedLabel, guardPattern, inputForm } from '../contracts/manifest.ts
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { findRoot, loadConfig, shellAction, type GateConfig, isProdName } from '../gate/index.ts';
-import { READ_WHEN_MAX, readWhenPattern, type ReadWhen, type ToolRule } from '../packs/packs.ts';
+import { READ_WHEN_MAX, readWhenPattern, type ReadField, type ReadWhen, type ToolRule } from '../packs/packs.ts';
 
 // `session`: the session of the client, when the client names it.
 // `sub`: the role of the subordinate executor that makes the call. `headless`: the client runs
@@ -79,8 +79,7 @@ function packRule(tools: Record<string, ToolRule>, name: string): ToolRule | und
 
 // A tool that reads and writes: this call is a read when the field that the pack names is a text
 // that matches the pattern of the pack as a whole. Anything else is the write that the pack names.
-function readsNow(when: ReadWhen | undefined, input: Record<string, unknown>): boolean {
-  if (when === undefined) return false;
+function fieldReads(when: ReadField, input: Record<string, unknown>): boolean {
   const value = Object.hasOwn(input, when.field) ? input[when.field] : undefined;
   if (typeof value !== 'string' || value.length > READ_WHEN_MAX) return false;
   try {
@@ -88,6 +87,13 @@ function readsNow(when: ReadWhen | undefined, input: Record<string, unknown>): b
   } catch {
     return false;
   }
+}
+
+// `any`: one way of the list holds. A way with `all` holds when every field of it does.
+function readsNow(when: ReadWhen | undefined, input: Record<string, unknown>): boolean {
+  if (when === undefined) return false;
+  if (!('any' in when)) return fieldReads(when, input);
+  return when.any.some((way) => ('all' in way ? way.all.length > 0 && way.all.every((f) => fieldReads(f, input)) : fieldReads(way, input)));
 }
 
 // The target of a write with the fields of the tool input filled in; null when a field is not

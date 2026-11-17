@@ -92,6 +92,11 @@ function readHandoff(rt: Runtime): Handoff | null {
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+// The notes of the packs: rules of work that hold for every task. The start of a session gives
+// them to the main executor. A subordinate executor has a context of its own and does not see
+// that start: the client gives it the same lines when it starts.
+export const rulesOfWork = (rt: Runtime): string[] => rt.merged.notes.flatMap((note) => [`Rules of work (${note.level} pack):`, note.text.trim()]);
+
 // The start of a session: what the agent must know before it acts.
 export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] } {
   noteDirectory(rt, e.cwd, e.session);
@@ -135,7 +140,7 @@ export function sessionStart(rt: Runtime, e: SessionEvent): { context: string[] 
     context.push('Scenarios (start one with `reins open <name> name=value`):');
     for (const s of scenarios) context.push(`- ${s.name}: ${s.manifest.title}`);
   }
-  for (const note of rt.merged.notes) context.push(`Rules of work (${note.level} pack):`, note.text.trim());
+  context.push(...rulesOfWork(rt));
   const open = openTasks(rt).filter((t) => t.kind === 'scenario');
   if (open.length > 0) {
     context.push('Open scenario tasks (read one with `reins input <task>`):');

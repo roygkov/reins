@@ -32,7 +32,14 @@ export type Scenario = { name: string; level: PackLevel; file: string; manifest:
 // `read_when`: one tool can read and write (a tool that runs a query). The call is a read when the
 // named field of its input is a text that matches the pattern as a whole. The pattern is the
 // business of the pack: the core only matches.
-export type ReadWhen = { field: string; pattern: string };
+// A tool of a whole interface reads in several ways (a GET, and a POST to the address of a query):
+// `any` lists the ways, and the call is a read when one of them holds. A way is one field, or
+// `all`: several fields that hold together. The condition has these two levels and no more.
+export type ReadField = { field: string; pattern: string };
+export type ReadWay = ReadField | { all: ReadField[] };
+export type ReadWhen = ReadField | { any: ReadWay[] };
+export const READ_WAYS_MAX = 8; // ways of one condition
+export const READ_FIELDS_MAX = 4; // fields of one way
 // `connector`: the read connector that the tool reads through. A contract that does not name it does not cover the read.
 // A write tool names it for the calls that `read_when` reads as a read.
 // `sensitive`: the tool returns or takes secrets or personal data. `irreversible`: the write cannot
@@ -600,15 +607,14 @@ function toolRules(errors: PackError[], tools: Obj, actions: readonly string[], 
 }
 
 // The condition of a read: a field of the input and a pattern that compiles.
-function readWhen(errors: PackError[], value: unknown, at: string): ReadWhen | undefined {
-  if (value === undefined) return undefined;
+function readField(errors: PackError[], value: unknown, at: string): ReadField | undefined {
   if (!isObj(value)) {
     errors.push({ code: 'not_object', path: at });
     return undefined;
   }
   for (const key of Object.keys(value)) if (key !== 'field' && key !== 'pattern') errors.push({ code: 'unknown_field', path: `${at}.${key}` });
   const { field, pattern } = value;
-  let ok = true;
+  let ok = Object.keys(value).every((key) => key === 'field' || key === 'pattern');
   if (typeof field !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,39}$/.test(field)) {
     errors.push({ code: field === undefined ? 'missing' : 'bad_name', path: `${at}.field` });
     ok = false;
@@ -628,6 +634,40 @@ function readWhen(errors: PackError[], value: unknown, at: string): ReadWhen | u
     }
   }
   return ok ? { field: field as string, pattern: pattern as string } : undefined;
+}
+
+// A list of a condition: `any` of the ways, `all` of the fields of one way. An empty list would
+// say "never" or "always" without a word of the pack: it is a mistake.
+function readList<T>(errors: PackError[], value: unknown, at: string, max: number, item: (value: unknown, at: string) => T | undefined): T[] | undefined {
+  if (!Array.isArray(value) || value.length === 0 || value.length > max) {
+    errors.push({ code: value === undefined ? 'missing' : 'bad_name', path: at });
+    return undefined;
+  }
+  const out: T[] = [];
+  let ok = true;
+  value.forEach((v, n) => {
+    const got = item(v, `${at}.${n}`);
+    if (got === undefined) ok = false;
+    else out.push(got);
+  });
+  return ok ? out : undefined;
+}
+
+function readWay(errors: PackError[], value: unknown, at: string): ReadWay | undefined {
+  if (!isObj(value) || !Object.hasOwn(value, 'all')) return readField(errors, value, at);
+  const extra = Object.keys(value).filter((key) => key !== 'all');
+  for (const key of extra) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+  const all = readList(errors, value.all, `${at}.all`, READ_FIELDS_MAX, (v, where) => readField(errors, v, where));
+  return all === undefined || extra.length > 0 ? undefined : { all };
+}
+
+function readWhen(errors: PackError[], value: unknown, at: string): ReadWhen | undefined {
+  if (value === undefined) return undefined;
+  if (!isObj(value) || !Object.hasOwn(value, 'any')) return readField(errors, value, at);
+  const extra = Object.keys(value).filter((key) => key !== 'any');
+  for (const key of extra) errors.push({ code: 'unknown_field', path: `${at}.${key}` });
+  const any = readList(errors, value.any, `${at}.any`, READ_WAYS_MAX, (v, where) => readWay(errors, v, where));
+  return any === undefined || extra.length > 0 ? undefined : { any };
 }
 
 // The scripts of a pack: regular files under collect/ and check/. A symbolic link is skipped,

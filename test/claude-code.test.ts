@@ -152,7 +152,7 @@ test('claude-code: "post" never blocks and prints nothing', () => {
 
 test('claude-code: the plugin registers the hook before every tool', () => {
   const hooks = JSON.parse(fs.readFileSync(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url), 'utf8')).hooks;
-  assert.deepEqual(Object.keys(hooks).sort(), ['PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStop', 'UserPromptSubmit']);
+  assert.deepEqual(Object.keys(hooks).sort(), ['PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'Stop', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit']);
   assert.equal(hooks.PreToolUse[0].matcher, '.*');
   assert.equal(hooks.PreToolUse[0].hooks[0].onFailure, 'block');
   assert.match(hooks.PreToolUse[0].hooks[0].command, /hooks\/start\.mjs" pre$/);
@@ -287,6 +287,49 @@ test('claude-code: a condition of a read is checked when the pack is loaded', ()
   const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
   fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__db__get': { kind: 'read', read_when: { field: 'sql', pattern: 'x' } } } }));
   assert.equal(run(CLI, b, ['scenarios'], '').json.not_connected?.[0]?.errors?.[0]?.path, 'tools.mcp__db__get.read_when');
+});
+
+test('claude-code: a condition of a read can name several fields and several ways to read', () => {
+  const b = box();
+  const file = path.join(b.root, 'packs', 'organization', 'pack.json');
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // A general tool of an interface: a GET reads, and a POST to the address of a query reads too.
+  const when = { any: [{ field: 'method', pattern: 'GET' }, { all: [{ field: 'method', pattern: 'POST' }, { field: 'endpoint', pattern: '/api/query' }, { field: 'body', pattern: '(?!.*\\brawSql\\b).*' }] }] };
+  fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__api__request': { kind: 'write', action: 'comment', target: 'api/main', env: 'work', read_when: when } } }));
+  const out = (input: unknown): Out => pre(b, 'mcp__api__request', input);
+  const ask = (input: unknown): string => out(input).json?.hookSpecificOutput?.permissionDecisionReason ?? '';
+  assert.equal(out({ method: 'GET', endpoint: '/api/rules' }).stdout, '', 'the first way');
+  assert.equal(out({ method: 'POST', endpoint: '/api/query', body: '{"queries":[{"metricName":"cpu"}]}' }).stdout, '', 'the second way: every field of it matches');
+  assert.match(ask({ method: 'POST', endpoint: '/api/rules', body: '{}' }), /default\.write/, 'one field of the way does not match');
+  assert.match(ask({ method: 'POST', endpoint: '/api/query', body: '{"queries":[{"rawSql":"delete from t"}]}' }), /default\.write/);
+  assert.match(ask({ method: 'POST', endpoint: '/api/query' }), /default\.write/, 'a field of the way that the input does not have');
+  assert.match(ask({ method: 'POST', endpoint: '/api/query', body: { queries: [] } }), /default\.write/, 'a value that is no text is no read');
+  assert.match(ask({ method: 'DELETE', endpoint: '/api/query', body: '{}' }), /default\.write/);
+  assert.match(ask({ endpoint: '/api/query', body: '{}' }), /default\.write/);
+});
+
+test('claude-code: a condition of a read with several ways is checked when the pack is loaded', () => {
+  const one = { field: 'method', pattern: 'GET' };
+  for (const [bad, at] of [
+    [{ any: [] }, 'read_when.any'],
+    [{ any: one }, 'read_when.any'],
+    [{ any: Array.from({ length: 9 }, () => one) }, 'read_when.any'],
+    [{ any: [one], field: 'method' }, 'read_when.field'],
+    [{ any: [one, { field: 'method', pattern: '(' }] }, 'read_when.any.1.pattern'],
+    [{ any: [one, 'GET'] }, 'read_when.any.1'],
+    [{ any: [{ all: [] }] }, 'read_when.any.0.all'],
+    [{ any: [{ all: Array.from({ length: 5 }, () => one) }] }, 'read_when.any.0.all'],
+    [{ any: [{ all: [one], more: 1 }] }, 'read_when.any.0.more'],
+    [{ any: [{ all: [one, { field: 'a b', pattern: 'x' }] }] }, 'read_when.any.0.all.1.field'],
+    // A way inside a way: the condition has two levels and no more.
+    [{ any: [{ all: [{ any: [one] }] }] }, 'read_when.any.0.all.0.any'],
+  ] as const) {
+    const b = box();
+    const file = path.join(b.root, 'packs', 'organization', 'pack.json');
+    const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...pack, tools: { ...pack.tools, 'mcp__db__query': { kind: 'write', action: 'comment', target: 'db/main', env: 'work', read_when: bad } } }));
+    assert.equal(run(CLI, b, ['scenarios'], '').json.not_connected?.[0]?.errors?.[0]?.path, `tools.mcp__db__query.${at}`, JSON.stringify(bad));
+  }
 });
 
 const decisions = (b: Box): { decision: string; session?: string }[] =>
@@ -438,6 +481,31 @@ test('claude-code: a question of a subordinate ends with the subordinate, not wi
   assert.deepEqual(decisions(b).map((d) => d.decision), ['answered'], 'the end of another subordinate says nothing');
   run(HOOK, b, ['subagent-stop'], hookEvent(b, 'SubagentStop', { agent_id: 'agent-1', agent_type: 'reviewer' }));
   assert.deepEqual(decisions(b).map((d) => d.decision), ['answered', 'refused']);
+});
+
+test('claude-code: a subordinate executor gets the rules of work of the packs at its start', () => {
+  const b = box();
+  const start = (more: Record<string, unknown>): Out => run(HOOK, b, ['subagent-start'], hookEvent(b, 'SubagentStart', more));
+  const given = (): { where: string; bytes: number; session: string }[] =>
+    fs.readFileSync(path.join(b.state, 'journal.jsonl'), 'utf8').split('\n').filter((l) => l !== '').map((l) => JSON.parse(l))
+      .filter((r) => r.kind === 'harness.context_given' && r.data.where === 'subagent_start').map((r) => ({ where: r.data.where, bytes: r.data.bytes, session: r.session }));
+  // No pack has a note: the subordinate gets nothing.
+  assert.equal(start({ agent_id: 'agent-1', agent_type: 'general-purpose' }).stdout, '');
+  fs.writeFileSync(path.join(b.root, 'packs', 'organization', 'pack.md'), 'Write to the tracker in English.\n');
+  fs.writeFileSync(path.join(b.root, 'packs', 'person', 'pack.md'), 'Give `method: "GET"` for a read.\n');
+  // The same words as at the start of the session, and nothing else of that start.
+  const words = 'Rules of work (organization pack):\nWrite to the tracker in English.\nRules of work (person pack):\nGive `method: "GET"` for a read.';
+  assert.deepEqual(start({ agent_id: 'agent-1', agent_type: 'general-purpose' }).json, { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: words } });
+  // The text is in the context of the subordinate: the journal has its size.
+  assert.deepEqual(given(), [{ where: 'subagent_start', bytes: Buffer.byteLength(words), session: 'abc' }]);
+  // A helper of the client has no type: it is no subordinate executor and gets nothing.
+  assert.equal(start({ agent_id: 'agent-2', agent_type: '' }).stdout, '');
+  assert.equal(start({ agent_id: 'agent-3' }).stdout, '');
+  // A fork starts with the whole conversation of the session: the rules of its start are in it already.
+  assert.equal(start({ agent_id: 'agent-4', agent_type: 'fork' }).stdout, '');
+  assert.equal(given().length, 1);
+  const hooks = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../clients/claude-code/hooks/hooks.json', import.meta.url)), 'utf8')).hooks;
+  assert.match(hooks.SubagentStart[0].hooks[0].command, /start\.mjs" subagent-start$/);
 });
 
 test('claude-code: in a mode without permission questions no human refused anything', () => {

@@ -15,6 +15,9 @@
     "PostToolUseFailure": [
       { "matcher": ".*", "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/start.mjs\" post", "timeout": 10 } ] }
     ],
+    "SubagentStart": [
+      { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/start.mjs\" subagent-start", "timeout": 10 } ] }
+    ],
     "SubagentStop": [
       { "hooks": [ { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/start.mjs\" subagent-stop", "timeout": 10 } ] }
     ],
