@@ -595,6 +595,8 @@ test('ready: the texts and the deciding values of a citation check are named in 
   assert.deepEqual(errors({ ...ok, recheck: { other: ['x'], severity: ['fatal'] } }), ['unknown_field done.recheck.other', 'not_in_list done.recheck.severity[0]']);
   assert.deepEqual(errors({ ...ok, recheck: ['blocking'] }), ['not_object done.recheck']);
   assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, recheck: {} }), ['not_allowed done.recheck']);
+  // A value that fails an item never reaches the count of the items to fix: the two keys do not share a value.
+  assert.deepEqual(errors({ ...ok, reject: { severity: ['blocking'] }, recheck: { severity: ['blocking', 'should-fix'] } }), ['duplicate done.recheck.severity[0]']);
 });
 
 // ---- A step that ran past its time is a fact of the journal.

@@ -475,7 +475,12 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
       const at = `done.recheck.${field}`;
       const allowed = itemFields[field];
       if (!Array.isArray(allowed)) { r.add('unknown_field', at); continue; }
-      (list(r, values, at) ?? []).forEach((v, i) => { if (typeof v !== 'string' || !allowed.includes(v)) r.add('not_in_list', `${at}[${i}]`); });
+      // A value that fails an item (`done.reject`) never reaches the count: the two keys share no value.
+      const failing = isObj(d.reject) && Array.isArray(d.reject[field]) ? (d.reject[field] as unknown[]) : [];
+      (list(r, values, at) ?? []).forEach((v, i) => {
+        if (typeof v !== 'string' || !allowed.includes(v)) r.add('not_in_list', `${at}[${i}]`);
+        else if (failing.includes(v)) r.add('duplicate', `${at}[${i}]`);
+      });
     }
   }
   // The term of an answer: after it a green answer holds no more. The soak: an outer state changes

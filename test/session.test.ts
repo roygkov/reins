@@ -739,3 +739,43 @@ test('session: a review under way in the request of the fix holds the return bac
   assert.ok(openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' }).ok);
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: next.task, label: 'not_verified', changed: true });
 });
+
+test('session: a review of another repository neither replaces nor ends the review of this one', () => {
+  const b = reviewBox();
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const id = review(b, 'should-fix', 'a changed line of the work');
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  // The same session reviews another repository: first with a finding to fix, then clean.
+  const other = repoBox();
+  fs.writeFileSync(path.join(other.cwd, 'a.txt'), 'a line of the other repository\n');
+  for (const severity of ['should-fix', 'note']) {
+    const far = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+    assert.ok(far.ok);
+    if (!far.ok) return;
+    const collected = path.join(b.rt.stateDir, 'tasks', `${far.task.id}.collect.json`);
+    const value = JSON.parse(fs.readFileSync(collected, 'utf8')) as { worktree?: string; outputs?: { worktree?: string } };
+    if (value.outputs !== undefined) value.outputs.worktree = other.cwd;
+    else value.worktree = other.cwd;
+    fs.writeFileSync(collected, JSON.stringify(value));
+    const submitted = submitReport(b.rt, far.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a line of the other repository', severity, text: 'x' }] }));
+    assert.ok('step' in submitted && submitted.step.task.label === 'verified_form', JSON.stringify(submitted));
+  }
+  // The fix in this repository: its review is still the one with the finding.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
+});
+
+test('session: the answer of a check after the end of the session does not bring the session file back', () => {
+  const b = reviewBox();
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  if (!opened.ok) return;
+  sessionEnd(b.rt, { session: 's1', cwd: b.cwd });
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', severity: 'should-fix', text: 'x' }] }));
+  assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
+  assert.equal(fs.existsSync(path.join(b.rt.stateDir, 'sessions', 's1.json')), false);
+});

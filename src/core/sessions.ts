@@ -16,7 +16,7 @@ import type { Runtime } from './runtime.ts';
 // before: such a word came in this session. unguarded: an action ended and no such word had come.
 // told: the human heard about it at a stop.
 // returns: how many times a stop of a client without a window got the task back.
-export type SessionFile = { returns?: { task: string; n: number }; claims?: string; noChoice?: boolean; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; head?: string | null; top?: string; at?: number; opened?: string[]; returned?: boolean; review?: { task: string; scenario: string; open: number }; requests?: number; fails?: Record<string, number>; executors?: { role: string; task: string; at: number }[]; judged?: string[] };
+export type SessionFile = { returns?: { task: string; n: number }; claims?: string; noChoice?: boolean; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; head?: string | null; top?: string; at?: number; opened?: string[]; returned?: boolean; reviews?: { task: string; scenario: string; open: number; top: string }[]; requests?: number; fails?: Record<string, number>; executors?: { role: string; task: string; at: number }[]; judged?: string[] };
 
 const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
 export const sessionName = (session: string | undefined): string =>
@@ -56,7 +56,11 @@ export function readSession(rt: Runtime, session: string | undefined): SessionFi
 // hooks and commands are separate processes that write one file, and one change must not drop
 // the fields of another. `change` returns the new content, null to leave the file as it is, or
 // 'remove' to delete the file.
-export function withSession<T>(rt: Runtime, session: string | undefined, change: (now: SessionFile) => { next: SessionFile | null | 'remove'; result: T }): T {
+// `known`: the caller acts only on a session that the harness holds a file of. A session that
+// ended has no file, and a late answer must not bring it back: `change` is not called then.
+export function withSession<T>(rt: Runtime, session: string | undefined, change: (now: SessionFile) => { next: SessionFile | null | 'remove'; result: T }): T;
+export function withSession<T>(rt: Runtime, session: string | undefined, change: (now: SessionFile) => { next: SessionFile | null | 'remove'; result: T }, only: 'known'): T | undefined;
+export function withSession<T>(rt: Runtime, session: string | undefined, change: (now: SessionFile) => { next: SessionFile | null | 'remove'; result: T }, only?: 'known'): T | undefined {
   const file = sessionFile(rt, session);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const lock = `${file}.lock`;
@@ -85,6 +89,7 @@ export function withSession<T>(rt: Runtime, session: string | undefined, change:
     // A session that the harness sees first gets the time of this look: what the session did
     // before it is not the business of the harness.
     const known = readSession(rt, session);
+    if (known === null && only === 'known') return undefined;
     const first: SessionFile = { since: new Date().toISOString() };
     const { next, result } = change(known ?? first);
     if (next === 'remove') fs.rmSync(file, { force: true });

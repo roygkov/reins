@@ -15,7 +15,7 @@ import { closedContext } from '../packs/packs.ts';
 import { patchSession, withSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect, type Sandbox } from './collect.ts';
-import { workState } from './work.ts';
+import { workState, workTop } from './work.ts';
 import { notify } from './notify.ts';
 import { noteUse, scenarioOff } from './idle.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
@@ -924,18 +924,26 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
 }
 
 // A review that the check accepted and that names findings to fix (`done.recheck`): the session
-// of the task keeps it. A change of the work after it needs the scenario again (AA31 - AA34). An
-// accepted report of the same scenario without such a finding ends that: the review ran again.
+// of the task keeps it, one for a scenario in a repository. A change of the work after it needs
+// the scenario again (AA31 - AA34). An accepted report of the same scenario in the same
+// repository without such a finding ends that: the review ran again. A review whose work has no
+// fingerprint or no repository is not kept: the stop could never compare it. A session that
+// ended is not written.
+const MAX_REVIEWS = 20;
 function noteReview(rt: Runtime, task: Task, answer: Answer): void {
   if (answer.result !== 'PASS' || answer.recheck === undefined || task.session === undefined || task.scenario === undefined) return;
+  if (task.work === undefined || task.root === undefined) return;
+  const top = workTop(task.root);
+  if (top === null) return;
   const { id, scenario } = task;
   const open = answer.recheck;
   withSession(rt, task.session, (now) => {
-    if (open > 0) return { next: { ...now, review: { task: id, scenario, open } }, result: undefined };
-    if (now.review?.scenario !== scenario) return { next: null, result: undefined };
-    const { review: _review, ...rest } = now;
-    return { next: rest, result: undefined };
-  });
+    const others = (now.reviews ?? []).filter((r) => r.scenario !== scenario || r.top !== top);
+    if (open === 0 && others.length === (now.reviews ?? []).length) return { next: null, result: undefined };
+    const reviews = open > 0 ? [...others, { task: id, scenario, open, top }].slice(-MAX_REVIEWS) : others;
+    const { reviews: _reviews, ...rest } = now;
+    return { next: reviews.length > 0 ? { ...rest, reviews } : rest, result: undefined };
+  }, 'known');
 }
 
 // The agent submits the text of its report. The core keeps the text and, for a check that the core

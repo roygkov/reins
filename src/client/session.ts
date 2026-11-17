@@ -351,13 +351,17 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   const max = rt.merged.context.maxFreeUnchecked;
   // A review of this session left findings to fix and the request changed the work after it: the
   // stop is returned once, until the same scenario judges the work as it is now (AA31 - AA34).
-  // A review that this request opened and did not end yet holds the return back.
-  if (changed === true && now !== null && facts !== null && seen?.returned !== true && seen?.top === facts.top && seen.review !== undefined) {
-    const reviewed = loadTask(rt, seen.review.task);
-    const here = reviewed !== null && reviewed.session === e.session && (reviewed.root === undefined || workTop(reviewed.root) === facts.top);
-    if (here && reviewed.work !== undefined && reviewed.work !== now && scenarioSays(rt, e.session, seen, facts.top, now) !== 'open') {
+  // The session keeps one review for a scenario in a repository: the ones of this repository are
+  // read. A review that this request opened and did not end yet holds the return back.
+  if (changed === true && now !== null && facts !== null && seen?.returned !== true && seen?.top === facts.top) {
+    const due = (seen.reviews ?? []).find((r) => {
+      if (r.top !== facts.top) return false;
+      const reviewed = loadTask(rt, r.task);
+      return reviewed !== null && reviewed.session === e.session && reviewed.work !== undefined && reviewed.work !== now;
+    });
+    if (due !== undefined && scenarioSays(rt, e.session, seen, facts.top, now) !== 'open') {
       patchSession(rt, e.session, { returned: true });
-      return { ...unguarded, unreviewed: seen.review };
+      return { ...unguarded, unreviewed: { task: due.task, scenario: due.scenario, open: due.open } };
     }
   }
   // The request and the stop must be in one repository: else the two fingerprints are of two works.
