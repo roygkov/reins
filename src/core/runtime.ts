@@ -12,7 +12,7 @@ import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
 import { LEVELS, fixedStart, guardPattern, inputForm, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
 import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
-import { patchSession, withSession } from './sessions.ts';
+import { patchSession, withSession, readSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect, type Sandbox } from './collect.ts';
 import { workState, workTop } from './work.ts';
@@ -936,11 +936,18 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
 // repository without such a finding ends that: the review ran again. A review whose work has no
 // fingerprint or no repository is not kept: the stop could never compare it. A session that
 // ended is not written.
+// The session that a task counts for: the one that opened it, while the harness holds a file of
+// that session. A client without a window takes the task only for its run, so the author stays
+// the owner. A session that ended owns nothing: the task belongs to the session that holds it now.
+export function ownerOf(rt: Runtime, task: Task): string | undefined {
+  return task.opener !== undefined && readSession(rt, task.opener) !== null ? task.opener : task.session;
+}
+
 const MAX_REVIEWS = 20;
 function noteReview(rt: Runtime, task: Task, answer: Answer): void {
-  // The review belongs to the session that opened it: a client without a window takes the task
-  // for its run and ends, and the session of the author must see the answer.
-  const session = task.opener ?? task.session;
+  // The review belongs to the owner of the task: the session of the author must see the answer
+  // of a review that a client without a window reported.
+  const session = ownerOf(rt, task);
   if (answer.result !== 'PASS' || answer.recheck === undefined || session === undefined || task.scenario === undefined) return;
   if (task.work === undefined || task.root === undefined) return;
   const top = workTop(task.root);

@@ -775,6 +775,8 @@ test('session: a review of another repository neither replaces nor ends the revi
     if (value.outputs !== undefined) value.outputs.worktree = other.cwd;
     else value.worktree = other.cwd;
     fs.writeFileSync(collected, JSON.stringify(value));
+    // The task read the other repository at its preparation: its clean report is about the work of now there.
+    mutateTask(b.rt, far.task.id, (t) => ({ ...t, read: workState(other.cwd) ?? '' }));
     const submitted = submitReport(b.rt, far.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a line of the other repository', severity, text: 'x' }] }));
     assert.ok('step' in submitted && submitted.step.task.label === 'verified_form', JSON.stringify(submitted));
   }
@@ -900,4 +902,34 @@ test('session: a check of another scenario does not end the review; the count of
   assert.deepEqual(agentStopped(rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
   // The second stop of the request passes: the two rules share one return.
   assert.deepEqual(agentStopped(rt, { session: 's1', cwd: b.cwd }), { task: fix.task, label: 'not_verified', changed: true });
+});
+
+test('session: an unfinished task of another scenario does not hold the return of a review back', () => {
+  const b = reviewBox();
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const id = review(b, 'should-fix', 'a changed line of the work');
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
+  // The request opened the tests of the fix and they are not ended: that is no review of the fix.
+  assert.ok(openScenario(b.rt, 'draft-message', {}, { session: 's1' }).ok);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
+});
+
+test('session: a task of a session that ended belongs to the session that took it over', () => {
+  const b = repoBox(1);
+  // Another session opened the check and ended. This session continues the task.
+  humanRequest(b.rt, { session: 'old', cwd: b.cwd });
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 'old' });
+  assert.ok(opened.ok);
+  if (!opened.ok) return;
+  sessionEnd(b.rt, { session: 'old', cwd: b.cwd });
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  assert.equal(resumeTask(b.rt, opened.task.id, 's1'), true);
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', text: 'x' }] }));
+  assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
+  // The check that this session finished judges its work.
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
 });
