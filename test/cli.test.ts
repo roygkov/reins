@@ -841,18 +841,18 @@ test('cli: reading the input moves the owner of a task only for the session that
   const owner = (id: string): unknown => (JSON.parse(fs.readFileSync(path.join(b.state, 'tasks', `${id}.json`), 'utf8')) as { opener?: string }).opener;
   // The harness knows two sessions: a file of each lies in its state.
   fs.mkdirSync(path.join(b.state, 'sessions'), { recursive: true });
-  for (const name of ['author', 'other']) fs.writeFileSync(path.join(b.state, 'sessions', `${name}.json`), JSON.stringify({ since: new Date().toISOString() }));
+  for (const name of ['author', 'other', 'third']) fs.writeFileSync(path.join(b.state, 'sessions', `${name}.json`), JSON.stringify({ since: new Date().toISOString() }));
   const id = run(['open', 'change-review', 'change_id=7'], { CLAUDE_CODE_SESSION_ID: 'author' }).json.task as string;
   assert.equal(owner(id), 'author');
   // A client without a window takes the task for its run: the owner stays.
   assert.equal(run(['input', id], { CLAUDE_CODE_SESSION_ID: 'other', REINS_HEADLESS: '1' }).code, 0);
   assert.equal(owner(id), 'author');
   // A command with no session of its own (the terminal of the human): the harness finds the last
-  // session of the directory, and that is the other one. The owner stays.
+  // session of the directory, a third one. That session holds the task now, and the owner stays.
   fs.mkdirSync(path.join(b.state, 'dirs'), { recursive: true });
-  fs.writeFileSync(path.join(b.state, 'dirs', `${createHash('sha256').update(fs.realpathSync(b.tree)).digest('hex').slice(0, 24)}.json`), JSON.stringify({ session: 'other' }));
+  fs.writeFileSync(path.join(b.state, 'dirs', `${createHash('sha256').update(fs.realpathSync(b.tree)).digest('hex').slice(0, 24)}.json`), JSON.stringify({ session: 'third' }));
   assert.equal(run(['input', id], {}).code, 0);
-  assert.deepEqual([owner(id), (JSON.parse(fs.readFileSync(path.join(b.state, 'tasks', `${id}.json`), 'utf8')) as { session?: string }).session], ['author', 'other']);
+  assert.deepEqual([owner(id), (JSON.parse(fs.readFileSync(path.join(b.state, 'tasks', `${id}.json`), 'utf8')) as { session?: string }).session], ['author', 'third']);
   // The window of another session takes the task: it is the owner now.
   assert.equal(run(['input', id], { CLAUDE_CODE_SESSION_ID: 'other' }).code, 0);
   assert.equal(owner(id), 'other');
