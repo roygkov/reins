@@ -893,6 +893,8 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
     if (answer.parts !== undefined || answer.result === 'PASS') detail.failed = answer.parts?.length ?? 0;
   }
   if (answer.reason !== undefined) detail.reason = answer.reason;
+  // The report has no fault of its own: each fault is an item with a value of `done.reject`.
+  const onlyRejected = answer.result === 'FAIL' && answer.reason === 'faults' && answer.faults.length > 0 && answer.faults.every((f) => f.fault === 'rejected');
   // The report that the check read: the same work and the same report must get the same answer.
   // The version of the check goes with it: a check that the owner changed is another check. A
   // task with a soak answers twice on one work by design: its rows name no report.
@@ -909,7 +911,7 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
       if (task === null) return { error: 'unknown_task' };
       // The same wait: the same count of returns and the same report that the check read.
       if (task.state !== 'checking' || task.returns !== before.returns || task.soak !== before.soak || readReport(rt, id) !== text) return { error: 'not_checking' };
-      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null && answer.reason !== 'work_changed' ? { work } : {}) })), answer };
+      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null && answer.reason !== 'work_changed' ? { work } : {}), ...(onlyRejected ? { rejected: true } : {}) })), answer };
     });
     if (r !== 'busy') return r;
   }

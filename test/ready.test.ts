@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks, validateSettings } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { validateManifest } from '../src/contracts/manifest.ts';
+import { acceptedLabel, validateManifest } from '../src/contracts/manifest.ts';
 import { applyEvent, loadTask, openScenario, runCheck, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
 import { dueChecks, sweep } from '../src/core/sweep.ts';
 import { taskInput } from '../src/client/input.ts';
@@ -523,6 +523,34 @@ test('ready: the term of an answer and the soak are numbers of minutes in the ma
 // ---- A collected text is a source of the citation check.
 
 const FIELDS = { format: 'list', max_items: 10, fields: { severity: ['blocking', 'should-fix', 'note'], confidence: ['confirmed', 'likely'] } };
+
+test('ready: a report whose only faults are values of done.reject closes the task as rejected, without a send-back', () => {
+  const out = JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [{ author: 'ann', body: 'The proxy of version 1.27 rejects unknown fields' }], worktree: '$WORK' }, flags: { has_new_commits: true } });
+  const done = { kind: 'citations', retries: 1, source: 'worktree', texts: ['discussion', 'diff'], reject: { severity: ['blocking'] }, unquoted: { severity: ['note'] } };
+  const run = (items: unknown[]) => {
+    const b = box({ done, output: FIELDS, collect: `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${out}'\n` });
+    const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+    assert.ok(opened.ok, JSON.stringify(opened));
+    const r = submitReport(b.rt, opened.task.id, JSON.stringify({ items }));
+    assert.ok('step' in r && r.answer !== undefined, JSON.stringify(r));
+    const rows = readJournal(b.rt.journal.file).filter((row) => row.task === opened.task.id);
+    for (const row of rows) assert.deepEqual(validateRow(row), [], row.kind);
+    return { state: r.step.task.state, label: r.step.task.label, returns: r.step.task.returns, result: r.answer.result, kinds: rows.map((row) => row.kind), closed: rows.find((row) => row.kind === 'task.closed')?.data };
+  };
+  const base = { severity: 'should-fix', confidence: 'confirmed' };
+  const good = { ...base, source: 'discussion', quote: 'rejects unknown fields', text: 'x' };
+  // The report holds, its subject does not: the same report cannot pass, so the task ends.
+  const rejected = run([{ ...base, severity: 'blocking', text: 'the old proxy ignores the field' }, good]);
+  assert.deepEqual([rejected.state, rejected.label, rejected.returns, rejected.result], ['closed', 'rejected', 0, 'FAIL']);
+  assert.deepEqual(rejected.closed, { label: 'rejected', reason: 'rejected' });
+  assert.ok(rejected.kinds.includes('check.answered') && !rejected.kinds.includes('task.returned'));
+  // The label is no accepted result: the exit code, the run of a client and the mark `checked` read it so.
+  assert.deepEqual(['rejected', 'not_verified', undefined, 'verified_form', 'approved_by_human'].map(acceptedLabel), [false, false, false, true, true]);
+  // A fault of the report itself beside a rejected item: the executor corrects the report.
+  const mixed = run([{ ...base, severity: 'blocking', text: 'x' }, { ...good, quote: 'ignores unknown fields' }]);
+  assert.deepEqual([mixed.state, mixed.label, mixed.returns, mixed.result], ['executing', undefined, 1, 'FAIL']);
+  assert.ok(mixed.kinds.includes('task.returned'));
+});
 
 test('ready: a quote of a collected text passes the citation check of a task', () => {
   const out = JSON.stringify({ outputs: { diff: 'd', task: 1, discussion: [{ author: 'ann', body: 'The proxy of version 1.27 rejects unknown fields' }], worktree: '$WORK' }, flags: { has_new_commits: true } });

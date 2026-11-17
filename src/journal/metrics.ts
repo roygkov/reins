@@ -3,6 +3,7 @@
 // Specification: docs/spec/harness-journal.
 
 import type { JournalRow } from '../contracts/journal.ts';
+import { acceptedLabel } from '../contracts/manifest.ts';
 
 export type Metrics = {
   tasks: { opened: number; closed: number; by_label: Record<string, number>; changed_not_verified: number };
@@ -331,7 +332,7 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
         if (row.scenario === undefined && data.changed !== 1) break;
         closed += 1;
         if (data.label === 'verified_result') verified += 1;
-        if (typeof data.label === 'string' && data.label !== 'not_verified') labels[data.label] = (labels[data.label] ?? 0) + 1;
+        if (typeof data.label === 'string' && acceptedLabel(data.label)) labels[data.label] = (labels[data.label] ?? 0) + 1;
         break;
       case 'task.started': started += 1; break;
       case 'task.returned': returned += 1; break;

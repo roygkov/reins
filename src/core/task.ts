@@ -64,7 +64,7 @@ export type TaskEvent =
   // `detail`: counts and a reason code of the check for the journal, never text.
   // `work`: the fingerprint of the work that the check saw.
   // `at`: the time of the answer. `check`: the fingerprint of the check that answered.
-  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string; at?: number; check?: string }
+  | { type: 'check'; result: 'PASS' | 'FAIL' | 'none'; detail?: Record<string, string | number>; work?: string; at?: number; check?: string; rejected?: boolean }
   | { type: 'invalidate'; reason?: 'work_changed' | 'check_changed' | 'expired' }
   | { type: 'limit' } // the task went past its limit of tokens
   | { type: 'scope' } // a contract task needs a write that its contract does not name // the work changed after the check: the answer does not hold any more
@@ -240,6 +240,10 @@ export function step(task: Task, event: TaskEvent): Step {
       const answer: RowDraft = { ...(event.result === 'FAIL' ? { kind: 'check.answered' as const, data: { ...detail, result: 'FAIL', check_kind: done.kind } } : { kind: 'check.no_answer' as const, data: { ...detail, check_kind: done.kind } }), ...(event.work !== undefined ? { fp: event.work } : {}) };
       // A check that did not accept the work must not be made weaker instead of the work made better.
       const { soak: _s, check: _k, work: _w, ...rest } = task;
+      // Every fault is a value that the manifest rejects: the report holds and says that its subject
+      // does not. The same report cannot pass, and a changed one would hide the answer. The task
+      // ends with that answer; a corrected subject is the work of a new task.
+      if (event.result === 'FAIL' && event.rejected === true) return close({ ...rest, red: true }, 'rejected', [answer], 'rejected');
       if (task.returns < done.retries) return back({ ...rest, red: true }, [answer], 'check_fail', true);
       return {
         task: { ...rest, red: true, state: 'waiting_human', waiting: 'check' },

@@ -19,7 +19,11 @@ export const OUTPUT_FORMATS = ['list', 'table', 'text', 'file'] as const;
 export const OUTPUT_RECEIVERS = ['human', 'system'] as const;
 export const RECORD_TYPES = ['decision', 'pitfall', 'case', 'state'] as const;
 export const MEMORY_CLASSES = ['auto', 'veto'] as const;
-export const RESULT_LABELS = ['verified_result', 'verified_form', 'approved_by_human', 'not_verified'] as const;
+// `rejected`: the check read a report that holds, and the report itself says that its subject does
+// not hold (a value of `done.reject`). The result is the answer "no": it is not a verified result.
+export const RESULT_LABELS = ['verified_result', 'verified_form', 'approved_by_human', 'not_verified', 'rejected'] as const;
+// A label that says that a check or the human accepted the result.
+export const acceptedLabel = (label: string | undefined): boolean => label !== undefined && label !== 'not_verified' && label !== 'rejected';
 export const MAX_RETRIES = 5;
 
 export type Package = (typeof PACKAGES)[number];

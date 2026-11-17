@@ -31,6 +31,7 @@ import { runTask, runTasks } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
 import { sessionOfCommand } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
+import { acceptedLabel } from './contracts/manifest.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
 import { applyEvent, approveContract, collectedDir, disputeFail, disputeResult, loadTask, probeCheck, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
@@ -226,7 +227,7 @@ function runOpened<T extends { task: string; state: string }>(rt: Runtime, list:
     const task = loadTask(rt, t.task);
     return { ...t, ...ran, state: task?.state ?? t.state, ...(task?.label !== undefined ? { label: task.label } : {}), ...(task?.waiting !== undefined ? { waiting: task.waiting } : {}) };
   });
-  const failed = opened.some((t) => t.ran !== true || !((t.state === 'closed' || t.state === 'publishing') && t.label !== 'not_verified'));
+  const failed = opened.some((t) => t.ran !== true || !((t.state === 'closed' || t.state === 'publishing') && acceptedLabel(t.label)));
   return { opened, ...(failed ? { failed: true as const } : {}) };
 }
 
@@ -823,7 +824,7 @@ process.stdout.write(`${JSON.stringify(out)}\n`);
 // Only the answer about a task has a state of a task: `state` of a proposal, of a memory record
 // or of a queued action says nothing about the exit code.
 const taskState = typeof out.task === 'string' ? out.state : undefined;
-const verified = (taskState === 'closed' || taskState === 'publishing') && out.label !== 'not_verified';
+const verified = (taskState === 'closed' || taskState === 'publishing') && acceptedLabel(typeof out.label === 'string' ? out.label : undefined);
 // A check before the report is no report: its red answer is "not ready", its green one changes nothing.
 const probe = out.probe === true;
 const reported = !probe && 'returns_left' in out;

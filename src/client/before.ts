@@ -18,7 +18,7 @@ import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession, takeJudged, withSession } from '../core/sessions.ts';
 import { humanCommand, readsOnly, reinsCalls, touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
-import { guardPattern, inputForm } from '../contracts/manifest.ts';
+import { acceptedLabel, guardPattern, inputForm } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
 import type { RowInput } from '../journal/writer.ts';
 import { findRoot, loadConfig, shellAction, type GateConfig, isProdName } from '../gate/index.ts';
@@ -750,7 +750,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
 function claimsChecked(rt: Runtime, session: string | undefined): { task: string; scenario: string } | undefined {
   const id = currentScenario(rt, session);
   const task = id === undefined ? null : loadTask(rt, id);
-  if (task === null || task.state !== 'closed' || task.scenario === undefined || task.label === undefined || task.label === 'not_verified') return undefined;
+  if (task === null || task.state !== 'closed' || task.scenario === undefined || !acceptedLabel(task.label)) return undefined;
   const manifest = rt.merged.scenarios.find((s) => s.name === task.scenario)?.manifest;
   return manifest?.done.kind === 'citations' ? { task: task.id, scenario: task.scenario } : undefined;
 }

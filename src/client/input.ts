@@ -82,7 +82,7 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
     }
     if (m.done.reject !== undefined) {
       report.reject = m.done.reject;
-      protocol.push('An item with a value of `report.reject` makes the report not ready: correct the work until no item has such a value.');
+      protocol.push('An item with a value of `report.reject` makes the report not ready. When such items are the only faults, the task closes with the label `rejected` and no send-back: do not change the value to pass.');
     }
   } else {
     if (m.output.max_items !== undefined) report.max_items = m.output.max_items;
