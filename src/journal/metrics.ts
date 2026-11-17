@@ -147,6 +147,10 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         m.tasks.closed += 1;
         const label = String(data.label ?? 'unknown');
         m.tasks.by_label[label] = (m.tasks.by_label[label] ?? 0) + 1;
+        // The word of the human accepts a result as a PASS of a check does: a scenario with
+        // done.kind "human" has no check that answers, so its acceptance is this label. A task
+        // has one of the two: a PASS closes it before a human can accept it.
+        if (label === 'approved_by_human' && row.scenario !== undefined) scenario(row.scenario).accepted += 1;
         // Free requests that changed the work and that nothing verified.
         if (row.scenario === undefined && data.changed === 1) m.tasks.changed_not_verified += 1;
         break;

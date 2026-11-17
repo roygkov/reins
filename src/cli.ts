@@ -54,6 +54,22 @@ function faultOf(r: { field?: string; cause?: string; max?: number; length?: num
   return { ...(r.field !== undefined ? { field: r.field } : {}), ...(r.cause !== undefined ? { cause: r.cause } : {}), ...(r.max !== undefined ? { max: r.max } : {}), ...(r.length !== undefined ? { length: r.length } : {}) };
 }
 
+// What a task that refused a command is, and the command that its state takes. A closed task
+// takes nothing: the answer has its state and its label only.
+function refusedBy(task: { id: string; state: string; label?: string; waiting?: string }): Out {
+  const out: Out = { state: task.state, ...(task.label !== undefined ? { label: task.label } : {}), ...(task.waiting !== undefined ? { waiting: task.waiting } : {}) };
+  const id = task.id;
+  const next = task.state === 'executing' ? `the task takes a report: reins report ${id} <file>`
+    : task.state === 'checking' ? `the check of the report did not answer: reins report ${id} - runs it again`
+    : task.state === 'publishing' ? `the result is accepted: reins finish ${id} ends the publication`
+    : task.state !== 'waiting_human' ? undefined
+    : task.waiting === 'limit' || task.waiting === 'scope' ? `the task waits for the human: reins retry ${id} lets it go on, reins stop ${id} ends the task`
+    : task.waiting === 'contract' ? `the task waits for the human: reins approve ${id} accepts the contract, reins stop ${id} ends the task`
+    : task.waiting === 'gate' ? 'the task waits for the answer of the human to a question of the barrier'
+    : `the task waits for the human: reins approve ${id} accepts the result, reins retry ${id} sends it back, reins stop ${id} ends the task`;
+  return next === undefined ? out : { ...out, next };
+}
+
 class Stop extends Error {
   out: Out;
   constructor(error: string, more: Out = {}) {
@@ -246,7 +262,7 @@ function report(rt: Runtime, id: string, source: string): Out {
   const waits = loadTask(rt, id)?.state === 'checking';
   const r = waits ? runCheck(rt, id) : submitReport(rt, id, text);
   if ('error' in r) throw new Stop(r.error === 'not_checking' ? 'check_not_supported' : r.error, 'missing' in r ? { missing: r.missing } : 'max_bytes' in r && r.max_bytes !== undefined ? { max_bytes: r.max_bytes } : {});
-  if (r.step.error !== undefined) throw new Stop(r.step.error);
+  if (r.step.error !== undefined) throw new Stop(r.step.error, refusedBy(r.step.task));
   // A record of the memory that an accepted report cites by its id was used. A report that came
   // back, and a text that the harness did not read, count nothing.
   if (!waits && (r.answer === undefined || r.answer.result === 'PASS')) countUses(rt, text);
@@ -307,7 +323,7 @@ function main(args: string[]): Out {
     if (waits !== null && waits.kind !== 'contract' || waits?.waiting === 'approval' || waits?.waiting === 'check') {
       const accepted = applyEvent(rt, first, { type: 'human', decision: 'accept' }, 'human');
       if (!('task' in accepted)) throw new Stop(accepted.error);
-      if (accepted.error !== undefined) throw new Stop(accepted.error, { state: accepted.task.state });
+      if (accepted.error !== undefined) throw new Stop(accepted.error, refusedBy(accepted.task));
       return view(rt, accepted.task);
     }
     const r = approveContract(rt, first);
@@ -319,7 +335,7 @@ function main(args: string[]): Out {
     const rt = runtime();
     const r = applyEvent(rt, first, { type: 'human', decision: 'return' }, 'human');
     if (!('task' in r)) throw new Stop(r.error);
-    if (r.error !== undefined) throw new Stop(r.error, { state: r.task.state });
+    if (r.error !== undefined) throw new Stop(r.error, refusedBy(r.task));
     return view(rt, r.task);
   }
   if (command === 'raise' && first !== undefined && rest.length === 0) {
@@ -561,8 +577,13 @@ function main(args: string[]): Out {
           ...(r.paths.length > 0 ? { paths: r.paths } : {}), ...(r.next !== undefined ? { next: short(r.next) } : {}), ...(r.status !== undefined ? { status: r.status } : {}),
           // A record for every project, and a record that the human marked as wrong, look different.
           ...(r.scope !== undefined ? { scope: r.scope } : {}), ...(r.wrong !== undefined ? { wrong: r.wrong } : {}),
+          // No record holds all the words: the row names the words that this record holds.
+          ...(found.matched?.[r.id] !== undefined ? { matched: found.matched[r.id] } : {}),
         })),
         more: found.more,
+        ...(found.partial ? { partial: true } : {}),
+        // Records out of use with these words: the subject was in the memory before. `by` is the decision that took the place.
+        ...(found.old !== undefined ? { old: found.old.map((o) => ({ id: o.record.id, type: o.record.type, state: o.record.state, text: short(o.record.text), ...(o.by !== undefined ? { by: o.by } : {}) })) } : {}),
       };
     }
     // The count of the memory now, written to the journal: the series of the metrics shows it by day.
@@ -757,7 +778,7 @@ function main(args: string[]): Out {
     }
     const r = applyEvent(rt, first, { type: 'finish' }, 'agent');
     if (!('task' in r)) throw new Stop(r.error);
-    if (r.error !== undefined) throw new Stop(r.error);
+    if (r.error !== undefined) throw new Stop(r.error, refusedBy(r.task));
     return view(rt, r.task);
   }
   // The done check before the report: its answer accepts nothing and spends no send-back.

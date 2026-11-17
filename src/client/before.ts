@@ -16,7 +16,7 @@ import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, mutateTask,
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession, takeJudged, withSession } from '../core/sessions.ts';
-import { readsOnly, touchedPlaces } from './places.ts';
+import { humanCommand, readsOnly, reinsCalls, touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
 import { guardPattern, inputForm } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
@@ -56,6 +56,9 @@ export type Reply = {
   task?: string; // the task whose envelope names the action
   grant?: string; // the key of the grant: action, target, environment
   queued?: string; // the name of the deferred action in the queue of the human
+  // The question about a write that another human sees: the task of this session whose check of
+  // citations passed. The harness does not know that the write carries the checked text.
+  checked?: { task: string; scenario: string };
 };
 
 const UNKNOWN: Action = { via: 'tool', kind: 'unknown', name: 'unknown', target: '', env: { name: 'unknown', known: false, production: false } };
@@ -130,7 +133,8 @@ function inside(child: string, parent: string): boolean {
 // What a change of a file touches of the harness itself. The state and the config are closed for
 // an agent: with them it could forge a task, an approval or the list of packs. A pack is the
 // rules of the harness: the human decides each change.
-function protectedBy(rt: Runtime, file: string): { outcome: 'deny' | 'ask'; rule: string } | null {
+// `open`: the directories of the harness that the task of this call may change (see `harnessOpen`).
+function protectedBy(rt: Runtime, file: string, open: string[] = []): { outcome: 'deny' | 'ask'; rule: string } | null {
   const target = real(file);
   if (inside(target, real(rt.stateDir))) return { outcome: 'deny', rule: 'protect.state' };
   // The memory is written only through the harness: a direct write would skip the veto and the rules of the types.
@@ -140,8 +144,66 @@ function protectedBy(rt: Runtime, file: string): { outcome: 'deny' | 'ask'; rule
   if ((rt.clientPaths ?? []).some((source) => new RegExp(source).test(target))) return { outcome: 'ask', rule: 'protect.client' };
   // `.reins` of any repository is a pack directory, also before it exists and in another repository.
   if ((rt.projectPackDir !== undefined && inside(target, real(rt.projectPackDir))) || /(^|\/)\.reins(\/|$)/.test(target)) return { outcome: 'ask', rule: 'protect.packs' };
-  if ((rt.harnessDirs ?? []).some((d) => inside(target, real(d)))) return { outcome: 'ask', rule: 'protect.harness' };
+  const own = (rt.harnessDirs ?? []).map(real).find((d) => inside(target, d));
+  if (own !== undefined) {
+    const rel = path.relative(own, target).split(path.sep).join('/');
+    if (open.includes(own) && OPEN_PART.test(rel) && !BARRIER_PART.test(rel)) return null;
+    return { outcome: 'ask', rule: 'protect.harness' };
+  }
   return null;
+}
+
+// A task of a scenario whose manifest has `permissions.harness`, open for the directory of the
+// harness, changes a part of it without a question: the tests, the documents and the code. The
+// human said the one "yes" when the task was opened (`opensHarnessTask`). The code that decides
+// the questions and the checks is no such part: the barrier of the client, the gate, the
+// contracts, the core and the adapters of the clients ask at every change, as every other file
+// of the directory does. The hooks read the code from this directory, so a change of the barrier
+// works at once: it stays the word of the human.
+const OPEN_PART = /^(test|docs|src)\//;
+const BARRIER_PART = /^(clients|src\/(client|gate|contracts|core))(\/|$)/;
+// The text of a command names a place that is no open part, or changes the history of the repository.
+// A hidden directory (a name that starts with a dot) is closed too: the settings of a tool live there.
+const NAMES_CLOSED = /(^|[^A-Za-z0-9_.-])(clients|src\/(client|gate|contracts|core)|tools|examples)(\/|[^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_.-])\.[a-z][a-z0-9_-]*\/|\.git\b|package(-lock)?\.json|tsconfig[\w.-]*\.json/;
+const GIT_WRITES = /(^|[\s;&|(])git\s+(-C\s+\S+\s+)?(?!(status|log|diff|show|rev-parse|rev-list|ls-files|ls-tree|blame|describe|shortlog|cat-file|merge-base)\b)[a-z]/;
+function harnessOpen(rt: Runtime, session: string | undefined): string[] {
+  const dirs = rt.harnessDirs ?? [];
+  if (dirs.length === 0 || !rt.merged.scenarios.some((s) => s.manifest.permissions.harness !== undefined)) return [];
+  const id = currentScenario(rt, session);
+  const task = id === undefined ? null : loadTask(rt, id);
+  if (task === null || task.state !== 'executing' || task.scenario === undefined) return [];
+  const key = rt.merged.scenarios.find((s) => s.name === task.scenario)?.manifest.permissions.harness;
+  const value = key === undefined ? undefined : task.inputs[key];
+  if (typeof value !== 'string' || !path.isAbsolute(value)) return [];
+  const target = real(value);
+  return dirs.map(real).filter((d) => d === target);
+}
+
+// The command opens a task of such a scenario for the directory of the harness: `reins open
+// <name> <input>=<directory>`, or `reins match <directory>`. A value that the client cannot read
+// as a directory outside the harness asks too: a variable, a relative path.
+function opensHarnessTask(rt: Runtime, command: string): boolean {
+  const dirs = (rt.harnessDirs ?? []).map(real);
+  const keys = new Map(rt.merged.scenarios.flatMap((s) => (s.manifest.permissions.harness !== undefined ? [[s.name, s.manifest.permissions.harness] as const] : [])));
+  if (dirs.length === 0 || keys.size === 0) return false;
+  const isHarness = (value: string): boolean => {
+    const full = value === '~' || value.startsWith('~/') ? path.join(os.homedir(), value.slice(1)) : value;
+    return /[$`]/.test(value) || !path.isAbsolute(full) || dirs.includes(real(full));
+  };
+  const calls = reinsCalls(command);
+  if (calls === null) return /(reins|cli\.ts)\s+\S*(open|match)/.test(command.replace(/\$?['"\\]/g, ''));
+  for (const words of calls) {
+    const [verb, name] = words;
+    if (verb === 'match' && name !== undefined && isHarness(name)) return true;
+    if (verb !== 'open' || name === undefined) continue;
+    // The name of the scenario is in a variable: nobody can say which one opens.
+    const wanted = /[$`]/.test(name) ? [...keys.values()] : keys.has(name) ? [keys.get(name) as string] : [];
+    for (const key of wanted) {
+      const value = words.slice(2).find((w) => w.startsWith(`${key}=`))?.slice(key.length + 1);
+      if (value !== undefined && isHarness(value)) return true;
+    }
+  }
+  return false;
 }
 
 type RedGuards = ReturnType<typeof redGuards>;
@@ -204,14 +266,17 @@ function spellings(p: string): string[] {
 // A command that only reads (a closed list of programs, see `readsOnly`) gets no question for a
 // text that names a pack or the code of the harness: a read changes neither. The state, the
 // memory, the config and the paths of the client keep their question.
-function namedInCommand(rt: Runtime, command: string): string | null {
+function namedInCommand(rt: Runtime, command: string, open: string[] = []): string | null {
   const names = (p: string): boolean => spellings(p).some((s) => command.includes(s));
   const reads = readsOnly(command);
   if (names(rt.stateDir)) return 'protect.state';
   if (rt.memoryDir !== undefined && names(rt.memoryDir)) return 'protect.memory';
   if (rt.configFile !== undefined && names(rt.configFile)) return 'protect.config';
   if (!reads && (rt.merged.packs.some((p) => names(p.dir)) || (rt.projectPackDir !== undefined && names(rt.projectPackDir)) || /(^|[\s\/="'])\.reins(\/|[\s"']|$)/.test(command))) return 'protect.packs';
-  if (!reads && (rt.harnessDirs ?? []).some(names)) return 'protect.harness';
+  // A task that is open for the harness: the text asks when it names a directory that is not
+  // open, a place that is no open part, or a command of git that writes.
+  const named = reads ? [] : (rt.harnessDirs ?? []).filter(names);
+  if (named.length > 0 && (!named.every((d) => open.includes(real(d))) || NAMES_CLOSED.test(command) || GIT_WRITES.test(command))) return 'protect.harness';
   // Every word of the command is tested as a path: a relative path after a space or a redirect too.
   const words = command.replace(/['"\\]/g, '').split(/[\s;&|<>()=]+/);
   if ((rt.clientPaths ?? []).some((source) => words.some((w) => new RegExp(source).test(w)))) return 'protect.client';
@@ -221,7 +286,7 @@ function namedInCommand(rt: Runtime, command: string): string | null {
 // What the places of a shell command touch of the harness. A place that the command can change
 // gets the answer of a file change: a refusal for the state, the memory and the config. A place
 // that the command only names gets a question when it lies in the state or in the memory.
-function placesGuard(rt: Runtime, command: string, cwd: string): { outcome: 'deny' | 'ask'; rule: string } | null {
+function placesGuard(rt: Runtime, command: string, cwd: string, open: string[] = []): { outcome: 'deny' | 'ask'; rule: string } | null {
   let found: { outcome: 'deny' | 'ask'; rule: string } | null = null;
   let red: RedGuards | undefined;
   for (const place of touchedPlaces(command, cwd, os.homedir(), true)) {
@@ -242,7 +307,9 @@ function placesGuard(rt: Runtime, command: string, cwd: string): { outcome: 'den
       else if (under(rt.memoryDir)) found ??= { outcome: 'ask', rule: 'protect.memory' };
       else if (under(rt.configFile)) found ??= { outcome: 'ask', rule: 'protect.config' };
     }
-    const guard = protectedBy(rt, place.path);
+    // An open part is a directory under `test/`, `docs/` or `src/`: a removal of `src` itself, or of
+    // the whole directory, takes the closed parts with it and is no open part.
+    const guard = protectedBy(rt, place.path, open);
     if (guard === null) {
       if ((place.write || place.tree || place.into) && checkGuard((red ??= redGuards(rt)), place.path)) found ??= CHECK_GUARD;
       continue;
@@ -276,18 +343,19 @@ function gateConfig(rt: Runtime, cwd: string): GateConfig {
 // that the command changes or names, and a command that is the word of the human. null: nothing.
 // `refused`: the gate refuses the command already: a refusal of the gate stays a refusal, the
 // question about a path of the harness does not soften it.
-function commandGuard(rt: Runtime, command: string, cwd: string, refused: boolean): { outcome: 'deny' | 'ask'; rule: string } | null {
+function commandGuard(rt: Runtime, command: string, cwd: string, refused: boolean, open: string[] = []): { outcome: 'deny' | 'ask'; rule: string } | null {
   if (refused) return null;
   // `reins stop` is the word of the human. The agent can type the command, so the client asks.
-  // Quotes and backslashes are dropped first: `reins 'stop'` runs the same command.
-  const human = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire)(\s|$|[`)])/.test(command.replace(/\$?['"\\]/g, '')) ? 'protect.human-command' : null;
+  // The question is for a command that runs, not for a text that names it: see `humanCommand`.
+  const human = humanCommand(command) ? 'protect.human-command' : null;
   // The parse of the command says which places it changes: a change of the state, of the memory
   // or of the config is refused, as for a file tool. The match of the text is the second barrier.
-  const places = placesGuard(rt, command, cwd);
+  const places = placesGuard(rt, command, cwd, open);
   if (places?.outcome === 'deny') return places;
   // A refusal of a place comes first: a question about the open of a scenario must not let a
   // write into the state pass with one "yes".
-  const named = human ?? (opensHumanScenario(rt, command) ? 'protect.human-command' : null) ?? places?.rule ?? namedInCommand(rt, command);
+  // The open of a task that lets the code of the harness change is the one question about that code.
+  const named = human ?? (opensHumanScenario(rt, command) ? 'protect.human-command' : null) ?? (opensHarnessTask(rt, command) ? 'protect.harness' : null) ?? places?.rule ?? namedInCommand(rt, command, open);
   return named === null ? null : { outcome: 'ask', rule: named };
 }
 
@@ -334,14 +402,14 @@ function readCall(rt: Runtime, call: ToolCall, clientTools: ClientTools): Read {
     if (own.kind === 'local') {
       const file = call.input[own.path];
       if (typeof file !== 'string' || file === '') return { action: UNKNOWN, layers: [] };
-      const guard = protectedBy(rt, path.resolve(call.cwd, file)) ?? (checkGuard(redGuards(rt), path.resolve(call.cwd, file)) ? CHECK_GUARD : null);
+      const guard = protectedBy(rt, path.resolve(call.cwd, file), harnessOpen(rt, call.session)) ?? (checkGuard(redGuards(rt), path.resolve(call.cwd, file)) ? CHECK_GUARD : null);
       if (guard !== null) return { guard };
       return { action: { via: 'tool', kind: 'local', name: 'change', target: '', env: LOCAL_ENV }, layers: [] };
     }
     const command = call.input[own.command];
     if (typeof command !== 'string') return { action: UNKNOWN, layers: [] };
     const shell = shellAction(command, call.cwd, gateConfig(rt, call.cwd));
-    const guard = commandGuard(rt, command, call.cwd, shell.result?.decision === 'deny');
+    const guard = commandGuard(rt, command, call.cwd, shell.result?.decision === 'deny', harnessOpen(rt, call.session));
     if (guard !== null) return { guard };
     return { action: shell.action, layers: shell.layers, command };
   }
@@ -663,11 +731,28 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
   // A write that another human sees, outside the envelope of a task: no check of the harness saw
   // its text. The question has its own rule, so the client can say this to the human.
   if (decision.basis.rule === 'default.write' && action.outward === true) decision = { ...decision, basis: { ...decision.basis, rule: 'default.outward-write' } };
+  const answer = reply(decision);
+  if (decision.basis.rule === 'default.outward-write') {
+    const checked = claimsChecked(rt, call.session);
+    if (checked !== undefined) answer.checked = checked;
+  }
   record(rt, call, [
     { kind: 'policy.decision', data: { outcome: decision.outcome, action_kind: action.kind, env: action.env.name } },
     { kind: 'policy.basis', data: { layer: decision.basis.layer, rule: decision.basis.rule } },
   ]);
-  return queued(rt, call, clientTools, action, read.command, reply(decision));
+  return queued(rt, call, clientTools, action, read.command, answer);
+}
+
+// The last task of a scenario that the session held, when it is closed with a check that passed
+// and the done check of its scenario is the check of citations: that check reads the claims of a
+// text against a source. The question about a write that another human sees says so, or says
+// that no such check passed. A session that held another scenario after it has no such task.
+function claimsChecked(rt: Runtime, session: string | undefined): { task: string; scenario: string } | undefined {
+  const id = currentScenario(rt, session);
+  const task = id === undefined ? null : loadTask(rt, id);
+  if (task === null || task.state !== 'closed' || task.scenario === undefined || task.label === undefined || task.label === 'not_verified') return undefined;
+  const manifest = rt.merged.scenarios.find((s) => s.name === task.scenario)?.manifest;
+  return manifest?.done.kind === 'citations' ? { task: task.id, scenario: task.scenario } : undefined;
 }
 
 // What of the input of a call names the action. For a shell tool the words that the agent puts

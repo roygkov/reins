@@ -44,7 +44,9 @@ export type Manifest = {
   collect?: { script: string; outputs: string[]; flags?: string[]; max_bytes?: number; timeout_s?: number };
   run_if?: string;
   model: { level?: Level; raise_to?: Level; executors?: { role: string; count: number; rights?: (typeof EXECUTOR_RIGHTS)[number]; area?: string[] }[]; token_limit?: number };
-  permissions: { read: string[]; write?: WriteGrant[] };
+  // `harness`: the input that holds a directory. A task of the scenario for the directory of the
+  // harness changes its tests, documents and code without a question; the open of the task asks.
+  permissions: { read: string[]; write?: WriteGrant[]; harness?: string };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
   done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; unbound?: boolean; proves?: 'form'; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
@@ -311,8 +313,12 @@ function target(r: Report, value: unknown, path: string, inputs: Set<string>): s
 }
 
 function permissions(r: Report, value: unknown, pack: PackContext, inputs: Set<string>): void {
-  const p = fields(r, value, 'permissions', ['read', 'write'], ['read']);
+  const p = fields(r, value, 'permissions', ['read', 'write', 'harness'], ['read']);
   if (p === null) return;
+  if (p.harness !== undefined) {
+    if (typeof p.harness !== 'string') r.add('not_string', 'permissions.harness');
+    else if (!inputs.has(p.harness)) r.add('unknown_input', 'permissions.harness');
+  }
   (list(r, p.read, 'permissions.read') ?? []).forEach((c, i) => {
     const path = `permissions.read[${i}]`;
     inPack(r, pack.readConnectors, named(r, c, path, NAME), path);

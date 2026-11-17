@@ -97,9 +97,17 @@ export function taskInput(task: Task, collected: Record<string, unknown> | null,
   }
   protocol.push(
     `Submit the report with: ${command} report ${task.id} <file> (or - for the standard input).`,
-    'Exit code 0: the check passed; the task is closed or, with `state: "publishing"`, waits for the publication. Exit code 2: not ready; read `answer`, correct the report and submit it again.',
-    'Write to no system before the report passes. When the answer says `state: "publishing"`, the writes of `writes` can be made on the word of the human; no other write.',
-    `After the publication, or when the human wants none, run: ${command} finish ${task.id}.`,
+    // A task that names no write has no publication: `finish` is no command for it.
+    ...(task.envelope.length > 0
+      ? [
+        'Exit code 0: the check passed; the task is closed or, with `state: "publishing"`, waits for the publication. Exit code 2: not ready; read `answer`, correct the report and submit it again.',
+        'Write to no system before the report passes. When the answer says `state: "publishing"`, the writes of `writes` can be made on the word of the human; no other write.',
+        `After the publication, or when the human wants none, run: ${command} finish ${task.id}.`,
+      ]
+      : [
+        'Exit code 0: the check passed and the task is closed. Exit code 2: not ready; read `answer`, correct the report and submit it again.',
+        'The task names no write to a system: it has no publication, and every write to a system asks the human.',
+      ]),
   );
   // A task has its level from the manifest or from the packs; the middle level is the last word.
   const level = task.level ?? m.model.level ?? 'medium';

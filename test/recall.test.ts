@@ -13,7 +13,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import type { Runtime } from '../src/core/runtime.ts';
 import { beforeAction } from '../src/client/before.ts';
 import { sessionStart } from '../src/client/session.ts';
-import { addRecord, census, countUses, findRecords, listRecords, memoryDir, recordsForInput, restoreRecord, searchRecords, shareRecord, vetoRecord, wrongRecord } from '../src/memory/store.ts';
+import { addRecord, census, closeCase, countUses, findRecords, listRecords, memoryDir, recordsForInput, restoreRecord, searchRecords, shareRecord, vetoRecord, wrongRecord } from '../src/memory/store.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -195,7 +195,11 @@ test('recall: the command line finds records by words, in every project', () => 
   // A record that is out of use is not found.
   const id = found.records.find((r: any) => r.text === 'we keep one cache').id;
   run(b.cwd, ['memory', 'veto', id]);
-  assert.deepEqual(run(b.cwd, ['memory', 'find', 'one cache']).records, []);
+  // The phrase was in that record only. The other record holds the two words apart: it comes as a part, with a mark.
+  const after = run(b.cwd, ['memory', 'find', 'one cache']);
+  assert.equal(after.records.some((r: any) => r.id === id), false);
+  assert.deepEqual([after.records.map((r: any) => [r.text, r.matched]), after.partial], [[['the cache of the other project lives one hour', ['one', 'cache']]], true]);
+  assert.deepEqual(run(b.cwd, ['memory', 'find', 'we keep']).records, []);
 });
 
 test('recall: a decision that was given many times and never cited is not a dead record', () => {
@@ -339,4 +343,97 @@ for (let i = 0; i < (process.argv[5] === 'once' ? 1 : 10); i += 1) countUses(rt,
   clearInterval(keep);
   assert.deepEqual([waited, listRecords(b.rt).find((r) => r.id === id)?.uses, used()], [0, 60, before]);
   assert.equal(fs.readFileSync(lock, 'utf8'), 'another-owner', 'the lock of another owner is not removed');
+});
+
+test('recall: a search whose words no one record holds together gives the records with a part of the words, and says so', () => {
+  const b = box();
+  const both = note(b, 'the craft reads the manifest of a proposal', [], NOW - 3000);
+  const one = note(b, 'the craft counts the questions of a week', [], NOW - 2000);
+  note(b, 'a note about the gateway', [], NOW - 1000);
+  const events = (kind: string) => readJournal(b.rt.journal.file).filter((r) => r.kind === kind).map((r) => r.data);
+  // Every word in one record: the answer is as before, with no mark.
+  assert.deepEqual(Object.keys(searchRecords(b.rt, ['craft', 'manifest'], 20, NOW)).sort(), ['more', 'records']);
+  // Two variants of a term in one search: no record holds both, the records with one of them come.
+  const found = searchRecords(b.rt, ['manifest', 'health'], 20, NOW);
+  assert.deepEqual([found.records.map((r) => r.id), found.more, found.partial], [[both], 0, true]);
+  assert.deepEqual(found.matched, { [both]: ['manifest'] });
+  // A phrase is cut into its words. The record with more of the words is first.
+  const phrase = searchRecords(b.rt, ['manifest craft proposal'], 20, NOW);
+  assert.deepEqual([phrase.records.map((r) => r.id), phrase.partial], [[both, one], true]);
+  assert.deepEqual(phrase.matched, { [both]: ['manifest', 'craft', 'proposal'], [one]: ['craft'] });
+  // The records of a part are a read, not a miss: the agent got them.
+  assert.deepEqual(events('memory.read'), [{ n: 1, how: 'find' }, { n: 1, how: 'find' }, { n: 2, how: 'find' }]);
+  assert.deepEqual(events('memory.search_missed'), []);
+  // The count of a part has its own, smaller limit, and the rest is counted.
+  for (let i = 0; i < 7; i += 1) note(b, `queue note ${i}`, [], NOW - 500 + i);
+  const many = searchRecords(b.rt, ['queue', 'absent'], 20, NOW);
+  assert.deepEqual([many.records.length, many.more, many.partial], [5, 2, true]);
+  // One word that no record holds is a miss, as before; so are words that no record holds at all,
+  // and a word shorter than three letters finds no part.
+  assert.deepEqual(searchRecords(b.rt, ['absent'], 20, NOW), { records: [], more: 0 });
+  assert.deepEqual(searchRecords(b.rt, ['absent', 'missing'], 20, NOW), { records: [], more: 0 });
+  assert.deepEqual(searchRecords(b.rt, ['absent', 'a'], 20, NOW), { records: [], more: 0 });
+  assert.deepEqual(events('memory.search_missed'), [{ n: 1 }, { n: 2 }, { n: 2 }]);
+  for (const r of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(r), []);
+});
+
+test('recall: a search that no record in use answers names the replaced decisions and the closed cases with these words', () => {
+  const b = box();
+  const add = (input: Omit<Parameters<typeof addRecord>[1], 'paths' | 'by'>, at: number): string => {
+    const r = addRecord(b.rt, { paths: [], by: 'human', ...input }, at);
+    assert.ok(r.ok, JSON.stringify(r));
+    return r.record.id;
+  };
+  const first = add({ type: 'decision', text: 'the gateway keeps one cache', because: 'two caches went out of step' }, NOW - 5000);
+  const second = add({ type: 'decision', text: 'the gateway keeps a cache for each tenant', because: 'the tenants must not see the data of each other', supersedes: first }, NOW - 4000);
+  const done = add({ type: 'case', text: 'the migration of the queue waits for the board', next: 'ask the board on Monday' }, NOW - 3000);
+  assert.deepEqual(closeCase(b.rt, done, { by: 'human' }, NOW - 2000), { ok: true });
+  const gone = note(b, 'a wrong note about the migration of the queue', [], NOW - 1000);
+  assert.equal(vetoRecord(b.rt, gone, NOW - 500), true);
+  const old = (words: string[]) => searchRecords(b.rt, words, 20, NOW).old?.map((o) => [o.record.id, o.record.state, o.by]);
+  // The decision that another one replaced holds the phrase: the answer names it and the decision that took its place.
+  const found = searchRecords(b.rt, ['one cache'], 20, NOW);
+  assert.deepEqual(found.old?.map((o) => [o.record.id, o.record.state, o.by]), [[first, 'replaced', second]]);
+  assert.equal(found.records.some((r) => r.id === first), false, 'a replaced record is no record of the answer');
+  // A closed case is named too. A record that the human removed is never named.
+  assert.deepEqual(old(['migration', 'queue']), [[done, 'closed', undefined]]);
+  // A search that a record in use answers names no old record.
+  assert.deepEqual(Object.keys(searchRecords(b.rt, ['cache', 'tenant'], 20, NOW)).sort(), ['more', 'records']);
+  // No old record holds the words: the answer has no such field.
+  assert.deepEqual(searchRecords(b.rt, ['absent'], 20, NOW), { records: [], more: 0 });
+  // An old record is no read: the search of the closed case stays a miss of the memory.
+  const rows = readJournal(b.rt.journal.file);
+  assert.deepEqual(rows.filter((r) => r.kind === 'memory.search_missed').map((r) => r.data), [{ n: 2 }, { n: 1 }]);
+  for (const r of rows) assert.deepEqual(validateRow(r), []);
+  // The command line gives a short row for each old record.
+  const env = { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config };
+  const out = JSON.parse(spawnSync(process.execPath, [CLI, 'memory', 'find', 'one cache'], { encoding: 'utf8', cwd: b.cwd, env }).stdout);
+  assert.deepEqual(out.old, [{ id: first, type: 'decision', state: 'replaced', text: 'the gateway keeps one cache', by: second }]);
+});
+
+test('recall: a search takes a hyphen, an underscore and a space as one divider of words', () => {
+  const b = box();
+  const shard = note(b, 'the job runs on the master shard only', [], NOW - 5000);
+  const flag = note(b, 'the flag FEATURE_TOGGLE_MASTER is off on the test stand', [], NOW - 4000);
+  const cache = note(b, 'the measure cache-write counts the first call\nof a session', [], NOW - 3000);
+  const reason = addRecord(b.rt, { type: 'decision', text: 'the stand ends with alpha', because: 'beta is the reason', paths: [], by: 'human' }, NOW - 2000);
+  assert.ok(reason.ok);
+  const ids = (words: string[]) => searchRecords(b.rt, words, 20, NOW).records.map((r) => r.id);
+  // The record has a space, the search has a hyphen or an underscore.
+  assert.deepEqual([ids(['master-shard']), ids(['master_shard']), ids(['MASTER SHARD'])], [[shard], [shard], [shard]]);
+  // The record has an underscore or a hyphen, the search has another divider.
+  assert.deepEqual([ids(['feature toggle master']), ids(['feature-toggle']), ids(['cache_write']), ids(['cache write'])], [[flag], [flag], [cache], [cache]]);
+  // A break of a line in the text is a divider too; the same word as it is written is found as before.
+  assert.deepEqual([ids(['call of a session']), ids(['cache-write']), ids(['FEATURE_TOGGLE_MASTER'])], [[cache], [cache], [flag]]);
+  // The dividers at the ends of a word say nothing: `--master` is `master`.
+  assert.deepEqual(ids(['--master', 'shard']), [shard]);
+  // The text and the reason are two fields: a phrase does not go from the end of one to the start of the other.
+  assert.equal(searchRecords(b.rt, ['alpha beta'], 20, NOW).partial, true);
+  // A name with an underscore is one word: no record holds it whole, and it is not cut into parts.
+  assert.deepEqual(searchRecords(b.rt, ['master_absent'], 20, NOW), { records: [], more: 0 });
+  // A word of dividers only is no word: no search, no row of the journal.
+  const rows = () => readJournal(b.rt.journal.file).length;
+  const before = rows();
+  assert.deepEqual(searchRecords(b.rt, ['--', '_'], 20, NOW), { records: [], more: 0 });
+  assert.equal(rows(), before);
 });

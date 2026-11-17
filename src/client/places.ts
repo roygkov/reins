@@ -275,3 +275,81 @@ export function touchedPlaces(command: string, cwd: string, home: string, every 
   }
   return out;
 }
+
+// ---- A command that is the word of the human (`reins stop`, `reins memory decide`, ...).
+// The client asks where such a command runs, not where a text names it: a search for the words,
+// a document in a heredoc, a message of a commit and an argument of another command run nothing.
+// The parse gives the program of each part of the line: after an operator, in a group, in a loop,
+// in `$(...)` and backticks, behind a wrapper (`env`, `time`, `xargs`), in `bash -c` and `eval`.
+// Where the parse cannot see what runs, the old match of the text decides, so the question stays:
+// a variable in the place of the program or of the command, a shell that reads its commands from
+// a heredoc or a pipe, a program that runs its words as a command (`find -exec`, `watch`, `ssh`),
+// and code of an interpreter that names the command and starts a process.
+const HUMAN_WORDS = /^(stop|pause|enable|approve|dispute|memory (veto|decide|restore|import|share|wrong|step|end)|craft (accept|reject)|queue (approve|reject)|retry|run|tick run|fire)( |$)/;
+const HUMAN_HEADS = new Set(['memory', 'craft', 'queue', 'tick']);
+const HUMAN_TEXT = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire)(\s|$|[`)])/;
+const namesHuman = (text: string): boolean => HUMAN_TEXT.test(text.replace(/\$?['"\\]/g, ''));
+const READS_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'source', '.', 'eval']);
+const RUNS_WORDS = new Set(['find', 'watch', 'parallel', 'ssh', 'script', 'entr', 'flock', 'tmux', 'screen', 'osascript', 'at', 'make', 'just', 'docker', 'kubectl', 'su', 'runuser', 'chroot', 'expect']);
+const INTERPRETER = /^(python[0-9.]*|node|nodejs|deno|bun|tsx|ruby|perl|php|lua|awk|gawk)$/;
+// A call that starts a process, by its name: a word of a text such as "execution" is none.
+const STARTS_PROCESS = /subprocess|popen|child_process|\bos\.system|\bsystem\s*\(|\bexec\w*\s*\(|\bspawn\w*\s*\(|\bfork\s*\(|Deno\.(run|Command)|Bun\.spawn/;
+// In these languages a text in backticks runs as a command.
+const BACKTICK_RUNS = /^(ruby|perl|php)$/;
+export function humanCommand(command: string): boolean {
+  let segments: (FullSegment & { heredoc?: string })[];
+  try {
+    segments = parse(command) as (FullSegment & { heredoc?: string })[];
+  } catch {
+    return namesHuman(command);
+  }
+  for (const seg of segments) {
+    // `$'stop'` comes from the parse as `$stop` with no mark of a variable.
+    const isVar = (i: number): boolean => seg.vars?.[i] === true;
+    const argv = seg.argv.map((w, i) => (isVar(i) ? w : w.replace(/^\$/, '')));
+    const [first] = argv;
+    if (first === undefined) continue;
+    const program = base(first);
+    const cli = argv.findIndex((w) => base(w) === 'cli.ts');
+    const at = program === 'reins' ? 0 : cli > 0 ? cli : -1;
+    if (at >= 0) {
+      const words = argv.slice(at + 1);
+      if (HUMAN_WORDS.test(words.join(' '))) return true;
+      // The command itself is in a variable: nobody can say that it is not a word of the human.
+      if (isVar(at + 1) || (HUMAN_HEADS.has(words[0] ?? '') && isVar(at + 2))) return true;
+      continue;
+    }
+    // The program is in a variable: the words after it decide.
+    if (isVar(0) && HUMAN_WORDS.test(argv.slice(1).join(' '))) return true;
+    const heredoc = typeof seg.heredoc === 'string' ? seg.heredoc : '';
+    // A shell without `-c` reads its commands from a heredoc, a file or a pipe: the text of the whole line decides.
+    if (READS_COMMANDS.has(program) && namesHuman(command)) return true;
+    if (RUNS_WORDS.has(program) && namesHuman(argv.slice(1).join(' '))) return true;
+    if (INTERPRETER.test(program)) {
+      const code = `${argv.slice(1).join(' ')}\n${heredoc}`;
+      if (namesHuman(code) && (STARTS_PROCESS.test(code) || (BACKTICK_RUNS.test(program) && code.includes('`')))) return true;
+    }
+  }
+  return false;
+}
+
+// The calls of the harness in a command line: for each one the words after the program, as the
+// parse gives them. null: the parse did not read the line.
+export function reinsCalls(command: string): string[][] | null {
+  let segments: FullSegment[];
+  try {
+    segments = parse(command) as FullSegment[];
+  } catch {
+    return null;
+  }
+  const out: string[][] = [];
+  for (const seg of segments) {
+    const argv = seg.argv.map((w, i) => (seg.vars?.[i] === true ? w : w.replace(/^\$/, '')));
+    const [first] = argv;
+    if (first === undefined) continue;
+    const cli = argv.findIndex((w) => base(w) === 'cli.ts');
+    const at = base(first) === 'reins' ? 0 : cli > 0 ? cli : seg.vars?.[0] === true ? 0 : -1;
+    if (at >= 0) out.push(argv.slice(at + 1));
+  }
+  return out;
+}

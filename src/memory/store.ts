@@ -260,7 +260,8 @@ const DEAD_GIVES = 5;
 export type Census = { active: number; cited: number; dead: number; unseen: number; worst: { id: string; type: RecordType; given: number }[] };
 export function census(rt: Runtime, now: number = Date.now()): Census {
   const gives = readGives(rt);
-  const active = listRecords(rt, now).filter((r) => r.state === 'active');
+  const all = listRecords(rt, now);
+  const active = all.filter((r) => r.state === 'active');
   const dead = active.filter((r) => r.type !== 'decision' && r.uses === 0 && (r.free_uses ?? 0) === 0 && (gives[r.id] ?? 0) >= DEAD_GIVES).map((r) => ({ id: r.id, type: r.type, given: gives[r.id] ?? 0 })).sort((a, b) => b.given - a.given || a.id.localeCompare(b.id));
   return { active: active.length, cited: active.filter((r) => r.uses > 0).length, dead: dead.length, unseen: active.filter((r) => (gives[r.id] ?? 0) === 0).length, worst: dead.slice(0, 20) };
 }
@@ -606,21 +607,56 @@ export function recordsForStart(rt: Runtime, maxBytes: number, now: number = Dat
 // The records that hold every one of these words, in every project. A word is matched as it is
 // written, without the case of its letters, in the text of a record, its reason, what was rejected,
 // its places and its source. Only records in use are found: no draft, no stale or removed record.
-export function searchRecords(rt: Runtime, words: string[], limit = 20, now: number = Date.now()): { records: MemoryRecord[]; more: number } {
-  const wanted = words.map((w) => w.trim().toLowerCase()).filter((w) => w !== '');
+// When no record holds all the words, the search gives the records that hold a part of them: the
+// answer has `partial` and names for each record the words that it holds (`matched`). A search with
+// two variants of a term, or with a phrase, then finds the record that holds one variant.
+// Such an answer also names the records out of use that hold all the words (`old`): a decision that
+// another one replaced, with the decision that took its place, and a closed case. They are no
+// records of the answer and no read: they say that the subject was in the memory before. A record
+// that the human removed is never named.
+// A hyphen, an underscore and a space, also a break of a line, are one divider of words: `master-shard`
+// finds `master shard`, and `cache write` finds `cache_write`. The fields of a record stay apart.
+const DIVIDERS = /[-_\s]+/g;
+const plain = (text: string): string => text.toLowerCase().replace(DIVIDERS, ' ').trim();
+const PART_LIMIT = 5; // records of a part: fewer than of a whole search, they are a guess
+const PART_WORD = 3; // a shorter word is in too many records to find a part by it
+const OLD_LIMIT = 5; // records out of use that an answer names
+export type Found = { records: MemoryRecord[]; more: number; partial?: true; matched?: Record<string, string[]>; old?: { record: MemoryRecord; by?: string }[] };
+export function searchRecords(rt: Runtime, words: string[], limit = 20, now: number = Date.now()): Found {
+  // `wanted` holds the words as the dividers leave them: a word of dividers only is no word.
+  const wanted = words.map(plain).filter((w) => w !== '');
   if (wanted.length === 0) return { records: [], more: 0 };
-  const found = listRecords(rt, now).filter((r) => {
-    // A draft in its veto window is not given: the human has not let it pass yet.
-    if (r.state !== 'active') return false;
-    const hay = [r.text, r.because ?? '', r.rejected ?? '', r.revisit ?? '', r.source ?? '', ...r.paths].join('\n').toLowerCase();
-    return wanted.every((w) => hay.includes(w));
-  }).sort(byWeight);
-  const records = found.slice(0, limit);
-  // The journal counts the records that the agent got: the share of used records rests on it.
-  noteRead(rt, 'find', records.map((r) => r.id));
-  // A search that found nothing is no read; it is a miss of the memory, with the count of the words.
-  if (records.length === 0) rt.journal.write({ kind: 'memory.search_missed', project: rt.project, data: { n: wanted.length } });
-  return { records, more: Math.max(0, found.length - limit) };
+  const hayOf = (r: MemoryRecord): string => [r.text, r.because ?? '', r.rejected ?? '', r.revisit ?? '', r.source ?? '', ...r.paths].map(plain).join('\n');
+  // A draft in its veto window is not given: the human has not let it pass yet.
+  const all = listRecords(rt, now);
+  const active = all.filter((r) => r.state === 'active');
+  const found = active.filter((r) => { const hay = hayOf(r); return wanted.every((w) => hay.includes(w)); }).sort(byWeight);
+  if (found.length > 0) {
+    const records = found.slice(0, limit);
+    // The journal counts the records that the agent got: the share of used records rests on it.
+    noteRead(rt, 'find', records.map((r) => r.id));
+    return { records, more: Math.max(0, found.length - limit) };
+  }
+  const past = all.filter((r) => (r.state === 'replaced' || r.state === 'closed') && r.type !== 'state').filter((r) => { const hay = hayOf(r); return wanted.every((w) => hay.includes(w)); })
+    .sort(byWeight).slice(0, OLD_LIMIT).map((record) => {
+      const by = all.find((r) => r.supersedes === record.id && r.state !== 'vetoed')?.id;
+      return by !== undefined ? { record, by } : { record };
+    });
+  const old = past.length > 0 ? { old: past } : {};
+  // A part of the words: a phrase is cut into its words, and one word alone has no part.
+  // The cut is at the spaces that the human or the agent wrote: a name with a hyphen or an underscore stays one word.
+  const parts = [...new Set(words.flatMap((w) => w.trim().split(/\s+/)).map(plain).filter((w) => w !== ''))];
+  const usable = parts.length > 1 ? parts.filter((w) => w.length >= PART_WORD) : [];
+  const held = active.map((r) => { const hay = hayOf(r); return { r, words: usable.filter((w) => hay.includes(w)) }; }).filter((x) => x.words.length > 0)
+    .sort((x, y) => y.words.length - x.words.length || byWeight(x.r, y.r));
+  if (held.length === 0) {
+    // A search that found nothing is no read; it is a miss of the memory, with the count of the words.
+    rt.journal.write({ kind: 'memory.search_missed', project: rt.project, data: { n: wanted.length } });
+    return { records: [], more: 0, ...old };
+  }
+  const given = held.slice(0, Math.min(limit, PART_LIMIT));
+  noteRead(rt, 'find', given.map((x) => x.r.id));
+  return { records: given.map((x) => x.r), more: held.length - given.length, partial: true, matched: Object.fromEntries(given.map((x) => [x.r.id, x.words])), ...old };
 }
 
 // ---- A case: what is not finished. It lives until it is closed; each step replaces the next step.

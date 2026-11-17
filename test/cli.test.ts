@@ -744,3 +744,28 @@ test('cli: a red check before the report protects the files of the check, and a 
   assert.equal(reins(b, ['check', id, '-'], 'x').json.error, 'not_allowed');
   assert.equal(reins(b, ['check', 't000000000000', '-'], 'x').json.error, 'unknown_task');
 });
+
+test('cli: a command that the state of a task does not take says the state and the command that it takes', () => {
+  const b = box();
+  const id = reins(b, ['open', 'draft-message']).json.task;
+  // The task takes a report: it has no publication to end.
+  const early = reins(b, ['finish', id]);
+  assert.deepEqual([early.code, early.json], [1, { ok: false, error: 'bad_event', state: 'executing', next: `the task takes a report: reins report ${id} <file>` }]);
+  const input = reins(b, ['input', id]).json.input;
+  // A task that names no write has no publication: its protocol does not send the agent to `finish`.
+  assert.deepEqual(input.writes, []);
+  assert.equal(input.protocol.some((line: string) => /finish/.test(line)), false);
+  assert.equal(input.protocol.some((line: string) => /publishing/.test(line)), false);
+  assert.ok(input.protocol.some((line: string) => line === 'Exit code 0: the check passed and the task is closed. Exit code 2: not ready; read `answer`, correct the report and submit it again.'));
+  assert.ok(input.protocol.some((line: string) => line === 'The task names no write to a system: it has no publication, and every write to a system asks the human.'));
+  // The report of this scenario waits for the word of the human: a second report is not taken, and the answer says who acts.
+  assert.equal(reins(b, ['report', id, '-'], 'a draft').json.state, 'waiting_human');
+  const waiting = reins(b, ['report', id, '-'], 'a draft');
+  assert.deepEqual([waiting.code, waiting.json], [1, { ok: false, error: 'bad_event', state: 'waiting_human', waiting: 'approval', next: `the task waits for the human: reins approve ${id} accepts the result, reins retry ${id} sends it back, reins stop ${id} ends the task` }]);
+  const late = reins(b, ['finish', id]);
+  assert.deepEqual([late.json.error, late.json.state, late.json.waiting], ['bad_event', 'waiting_human', 'approval']);
+  // A closed task takes nothing: the answer says what it is, with no next command.
+  assert.equal(reins(b, ['approve', id]).json.state, 'closed');
+  assert.deepEqual(reins(b, ['finish', id]).json, { ok: false, error: 'bad_event', state: 'closed', label: 'approved_by_human' });
+  assert.deepEqual(reins(b, ['report', id, '-'], 'a draft').json, { ok: false, error: 'bad_event', state: 'closed', label: 'approved_by_human' });
+});

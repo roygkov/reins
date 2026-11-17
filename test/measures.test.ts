@@ -206,3 +206,23 @@ test('measures: the targets of the packs name the days of a series that stood ab
   });
   assert.deepEqual(overTargets(points, {}), { over: [], unknown: [] });
 });
+
+test('measures: a scenario whose result the human accepts counts that as accepted, as a PASS of a check', () => {
+  const m = summarize([
+    // A check of a script or of a model: the PASS is the acceptance.
+    row('task.opened', {}, { task: 't000010', scenario: 'code-change' }),
+    row('check.answered', { result: 'PASS' }, { task: 't000010', scenario: 'code-change' }),
+    row('task.closed', { label: 'verified_result' }, { task: 't000010', scenario: 'code-change' }),
+    // done.kind "human": no check answers, the word of the human closes the task.
+    row('task.opened', {}, { task: 't000011', scenario: 'firecheck' }),
+    row('task.closed', { label: 'approved_by_human' }, { task: 't000011', scenario: 'firecheck' }),
+    // A task that the human stopped is not accepted.
+    row('task.opened', {}, { task: 't000012', scenario: 'firecheck' }),
+    row('task.closed', { label: 'not_verified', reason: 'stopped' }, { task: 't000012', scenario: 'firecheck' }),
+  ]);
+  assert.deepEqual(m.scenarios['firecheck'], { opened: 2, accepted: 1, returns: 0 });
+  // The PASS is counted once: the close of the same task adds nothing.
+  assert.deepEqual(m.scenarios['code-change'], { opened: 1, accepted: 1, returns: 0 });
+  // The counts of the checks are of checks only.
+  assert.deepEqual([m.checks.PASS, m.checks.FAIL], [1, 0]);
+});

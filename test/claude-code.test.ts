@@ -772,3 +772,20 @@ test('claude-code: a long session is told to write its state and to start a new 
   const plain = box();
   assert.equal(run(HOOK, plain, ['prompt'], hookEvent(plain, 'UserPromptSubmit')).stdout, '');
 });
+
+test('claude-code: the words of the question about a write that another human sees say what was checked in the session', async () => {
+  const { reason } = await import('../clients/claude-code/hooks/run.ts');
+  const base = { outcome: 'ask', rule: 'default.outward-write', layer: 'core', envelope: 'none' } as const;
+  const none = reason(base);
+  assert.match(none, /^reins: default\.outward-write: the human decides/);
+  assert.match(none, /the harness did not check its text/);
+  assert.match(none, /No check of the claims of a text passed in this session/);
+  const checked = reason({ ...base, checked: { task: 't0123456789ab', scenario: 'text-check' } });
+  assert.match(checked, /The task t0123456789ab of the scenario text-check checked the claims of a text in this session and passed/);
+  assert.match(checked, /cannot tell that this write carries the same text/);
+  assert.doesNotMatch(checked, /No check of the claims/);
+  // The question in the queue carries the same words.
+  assert.match(reason({ ...base, outcome: 'defer', queued: 'q0123456789' }), /No check of the claims of a text passed in this session/);
+  // Another rule has no such words.
+  assert.doesNotMatch(reason({ ...base, rule: 'default.write' }), /claims of a text/);
+});

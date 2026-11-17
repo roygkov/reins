@@ -748,3 +748,154 @@ test('before: a read tool with an environment in its row is written with that en
   assert.deepEqual([asked.outcome, asked.rule], ['ask', 'live-read']);
   assert.equal(beforeAction(b.rt, { ...call(b, 'tracker__get_note', {}), session: 's1' }, CLIENT).outcome, 'allow');
 });
+
+test('before: a command of the human asks where it runs, not where a text names it', () => {
+  const b = box();
+  const run = (command: string) => beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+  // The text names the command and does not run it: a search, a document, a message, an argument of another command.
+  for (const command of [
+    'grep -n "reins stop" docs/contracts.md',
+    'rg -n \'reins memory decide|reins craft accept\' docs | head',
+    'echo "the human runs reins stop t000000000000"',
+    'cat > /tmp/note.md <<EOF\nThe owner writes the decision with `reins memory decide`.\nreins stop t000000000000\nEOF',
+    'python3 - <<\'EOF\'\ns = open("/tmp/a.md").read()\nopen("/tmp/a.md", "w").write(s.replace("x", "run `reins tick run` by a timer"))\nEOF',
+    'git commit -qm "the summary names reins dispute and reins pause"',
+    'reins memory add pitfall \'reins memory wrong takes no decision\' task=t000000000000',
+    'printf "%s\\n" "reins queue approve q1"',
+  ]) assert.equal(run(command).outcome, 'allow', command);
+  // The command runs: at the start, after an operator, in a group, in a loop, behind a wrapper, with a path, with a setting before it.
+  for (const command of [
+    'cd /tmp && (time REINS_CONFIG=/tmp/c.json reins run change-review repo=/tmp/r) 2>&1 | cut -c1-200',
+    'for t in t000000000001 t000000000002; do reins stop $t; done',
+    'if true; then reins craft accept c0123456789; fi',
+    'echo t000000000000 | xargs reins stop',
+    'x=$(reins memory decide "one cache" because="two went out of step")',
+    '/usr/local/bin/reins queue approve q0123456789',
+    'node --experimental-strip-types /x/src/cli.ts tick run',
+    'env A=1 reins memory   veto m0123456789',
+    'echo "done: `reins pause 5`"',
+  ]) {
+    const r = run(command);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  // The client cannot see what runs: a name of the program or of the command in a variable, a shell that
+  // reads its commands, a program that runs its words as a command, code that starts a process.
+  for (const command of [
+    'R=reins; $R stop t000000000000',
+    'reins $verb t000000000000',
+    'reins memory $verb m0123456789',
+    'bash <<EOF\nreins stop t000000000000\nEOF',
+    'echo "reins stop t000000000000" | sh',
+    'bash -c "reins stop t000000000000"',
+    'eval "reins stop t000000000000"',
+    'find . -name x -exec reins stop t000000000000 \;',
+    'watch -n 5 reins tick run',
+    'python3 -c "import subprocess; subprocess.run(\'reins stop t000000000000\', shell=True)"',
+    'node -e "require(\'child_process\').execSync(\'reins memory end m0123456789\')"',
+  ]) {
+    const r = run(command);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  // A command of the agent stays one: the word after the program decides, not a word further in the line.
+  for (const command of ['reins memory find stop', 'reins input t000000000000; echo run', 'reins check t000000000000 - < /tmp/report.txt']) assert.equal(run(command).outcome, 'allow', command);
+});
+
+test('before: a manifest with `permissions.harness` lets the task change the code of the harness without a question, but not the code of the barrier', () => {
+  const b = box();
+  const h = path.join(b.root, 'harness');
+  const far = path.join(b.root, 'far');
+  for (const d of ['src/memory', 'src/client', 'src/gate', 'src/contracts', 'src/core', 'test', 'docs', 'clients/x/hooks', 'tools']) fs.mkdirSync(path.join(h, d), { recursive: true });
+  fs.mkdirSync(far);
+  b.rt.harnessDirs = [h];
+  const scenario = b.rt.merged.scenarios.find((s) => s.name === 'change-review');
+  assert.ok(scenario !== undefined);
+  // The scenario gets one more input: the directory of the work.
+  scenario.manifest.trigger.inputs = [...(scenario.manifest.trigger.inputs ?? []), { name: 'repo', type: 'string' }];
+  // Whether the answer is the question about the code of the harness.
+  const asks = (r: { outcome: string; rule?: string }): boolean => r.outcome === 'ask' && r.rule === 'protect.harness';
+  const edit = (session: string, rel: string): boolean => asks(beforeAction(b.rt, { ...call(b, 'write_file', { path: path.join(h, rel) }), session }, CLIENT));
+  const shell = (session: string, command: string, cwd = b.cwd): boolean => asks(beforeAction(b.rt, { ...call(b, 'shell', { command }), cwd, session }, CLIENT));
+  const OPEN = ['src/memory/store.ts', 'src/cli.ts', 'test/a.test.ts', 'docs/contracts.md'];
+  const CLOSED = ['src/client/before.ts', 'src/gate/gate.cjs', 'src/contracts/policy.ts', 'src/core/task.ts', 'clients/x/hooks/run.ts', 'package.json', 'tools/x.py', 'src', 'README.md'];
+
+  // The manifest has no key: a task with the directory of the harness in its input changes nothing.
+  const plain = openScenario(b.rt, 'change-review', { change_id: '7', repo: h }, { session: 's0' });
+  assert.ok(plain.ok);
+  for (const rel of [...OPEN, ...CLOSED]) assert.equal(edit('s0', rel), true, rel);
+  assert.ok('task' in applyEvent(b.rt, plain.task.id, { type: 'human', decision: 'stop' }, 'human'));
+
+  // The key names the input that holds the directory. The command that opens such a task for the
+  // harness is the one question of the human; for another directory it is none.
+  scenario.manifest.permissions.harness = 'repo';
+  for (const command of [`reins open change-review change_id=7 repo=${h}`, `cd /tmp && node /x/src/cli.ts open change-review "repo=${h}/" change_id=7`, 'reins open change-review change_id=7 repo=$R', 'reins open change-review change_id=7 repo=harness', `reins open $name repo=${far}/../harness`, `reins match ${h}`, 'reins match $R']) {
+    assert.equal(shell('s9', command), true, command);
+  }
+  for (const command of [`reins open change-review change_id=7 repo=${far}`, 'reins open change-review change_id=7', 'reins open other-name change_id=7', 'reins input t000000000000', `reins match ${far}`]) assert.equal(shell('s9', command), false, command);
+
+  // The task is open: the session that holds it changes the tests, the documents and the code, but not the code of the barrier.
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7', repo: h }, { session: 's1' });
+  assert.ok(opened.ok);
+  for (const rel of OPEN) assert.equal(edit('s1', rel), false, rel);
+  for (const rel of CLOSED) assert.equal(edit('s1', rel), true, rel);
+  // The same holds for a command: a place that the parse sees, and a place that only the text names.
+  for (const command of [`echo x > ${h}/src/memory/a.ts`, `rm -rf ${h}/docs/old`, `cd ${h} && npm test 2>&1 | tail -5`, `cd ${h} && python3 - <<'EOF'\nopen('src/memory/store.ts', 'w').write('x')\nEOF`]) assert.equal(shell('s1', command), false, command);
+  for (const command of [
+    `echo x > ${h}/src/client/a.ts`, `rm -rf ${h}/src`, `rm -rf ${h}`, `echo x > ${h}/package.json`,
+    `cd ${h} && python3 - <<'EOF'\nopen('src/client/before.ts', 'w').write('x')\nEOF`,
+    `cd ${h} && sed -i '' 's/a/b/' clients/x/hooks/run.ts`,
+    `cd ${h} && git add -A && git commit -qm x`,
+    `cd ${h} && python3 - <<'EOF'\nopen('.hidden/settings.json', 'w').write('{}')\nEOF`,
+    `cd ${h} && node -e "require('fs').writeFileSync('package.json', '{}')"`,
+  ]) assert.equal(shell('s1', command), true, command);
+  // The open of one more such task is a question again, also for the session that holds one.
+  assert.equal(shell('s1', `reins open change-review change_id=7 repo=${h}`), true);
+  // Another session holds no such task: every change asks.
+  for (const rel of OPEN) assert.equal(edit('s2', rel), true, rel);
+  // A task for another directory lets nothing of the harness pass.
+  const other = openScenario(b.rt, 'change-review', { change_id: '7', repo: far }, { session: 's3' });
+  assert.ok(other.ok);
+  for (const rel of OPEN) assert.equal(edit('s3', rel), true, rel);
+  // The state, the memory and the packs keep their own answers inside the task.
+  const state = beforeAction(b.rt, { ...call(b, 'write_file', { path: '$STATE/pause.json' }), session: 's1' }, CLIENT);
+  assert.deepEqual([state.outcome, state.rule], ['deny', 'protect.state']);
+  const pack = beforeAction(b.rt, { ...call(b, 'write_file', { path: '$PACKS/person/pack.json' }), session: 's1' }, CLIENT);
+  assert.deepEqual([pack.outcome, pack.rule], ['ask', 'protect.packs']);
+  // The task is closed: the question is back.
+  assert.ok('task' in applyEvent(b.rt, opened.task.id, { type: 'human', decision: 'stop' }, 'human'));
+  for (const rel of OPEN) assert.equal(edit('s1', rel), true, rel);
+});
+
+test('before: the question about a write that another human sees says whether a check of the claims of a text passed in the session', () => {
+  const b = box();
+  const send = (session: string) => beforeAction(b.rt, { ...call(b, 'chat__send', { channel: 'ops' }), session }, CLIENT);
+  // No task of a scenario in the session: nothing was checked.
+  const none = send('s1');
+  assert.deepEqual([none.outcome, none.rule, none.checked], ['ask', 'default.outward-write', undefined]);
+  // A task whose done check is the check of citations is open: it has not passed yet.
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  assert.equal(send('s1').checked, undefined);
+  // The check passed and the task is closed: the question names the task and its scenario.
+  const done = submitReport(b.rt, id, JSON.stringify({ items: [] }));
+  assert.ok('step' in done && done.step.task.state === 'publishing');
+  const finished = applyEvent(b.rt, id, { type: 'finish' }, 'agent');
+  assert.ok('task' in finished && finished.task.state === 'closed' && finished.task.label !== 'not_verified');
+  const after = send('s1');
+  assert.deepEqual([after.outcome, after.rule, after.checked], ['ask', 'default.outward-write', { task: id, scenario: 'change-review' }]);
+  // The question of another rule carries no such mark.
+  assert.equal(beforeAction(b.rt, { ...call(b, 'tracker__add_comment', { change: '9' }), session: 's1' }, CLIENT).checked, undefined);
+  // Another session checked nothing.
+  assert.equal(send('s2').checked, undefined);
+  // A task that the human stopped passed no check.
+  const stopped = openScenario(b.rt, 'change-review', { change_id: '8' }, { session: 's3' });
+  assert.ok(stopped.ok);
+  assert.ok('task' in applyEvent(b.rt, stopped.task.id, { type: 'human', decision: 'stop' }, 'human'));
+  assert.equal(send('s3').checked, undefined);
+  // A scenario whose done check is not the check of citations checks no claims of a text.
+  const scenario = b.rt.merged.scenarios.find((x) => x.name === 'change-review');
+  assert.ok(scenario !== undefined);
+  scenario.manifest.done = { kind: 'human', retries: 0 };
+  assert.equal(send('s1').checked, undefined);
+  for (const row of readJournal(b.rt.journal.file)) assert.deepEqual(validateRow(row), [], row.kind);
+});

@@ -54,3 +54,16 @@ test('manifest: the trigger says who opens the scenario: the agent or only the h
   const scheduled = { ...base, trigger: { kind: 'schedule', value: 'daily 09:00', open: 'human' } };
   assert.ok(validateManifest(scheduled).some((e) => e.code === 'not_allowed' && e.path === 'trigger.open'));
 });
+
+test('manifest: `permissions.harness` names an input of the scenario: the directory that the task may change in the code of the harness', () => {
+  const base = loadCases<{ name: string; manifest: Record<string, unknown> }>('manifest-bases').find((b) => b.name === 'review')?.manifest;
+  assert.ok(base !== undefined);
+  const inputs = ((base.trigger as { inputs?: { name: string }[] }).inputs ?? []).map((i) => i.name);
+  assert.ok(inputs.length > 0);
+  const withKey = (harness: unknown): unknown => ({ ...base, permissions: { ...(base.permissions as object), harness } });
+  assert.deepEqual(validateManifest(withKey(inputs[0])), []);
+  const codes = (harness: unknown): string[] => validateManifest(withKey(harness)).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(codes('no_such_input'), ['unknown_input permissions.harness']);
+  assert.deepEqual(codes(true), ['not_string permissions.harness']);
+  assert.deepEqual(codes(''), ['unknown_input permissions.harness']);
+});
