@@ -51,7 +51,9 @@ export type Metrics = {
   // part of `total`. A row of an older journal has no kinds: `by_kind` counts the rows that have them.
   // `rewrites`: the answers of a model that wrote a whole long context into the cache again
   // (`REWRITE_TOKENS` or more): a session that came back after its cache was gone.
-  tokens: { total: number; calls: number; rewrites: number; by_model: Record<string, { tokens: number; calls: number }>; by_kind: { input: number; output: number; cache_write: number; cache_read: number } };
+  // `by_executor`: the same tokens and answers by who spent them: the main executor (`main`) or
+  // its subordinates (`sub`). A row without the field is of the main executor.
+  tokens: { total: number; calls: number; rewrites: number; by_model: Record<string, { tokens: number; calls: number }>; by_executor: Record<string, { tokens: number; calls: number }>; by_kind: { input: number; output: number; cache_write: number; cache_read: number } };
   // The context of the sessions: the prompt of an answer of a model is the context of its session
   // at that moment. `sessions`: the sessions that have such an answer; `min`, `max`, `avg`: of the
   // largest context of each session. `harness_share`: the text that the hooks gave to these
@@ -119,7 +121,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
     asks: { shown: 0, per_task: null }, pitfalls: { written: 0, repeats: 0 },
     probes: { runs: 0, n: null, misses: null, noise: null },
-    tokens: { total: 0, calls: 0, rewrites: 0, by_model: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
+    tokens: { total: 0, calls: 0, rewrites: 0, by_model: {}, by_executor: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
     session_context: contextOf(sessionContexts(rows, since)),
   };
   type Asked = { asked: number; yes: number; no: number };
@@ -225,6 +227,9 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         const at = (m.tokens.by_model[typeof data.model === 'string' ? data.model : 'unknown'] ??= { tokens: 0, calls: 0 });
         at.tokens += tokens;
         at.calls += calls;
+        const who = (m.tokens.by_executor[row.executor === 'sub' ? 'sub' : 'main'] ??= { tokens: 0, calls: 0 });
+        who.tokens += tokens;
+        who.calls += calls;
         m.tokens.total += tokens;
         m.tokens.calls += calls;
         for (const kind of ['input', 'output', 'cache_write', 'cache_read'] as const) if (typeof data[kind] === 'number') m.tokens.by_kind[kind] += data[kind];
@@ -382,7 +387,7 @@ export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // the model, the tokens by kind (the form 4); the context of each session: its largest, smallest
 // and middle prompt, and the text of the hooks in it as tokens by an estimate (the form 10). The
 // name of a session is the start of its number. A name without rows is absent.
-export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'token_kinds', 'memory_given', 'memory_bytes', 'session_context', 'session_context_min', 'session_context_avg', 'session_harness_tokens', 'scenario_tokens', 'scenario_cost_tasks'] as const;
+export const BY = ['questions_asked', 'questions_yes', 'context_bytes', 'disputed', 'model_tokens', 'model_calls', 'executor_tokens', 'executor_calls', 'token_kinds', 'memory_given', 'memory_bytes', 'session_context', 'session_context_min', 'session_context_avg', 'session_harness_tokens', 'scenario_tokens', 'scenario_cost_tasks'] as const;
 export type By = Record<(typeof BY)[number], Record<string, number>>;
 export function measures(rows: JournalRow[]): Measures {
   return measured(rows).measures;
@@ -436,6 +441,8 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       disputed: pick(m.disputed, (n) => n),
       model_tokens: pick(m.tokens.by_model, (at) => at.tokens),
       model_calls: pick(m.tokens.by_model, (at) => at.calls),
+      executor_tokens: pick(m.tokens.by_executor, (at) => at.tokens),
+      executor_calls: pick(m.tokens.by_executor, (at) => at.calls),
       token_kinds: pick(m.tokens.by_kind, (n) => n),
       memory_given: pick(m.memory.given, (n) => n),
       memory_bytes: pick(m.memory.bytes, (n) => n),

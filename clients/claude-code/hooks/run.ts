@@ -242,10 +242,12 @@ function pre(): void {
 // What the model spent since the last look: the new lines of the transcript of the session. A
 // line of the model carries its usage and the name of the model; the tokens that were read from
 // the cache are not counted in the cost, they go to the row as a number of their own. Each model
-// of the part gets its own row.
+// of the part gets its own row. An answer of a subordinate is a row of the subordinate: the file
+// of a subordinate, or a line of the file of the session that the client marks as a side chain.
+// `of`: the file is the file of a subordinate; `role` is its role, when the event names it.
 const MAX_MARKS = 50;
 
-function spent(rt: Runtime, session: string | undefined): void {
+function spent(rt: Runtime, session: string | undefined, of?: { role?: string }): void {
   if (transcript === undefined) return;
   const file = transcript;
   // The part of the file that this look counts is taken under the lock of the session file: two
@@ -282,7 +284,7 @@ function spent(rt: Runtime, session: string | undefined): void {
   // The file of the session carries the number of the session as its name; a subordinate has a
   // file of its own. Only an answer of the session itself is the context of the session.
   const own = session !== undefined && path.basename(file, '.jsonl') === session;
-  const byModel = new Map<string, { tokens: number; calls: number; input: number; output: number; cache_write: number; cache_read: number; context: number }>();
+  const byModel = new Map<string, { sub: boolean; model: string; tokens: number; calls: number; input: number; output: number; cache_write: number; cache_read: number; context: number }>();
   let last: unknown;
   for (const line of buffer.subarray(0, end).toString('utf8').split('\n')) {
     let value: unknown;
@@ -302,7 +304,9 @@ function spent(rt: Runtime, session: string | undefined): void {
     if (message.id !== undefined && message.id === last) continue;
     last = message.id;
     const model = typeof message.model === 'string' ? message.model : '';
-    const at2 = byModel.get(model) ?? { tokens: 0, calls: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, context: 0 };
+    const sub = of !== undefined || (isObj(value) && value.isSidechain === true);
+    const key = `${sub ? 'sub' : 'main'}\n${model}`;
+    const at2 = byModel.get(key) ?? { sub, model, tokens: 0, calls: 0, input: 0, output: 0, cache_write: 0, cache_read: 0, context: 0 };
     const n = (key: string): number => (typeof usage[key] === 'number' && Number.isFinite(usage[key]) && (usage[key] as number) > 0 ? (usage[key] as number) : 0);
     at2.input += n('input_tokens');
     at2.output += n('output_tokens');
@@ -311,14 +315,14 @@ function spent(rt: Runtime, session: string | undefined): void {
     at2.tokens += n('input_tokens') + n('output_tokens') + n('cache_creation_input_tokens');
     at2.calls += 1;
     // The prompt of the answer: what the model read as new, wrote to the cache and read from it.
-    if (own && !(isObj(value) && value.isSidechain === true)) at2.context = Math.max(at2.context, n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens'));
-    byModel.set(model, at2);
+    if (!sub && own) at2.context = Math.max(at2.context, n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens'));
+    byModel.set(key, at2);
   }
   // A look that found nothing still tells the core: it answers with the task of the session.
   if (byModel.size === 0) noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens: 0 });
-  for (const [model, at2] of byModel) {
-    const { tokens, calls, context, ...parts } = at2;
-    noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens, calls, ...(model !== '' ? { model } : {}), parts, ...(context > 0 ? { context } : {}) });
+  for (const at2 of byModel.values()) {
+    const { sub, model, tokens, calls, context, ...parts } = at2;
+    noteCost(rt, { ...(session !== undefined ? { session } : {}), tokens, calls, ...(model !== '' ? { model } : {}), parts, ...(context > 0 ? { context } : {}), ...(sub ? { executor: 'sub' as const, ...(of?.role !== undefined ? { role: of.role } : {}) } : {}) });
   }
 }
 
@@ -396,7 +400,7 @@ function session(mode: string): void {
         if (file === undefined) continue;
         transcript = file;
         try {
-          spent(rt, e.session);
+          spent(rt, e.session, file !== own ? undefined : typeof value.agent_type === 'string' && value.agent_type !== '' ? { role: value.agent_type } : {});
         } catch {
           // the count of the cost never stops an event of the session
         }

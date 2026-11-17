@@ -9,7 +9,7 @@ import { BY, EIGHT, MEASURES } from '../src/journal/metrics.ts';
 const DAY1 = '2026-11-12T00:00:00.000Z';
 const DAY2 = '2026-11-13T00:00:00.000Z';
 const series: Series = {
-  metrics: 10, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
+  metrics: 11, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
   points: [
     { from: DAY1, to: DAY2, verified_share: { value: 0.04, n: 156, parts: { verified_form: 69, verified_result: 7 } }, cost_per_scenario: { value: null, n: 0 }, measures: { asks_per_task: 0.86, hook_ms_p50: null } },
     { from: DAY2, to: '2026-11-14T00:00:00.000Z', verified_share: { value: 0.23, n: 125 }, cost_per_scenario: { value: 38333, n: 37 }, measures: { asks_per_task: 0.95, hook_ms_p50: 125 }, by: { questions_asked: { 'protect.harness': 12, 'default.write': 3, 'bad"name': 1 }, not_named: { x: 1 } } },
@@ -54,7 +54,7 @@ test('grafana export: a name that is not a plain token gives no series', () => {
 
 test('grafana export: a number by session goes to the series by hours only', () => {
   const point = { from: DAY1, to: DAY2, by: { session_context: { '0ac7e3a3': 225_000 }, context_bytes: { session_start: 9000 } } };
-  const of = (step: string): string[] => toLines({ metrics: 10, step, project: 'all', names: [], by: ['session_context', 'context_bytes'], points: [point] }).map((l) => `${l.metric.__name__} ${l.metric.name}`);
+  const of = (step: string): string[] => toLines({ metrics: 11, step, project: 'all', names: [], by: ['session_context', 'context_bytes'], points: [point] }).map((l) => `${l.metric.__name__} ${l.metric.name}`);
   assert.deepEqual(of('hour'), ['reins_session_context_by 0ac7e3a3', 'reins_context_bytes_by session_start']);
   // A series by days lives for months: a label for every session would grow without end.
   assert.deepEqual(of('day'), ['reins_context_bytes_by session_start']);

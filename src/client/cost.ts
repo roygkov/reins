@@ -14,7 +14,10 @@ import { heldFreeTask, sessionTask } from './session.ts';
 export type CostParts = { input?: number; output?: number; cache_write?: number; cache_read?: number };
 // `context`: the largest prompt of the answers of the event, when they are answers of the session
 // itself and not of a subordinate: the context of the session at that moment.
-export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number; model?: string; parts?: CostParts; context?: number };
+// `executor`: who spent. Without the field it is the main executor. `role`: the role of a
+// subordinate, when the client knows it. What a subordinate spent counts in the task of the
+// session and in its limit; the row names the subordinate and carries the task as its parent.
+export type CostEvent = { session?: string; tokens: number; calls?: number; ms?: number; model?: string; parts?: CostParts; context?: number; executor?: 'main' | 'sub'; role?: string };
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/;
 const PARTS = ['input', 'output', 'cache_write', 'cache_read'] as const;
 export type CostReply = { task?: string; tokens?: number; over?: boolean };
@@ -40,14 +43,20 @@ export function noteCost(rt: Runtime, e: CostEvent): CostReply {
   const id = own ?? sessionTask(rt, e.session);
   const task = mutateTask(rt, id, (t) => ({ ...t, cost: { tokens: (t.cost?.tokens ?? 0) + tokens } }));
   if (task === null) return {};
-  const row: RowInput = { kind: 'executor.cost', project: rt.project, task: id, executor: 'main', data: { tokens, ms: e.ms ?? 0, calls: e.calls ?? 1 } };
+  const sub = e.executor === 'sub';
+  const row: RowInput = { kind: 'executor.cost', project: rt.project, task: id, executor: sub ? 'sub' : 'main', data: { tokens, ms: e.ms ?? 0, calls: e.calls ?? 1 } };
+  if (sub) {
+    row.parent = id;
+    if (e.role !== undefined && MODEL.test(e.role)) row.role = e.role;
+  }
   const data = row.data as Record<string, unknown>;
   if (e.model !== undefined && MODEL.test(e.model)) data.model = e.model;
   for (const part of PARTS) {
     const n = e.parts?.[part];
     if (typeof n === 'number' && Number.isFinite(n) && n >= 0) data[part] = Math.round(n);
   }
-  if (typeof e.context === 'number' && Number.isFinite(e.context) && e.context > 0) data.context = Math.round(e.context);
+  // The prompt of a subordinate is not the context of the session.
+  if (!sub && typeof e.context === 'number' && Number.isFinite(e.context) && e.context > 0) data.context = Math.round(e.context);
   if (e.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(e.session)) row.session = e.session;
   if (task.scenario !== undefined) {
     row.scenario = task.scenario;

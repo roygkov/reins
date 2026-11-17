@@ -512,6 +512,23 @@ test('budget: a subordinate has a file of its own, and a helper of the client wi
   const rows = readJournal(b.rt.journal.file);
   assert.deepEqual(rows.filter((r) => r.kind === 'executor.cost').map((r) => r.data?.tokens), [100, 40, 7], 'the main file, the file of the subordinate, the main file again: nothing twice');
   assert.equal(rows.filter((r) => r.kind === 'executor.report_received').length, 1, 'the helper without a type is no report');
+  // What the subordinate spent is a row of the subordinate: its role and the parent task.
+  const cost = rows.filter((r) => r.kind === 'executor.cost');
+  assert.deepEqual(cost.map((r) => [r.executor, r.role, r.parent]), [['main', undefined, undefined], ['sub', 'Explore', cost[1]?.task], ['main', undefined, undefined]]);
+  assert.equal(new Set(cost.map((r) => r.task)).size, 1, 'one task carries the cost of both');
+  for (const r of cost) assert.deepEqual(validateRow(r), []);
+});
+
+test('budget: the cost of a subordinate counts in the task and is a row of its own', () => {
+  const b = box(LIMITED);
+  const id = scenario(b);
+  assert.deepEqual(noteCost(b.rt, { session: 's1', tokens: 400 }), { task: id, tokens: 400, over: false });
+  assert.deepEqual(noteCost(b.rt, { session: 's1', tokens: 300, executor: 'sub', role: 'general-purpose' }), { task: id, tokens: 700, over: false });
+  // A role that is no token does not go to the row; a line of a subordinate never names the context of the session.
+  noteCost(b.rt, { session: 's1', tokens: 5, executor: 'sub', role: 'a role with spaces', context: 9000 });
+  const rows = readJournal(b.rt.journal.file).filter((r) => r.kind === 'executor.cost');
+  assert.deepEqual(rows.map((r) => [r.executor, r.role, r.parent, r.data?.tokens, r.data?.context]), [['main', undefined, undefined, 400, undefined], ['sub', 'general-purpose', id, 300, undefined], ['sub', undefined, id, 5, undefined]]);
+  for (const r of rows) assert.deepEqual(validateRow(r), []);
 });
 
 test('budget: the file of the session keeps its mark however many subordinates the session runs', () => {

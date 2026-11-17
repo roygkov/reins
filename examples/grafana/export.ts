@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   const read = (words: string[]): (Series & { ok?: boolean; projects?: string[] }) | null => {
     try {
       const value = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', ...words], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean; projects?: string[] };
-      return value.ok === true && value.metrics === 10 ? value : null;
+      return value.ok === true && value.metrics === 11 ? value : null;
     } catch {
       return null;
     }
