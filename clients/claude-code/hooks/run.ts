@@ -151,6 +151,7 @@ export function reason(r: Reply): string {
   else if (r.scope === 'task' && r.task !== undefined) text += `: one approval for the task ${r.task} covers "${r.grant ?? ''}"`;
   else if (r.envelope === 'limit') text += ': the limit of writes of the task is reached';
   else if (r.envelope === 'applied') text += `: named by the task ${r.task ?? ''}`;
+  else if (r.outcome === 'deny' && r.rule === 'protect.human-command') text += ': this command is a decision of the human; give the human the command, the human runs it in a terminal';
   else if (r.outcome === 'deny') text += ': the harness does not allow this action';
   else text += ': the human decides';
   return text + unchecked;

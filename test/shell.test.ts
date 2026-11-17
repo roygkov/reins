@@ -190,7 +190,7 @@ test('queue: the command line shows the queue, and its answers are commands of t
   assert.deepEqual(run(['queue', 'approve', id]), { ok: true, queued: id, state: 'approved' });
   assert.deepEqual(run(['queue', 'reject', 'q0000000000']).error, 'unknown_queued');
   const asked = shell(b, `reins queue approve ${id}`);
-  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'protect.human-command']);
+  assert.deepEqual([asked.outcome, asked.rule], ['deny', 'protect.human-command']);
 });
 
 test('queue: the Claude Code adapter refuses a deferred action and names its place in the queue', () => {

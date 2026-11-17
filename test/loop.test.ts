@@ -207,7 +207,7 @@ test('loop: the command line proposes a contract, and the approval is a command 
   fs.writeFileSync(file, JSON.stringify({ ...CONTRACT, model: { level: 'medium' } }));
   assert.deepEqual(run(['propose', file]), { ok: false, error: 'bad_contract', details: [{ code: 'missing', path: 'model.token_limit' }] });
   const asked = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: `reins approve ${proposed.task}` } }, { shell: { kind: 'shell', command: 'command' } });
-  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'protect.human-command']);
+  assert.deepEqual([asked.outcome, asked.rule], ['deny', 'protect.human-command']);
 });
 
 // ---- Several executors and the level of the model.

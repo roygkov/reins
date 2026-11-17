@@ -388,15 +388,33 @@ test('before: a scenario that only the human opens: the command that opens it as
   assert.equal(run('reins match CH-7').outcome, 'allow');
 });
 
-test('before: a command that stops a task is the word of the human: the client asks', () => {
+test('before: a command that stops a task is the word of the human: the client refuses it', () => {
   const b = box();
   for (const command of ['reins stop t000000000000', 'cd /tmp && reins  stop t000000000000', 'node /x/src/cli.ts stop t000000000000', "reins 'stop' t000000000000", 'reins "stop" t000000000000', '\\reins stop t000000000000', "'reins' stop t000000000000"]) {
     const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
-    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+    assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.human-command'], command);
   }
   for (const command of ['reins finish t000000000000', 'reins tasks', 'git stash; echo stop']) {
     assert.equal(beforeAction(b.rt, call(b, 'shell', { command }), CLIENT).outcome, 'allow', command);
   }
+});
+
+test('before: a decision of the human in a shell of the agent is refused, a start of a client asks', () => {
+  const b = box();
+  const run = (command: string) => beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+  // The command line refuses a decision that does not come from a terminal: a question would lead to that refusal.
+  for (const command of ['reins stop t000000000000', 'reins approve t000000000000', 'reins retry t000000000000', 'reins pause 5', 'reins queue approve q000000000000', 'reins craft accept c00000000000', 'reins memory decide text because=cause', 'echo $(reins stop t000000000000)', 'reins stop t000000000000; reins run change-review change_id=7', 'bash -c "reins approve t000000000000"']) {
+    const r = run(command);
+    assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.human-command'], command);
+  }
+  // A start of a client is no decision: the human says "yes" to the question, as before.
+  for (const command of ['reins run change-review change_id=7', 'reins tick run', 'reins fire change-opened change_id=7']) {
+    const r = run(command);
+    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+  }
+  // The word is in a variable: nobody can say that it is a decision, so the question stays.
+  const hidden = run('reins $WORD t000000000000');
+  assert.deepEqual([hidden.outcome, hidden.rule], ['ask', 'protect.human-command']);
 });
 
 test('before: a command that fires an event opens tasks of scenarios: it is the word of the human, with a client and without one', () => {
@@ -409,11 +427,11 @@ test('before: a command that fires an event opens tasks of scenarios: it is the 
   assert.equal(beforeAction(b.rt, call(b, 'shell', { command: 'reins tick' }), CLIENT).outcome, 'allow');
 });
 
-test('before: the stop command inside a command substitution or an ANSI quote asks too', () => {
+test('before: the stop command inside a command substitution or an ANSI quote is refused too', () => {
   const b = box();
   for (const command of ['echo `reins stop t000000000000`', 'echo $(reins stop t000000000000)', "reins $'stop' t000000000000"]) {
     const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
-    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+    assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.human-command'], command);
   }
 });
 
@@ -763,6 +781,9 @@ test('before: a command of the human asks where it runs, not where a text names 
     'reins memory add pitfall \'reins memory wrong takes no decision\' task=t000000000000',
     'printf "%s\\n" "reins queue approve q1"',
   ]) assert.equal(run(command).outcome, 'allow', command);
+  // A decision of the human that the parse shows is refused. A start of a client asks. So does a
+  // guess: a word in a variable, a text inside a heredoc, a pipe, a program that runs its words, code of an interpreter.
+  const want = (command: string): string => (/reins run |tick run|\$verb|<<EOF|\| sh|find \.|python3 -c|node -e/.test(command) ? 'ask' : 'deny');
   // The command runs: at the start, after an operator, in a group, in a loop, behind a wrapper, with a path, with a setting before it.
   for (const command of [
     'cd /tmp && (time REINS_CONFIG=/tmp/c.json reins run change-review repo=/tmp/r) 2>&1 | cut -c1-200',
@@ -776,7 +797,7 @@ test('before: a command of the human asks where it runs, not where a text names 
     'echo "done: `reins pause 5`"',
   ]) {
     const r = run(command);
-    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+    assert.deepEqual([r.outcome, r.rule], [want(command), 'protect.human-command'], command);
   }
   // The client cannot see what runs: a name of the program or of the command in a variable, a shell that
   // reads its commands, a program that runs its words as a command, code that starts a process.
@@ -794,7 +815,7 @@ test('before: a command of the human asks where it runs, not where a text names 
     'node -e "require(\'child_process\').execSync(\'reins memory end m0123456789\')"',
   ]) {
     const r = run(command);
-    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+    assert.deepEqual([r.outcome, r.rule], [want(command), 'protect.human-command'], command);
   }
   // A command of the agent stays one: the word after the program decides, not a word further in the line.
   for (const command of ['reins memory find stop', 'reins input t000000000000; echo run', 'reins check t000000000000 - < /tmp/report.txt']) assert.equal(run(command).outcome, 'allow', command);

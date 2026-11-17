@@ -247,7 +247,7 @@ test('pause: the command line pauses for minutes, and the hook asks the human fo
   assert.deepEqual(run(['pause', 'x']).error, 'usage');
   assert.deepEqual(run(['pause', '999']).error, 'usage');
   const r = beforeAction(b.rt, { ...e(b), tool: 'shell', input: { command: 'reins pause 60' } }, CLIENT);
-  assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command']);
+  assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.human-command']);
 });
 
 test('protect: the settings of the client are protected by the adapter', () => {
@@ -279,7 +279,7 @@ test('handoff: an attempt on the harness itself is counted as a question or a re
   const b = box();
   humanRequest(b.rt, e(b));
   beforeAction(b.rt, { ...e(b), tool: 'write_file', input: { path: path.join(b.rt.stateDir, 'pause.json') } }, CLIENT);
-  beforeAction(b.rt, { ...e(b), tool: 'shell', input: { command: 'reins pause 60' } }, CLIENT);
+  beforeAction(b.rt, { ...e(b), tool: 'shell', input: { command: 'reins tick run' } }, CLIENT);
   sessionEnd(b.rt, e(b));
   const text = sessionStart(b.rt, e(b, 's2')).context.join('\n');
   assert.match(text, /1 question to the human, 1 refusal\./);

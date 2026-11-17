@@ -408,7 +408,7 @@ test('budget: the human accepts a result or gives one more try from the command 
   assert.deepEqual([accepted.state, accepted.label], ['closed', 'approved_by_human']);
   assert.equal(run(['retry', opened.task]).error, 'bad_event');
   const asked = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: `reins retry ${opened.task}` } }, { shell: { kind: 'shell', command: 'command' } });
-  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'protect.human-command']);
+  assert.deepEqual([asked.outcome, asked.rule], ['deny', 'protect.human-command']);
 });
 
 // ---- Cases of the review.

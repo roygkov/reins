@@ -352,6 +352,9 @@ function commandGuard(rt: Runtime, command: string, cwd: string, refused: boolea
   // or of the config is refused, as for a file tool. The match of the text is the second barrier.
   const places = placesGuard(rt, command, cwd, open);
   if (places?.outcome === 'deny') return places;
+  // A decision of the human is refused: the command line takes it only from a terminal, outside
+  // the shell of a client. A question would end in that refusal after the "yes" of the human.
+  if (human !== null && humanCommand(command, true)) return { outcome: 'deny', rule: 'protect.human-command' };
   // A refusal of a place comes first: a question about the open of a scenario must not let a
   // write into the state pass with one "yes".
   // The open of a task that lets the code of the harness change is the one question about that code.

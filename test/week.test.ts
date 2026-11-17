@@ -275,9 +275,9 @@ test('week: a scenario that nobody called for the term of the packs is switched 
   assert.equal(reins('enable', 'no-such').error, 'unknown_scenario');
   assert.equal(scenarioOff(b.rt, 'change-review'), false);
   assert.equal(openScenario(b.rt, 'change-review', { change_id: '7' }).ok, true);
-  // The agent can type the command, so a client with the hook asks the human first.
+  // The agent can type the command: it is a decision of the human, so a client with the hook refuses it.
   const asked = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command: 'reins enable change-review' } }, { shell: { kind: 'shell', command: 'command' } });
-  assert.deepEqual([asked.outcome, asked.rule], ['ask', 'protect.human-command']);
+  assert.deepEqual([asked.outcome, asked.rule], ['deny', 'protect.human-command']);
   // Without a term nothing is switched off, and the term does not run: a term that comes later starts from its first look.
   const none = box();
   sweep(none.rt, real - 4000 * DAY);

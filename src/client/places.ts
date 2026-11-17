@@ -285,10 +285,13 @@ export function touchedPlaces(command: string, cwd: string, home: string, every 
 // a variable in the place of the program or of the command, a shell that reads its commands from
 // a heredoc or a pipe, a program that runs its words as a command (`find -exec`, `watch`, `ssh`),
 // and code of an interpreter that names the command and starts a process.
-export const HUMAN_WORDS = /^(stop|pause|enable|approve|dispute|memory (veto|decide|restore|import|share|wrong|step|end)|craft (accept|reject)|queue (approve|reject)|retry|run|tick run|fire)( |$)/;
+const HUMAN_WORDS = /^(stop|pause|enable|approve|dispute|memory (veto|decide|restore|import|share|wrong|step|end)|craft (accept|reject)|queue (approve|reject)|retry|run|tick run|fire)( |$)/;
 const HUMAN_HEADS = new Set(['memory', 'craft', 'queue', 'tick']);
 const HUMAN_TEXT = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire)(\s|$|[`)])/;
-const namesHuman = (text: string): boolean => HUMAN_TEXT.test(text.replace(/\$?['"\\]/g, ''));
+// A decision of the human: the list without the starts of a client (`run`, `tick run`, `fire`).
+// The command line refuses a decision outside a terminal, so the barrier refuses it too.
+export const DECISION_WORDS = /^(stop|pause|enable|approve|dispute|memory (veto|decide|restore|import|share|wrong|step|end)|craft (accept|reject)|queue (approve|reject)|retry)( |$)/;
+const namesIn = (pattern: RegExp, text: string): boolean => pattern.test(text.replace(/\$?['"\\]/g, ''));
 const READS_COMMANDS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish', 'source', '.', 'eval']);
 const RUNS_WORDS = new Set(['find', 'watch', 'parallel', 'ssh', 'script', 'entr', 'flock', 'tmux', 'screen', 'osascript', 'at', 'make', 'just', 'docker', 'kubectl', 'su', 'runuser', 'chroot', 'expect']);
 const INTERPRETER = /^(python[0-9.]*|node|nodejs|deno|bun|tsx|ruby|perl|php|lua|awk|gawk)$/;
@@ -296,7 +299,14 @@ const INTERPRETER = /^(python[0-9.]*|node|nodejs|deno|bun|tsx|ruby|perl|php|lua|
 const STARTS_PROCESS = /subprocess|popen|child_process|\bos\.system|\bsystem\s*\(|\bexec\w*\s*\(|\bspawn\w*\s*\(|\bfork\s*\(|Deno\.(run|Command)|Bun\.spawn/;
 // In these languages a text in backticks runs as a command.
 const BACKTICK_RUNS = /^(ruby|perl|php)$/;
-export function humanCommand(command: string): boolean {
+// `decision`: only a decision of the human counts, and a word in a variable is none: nobody can
+// say what it is, so the wider question of the first form answers for it.
+export function humanCommand(command: string, decision = false): boolean {
+  const WORDS = decision ? DECISION_WORDS : HUMAN_WORDS;
+  // A decision counts only where the parse shows the program with its word. A text that names
+  // the command inside a heredoc, a pipe or code of an interpreter is a guess: it stays a
+  // question of the first form, never a refusal.
+  const namesHuman = (text: string): boolean => !decision && namesIn(HUMAN_TEXT, text);
   let segments: (FullSegment & { heredoc?: string })[];
   try {
     segments = parse(command) as (FullSegment & { heredoc?: string })[];
@@ -314,13 +324,13 @@ export function humanCommand(command: string): boolean {
     const at = program === 'reins' ? 0 : cli > 0 ? cli : -1;
     if (at >= 0) {
       const words = argv.slice(at + 1);
-      if (HUMAN_WORDS.test(words.join(' '))) return true;
+      if (WORDS.test(words.join(' '))) return true;
       // The command itself is in a variable: nobody can say that it is not a word of the human.
-      if (isVar(at + 1) || (HUMAN_HEADS.has(words[0] ?? '') && isVar(at + 2))) return true;
+      if (!decision && (isVar(at + 1) || (HUMAN_HEADS.has(words[0] ?? '') && isVar(at + 2)))) return true;
       continue;
     }
     // The program is in a variable: the words after it decide.
-    if (isVar(0) && HUMAN_WORDS.test(argv.slice(1).join(' '))) return true;
+    if (isVar(0) && WORDS.test(argv.slice(1).join(' '))) return true;
     const heredoc = typeof seg.heredoc === 'string' ? seg.heredoc : '';
     // A shell without `-c` reads its commands from a heredoc, a file or a pipe: the text of the whole line decides.
     if (READS_COMMANDS.has(program) && namesHuman(command)) return true;

@@ -131,7 +131,7 @@ test('recall: the command line shares a record and marks one as wrong, and both 
   assert.deepEqual(run(['memory', 'wrong', 'm0000000000']).error, 'unknown_record');
   for (const command of [`reins memory share ${id}`, `reins memory wrong ${id}`]) {
     const r = beforeAction(b.rt, { cwd: b.cwd, tool: 'shell', input: { command } }, { shell: { kind: 'shell', command: 'command' } });
-    assert.deepEqual([r.outcome, r.rule], ['ask', 'protect.human-command'], command);
+    assert.deepEqual([r.outcome, r.rule], ['deny', 'protect.human-command'], command);
   }
 });
 
