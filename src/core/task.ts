@@ -38,6 +38,7 @@ export type Task = {
   level?: Level;
   label?: ResultLabel;
   work?: string; // the fingerprint of the work that the accepted result holds for
+  read?: string; // the fingerprint of the source at the end of the preparation: the work that the executor read
   root?: string; // the directory of that work: the source of the manifest, else the directory where the report was given
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more

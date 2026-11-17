@@ -613,9 +613,9 @@ test('session: a real check of a scenario lifts the return: the report goes thro
   // The task has writes: it is accepted and waits for its publication. Its work is the one of now.
   assert.deepEqual([submitted.step.task.state, submitted.step.task.label], ['publishing', 'verified_form']);
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
-  // The task moved to another session: its answer is no answer for this session.
+  // A task that another session opened and holds: its answer is no answer for this session.
   humanRequest(b.rt, { session: 's1', cwd: b.cwd });
-  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, session: 's9' }));
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, session: 's9', opener: 's9' }));
   fs.writeFileSync(path.join(b.cwd, 'b.txt'), 'another change\n');
   mutateTask(b.rt, opened.task.id, (t) => ({ ...t, work: workState(b.cwd) ?? '' }));
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 2 } });
@@ -843,4 +843,61 @@ test('session: the second stop of a returned request ends the return for that re
   const later = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'one more change of the work\n');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: later.task, label: 'not_verified', changed: true });
+});
+
+test('session: a check that this session opened and a client without a window finished judges its work', () => {
+  const b = repoBox(1);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  if (!opened.ok) return;
+  assert.equal(resumeTask(b.rt, opened.task.id, 'headless'), true);
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', text: 'x' }] }));
+  assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
+});
+
+test('session: a review judges the work that it read, not the work at the moment of its check', () => {
+  const b = reviewBox();
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  // The review reads the work when it opens. The author goes on while the reviewer reads.
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  if (!opened.ok) return;
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\na fix that the review did not read\n');
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', severity: 'should-fix', text: 'x' }] }));
+  assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
+  // The work of now is not the one that the review read: the fix has no review.
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: opened.task.id, scenario: 'change-review', open: 1 } });
+  // A clean review that read an older state does not end the record either.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  const again = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(again.ok);
+  if (!again.ok) return;
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\none more edit during the review\n');
+  const clean = submitReport(b.rt, again.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', severity: 'note', text: 'x' }] }));
+  assert.ok('step' in clean && clean.step.task.label === 'verified_form');
+  assert.deepEqual(readSession(b.rt, 's1')?.reviews?.map((r) => r.task), [opened.task.id]);
+});
+
+test('session: a check of another scenario does not end the review; the count of files does not apply; one return for a request', () => {
+  const b = reviewBox();
+  const rt: Runtime = { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, maxFreeUnchecked: 1 } } };
+  humanRequest(rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const id = review({ ...b, rt }, 'should-fix', 'a changed line of the work');
+  agentStopped(rt, { session: 's1', cwd: b.cwd });
+  const fix = humanRequest(rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
+  // The tests ran on the fix and passed: a task of another scenario, judged on the work of now.
+  const tests = openScenario(rt, 'draft-message', {}, { session: 's1' });
+  assert.ok(tests.ok);
+  if (!tests.ok) return;
+  mutateTask(rt, tests.task.id, (t) => ({ ...t, state: 'closed', label: 'verified_result', root: b.cwd, work: workState(b.cwd) ?? '' }));
+  // The review is still due; the rule of the count of files is silent: its check judged the work.
+  assert.deepEqual(agentStopped(rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
+  // The second stop of the request passes: the two rules share one return.
+  assert.deepEqual(agentStopped(rt, { session: 's1', cwd: b.cwd }), { task: fix.task, label: 'not_verified', changed: true });
 });

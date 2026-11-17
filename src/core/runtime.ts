@@ -296,13 +296,19 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
   // task still prepares. A stopped task stays stopped.
   const id = start.id;
   const prepared = (event: TaskEvent, outputs?: Record<string, unknown>): Task => {
+    // The state of the source that the collect step named, at this moment: the executor reads this
+    // work. The check answers later, and the work can change meanwhile.
+    const source = manifest.done.source === undefined ? undefined : outputs?.[manifest.done.source];
+    const read = typeof source === 'string' && source !== '' ? workState(source) : null;
     // A busy lock is tried again: the end of a preparation must not be lost.
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const done = withLock(rt, id, () => {
         const now = loadTask(rt, id);
         if (now === null || now.state !== 'preparing') return now;
         if (outputs !== undefined) writeAtomic(taskFile(rt, id, '.collect'), outputs);
-        return commit(rt, step(now, event)).task;
+        const next = step(now, event);
+        if (next.error === undefined && read !== null) next.task.read = read;
+        return commit(rt, next).task;
       });
       if (done !== 'busy') return done ?? start;
     }
@@ -941,10 +947,15 @@ function noteReview(rt: Runtime, task: Task, answer: Answer): void {
   if (top === null) return;
   const { id, scenario } = task;
   const open = answer.recheck;
+  // The review judged the work that it read at its preparation, not the work at the moment of the
+  // check: the author can change the work while the reviewer reads.
+  const work = task.read ?? task.work;
+  const moved = work !== task.work;
   withSession(rt, session, (now) => {
     const others = (now.reviews ?? []).filter((r) => r.scenario !== scenario || r.top !== top);
-    if (open === 0 && others.length === (now.reviews ?? []).length) return { next: null, result: undefined };
-    const reviews = open > 0 ? [...others, { task: id, scenario, open, top }].slice(-MAX_REVIEWS) : others;
+    // A report with nothing to fix about an older state of the work ends no record: nobody read the work of now.
+    if (open === 0 && (moved || others.length === (now.reviews ?? []).length)) return { next: null, result: undefined };
+    const reviews = open > 0 ? [...others, { task: id, scenario, open, top, work }].slice(-MAX_REVIEWS) : others;
     const { reviews: _reviews, ...rest } = now;
     return { next: reviews.length > 0 ? { ...rest, reviews } : rest, result: undefined };
   }, 'known');

@@ -305,13 +305,14 @@ type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: b
 const JUDGED: readonly string[] = ['verified_result', 'verified_form', 'approved_by_human'];
 
 // What the scenario tasks of the session say about the work of the session at a stop.
-// 'judged': the scenario task that the session holds carries a label of a judged result (it is
+// A task counts for the session that opened it, not for the one that holds it now: a client
+// without a window takes the task for its run. A task that another session opened is no answer here.
+// 'judged': the last scenario task of the session carries a label of a judged result (it is
 // closed, or accepted and waits for its publication) and its answer is about the state of the
 // work now. One repository has one fingerprint from any of its directories, so the fingerprint of
-// the task is compared as it is. A task that another session holds now is no answer here.
+// the task is compared as it is.
 // 'open': a task that this request opened (the list `opened` of the session) is not ended: a
-// check of this change is under way. The session that opened the task counts, not the one that
-// holds it: a client without a window takes the task for its run. A task that has no report yet
+// check of this change is under way. A task that has no report yet
 // has no root of its work: it counts. A task that the request only took again is not in the list.
 // undefined: neither. A task whose work lies in another repository says nothing about this work.
 function scenarioSays(rt: Runtime, session: string | undefined, seen: SessionFile, top: string, now: string): 'judged' | 'open' | undefined {
@@ -321,7 +322,7 @@ function scenarioSays(rt: Runtime, session: string | undefined, seen: SessionFil
     return task.root !== undefined && workTop(task.root) !== top ? null : task;
   };
   const ended = (task: Task): boolean => task.state === 'closed' || task.state === 'publishing' || task.state === 'skipped';
-  const last = here(seen.scenario, (task) => task.session);
+  const last = here(seen.scenario, (task) => task.opener ?? task.session);
   if (last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && last.work === now) return 'judged';
   return (seen.opened ?? []).some((id) => { const task = here(id, (t) => t.opener ?? t.session); return task !== null && !ended(task); }) ? 'open' : undefined;
 }
@@ -367,7 +368,7 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
     const due = (seen.reviews ?? []).find((r) => {
       if (r.top !== facts.top) return false;
       const reviewed = loadTask(rt, r.task);
-      return reviewed !== null && (reviewed.opener ?? reviewed.session) === e.session && reviewed.work !== undefined && reviewed.work !== now;
+      return reviewed !== null && (reviewed.opener ?? reviewed.session) === e.session && r.work !== now;
     });
     if (due !== undefined && scenarioSays(rt, e.session, seen, facts.top, now) !== 'open') {
       patchSession(rt, e.session, { returned: true, returnedFor: due.task });
