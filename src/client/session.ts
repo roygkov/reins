@@ -304,28 +304,37 @@ type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: b
 // The labels of a result that somebody judged: a check of the harness, or the human.
 const JUDGED: readonly string[] = ['verified_result', 'verified_form', 'approved_by_human'];
 
-// What the scenario tasks of the session say about the work of the session at a stop.
-// A task counts for its owner (`ownerOf`): the session that opened it, or the session that holds
-// it now when the opener ended. A task of another owner is no answer here.
-// 'judged': the last scenario task of the session carries a label of a judged result (it is
+// What the scenario tasks of the session say about the work of the session at a stop, read once
+// for a stop. A task counts for its owner (`ownerOf`); a task of another owner is no answer here.
+// `judged`: the last scenario task of the session carries a label of a judged result (it is
 // closed, or accepted and waits for its publication) and its answer is about the state of the
 // work now. One repository has one fingerprint from any of its directories, so the fingerprint of
 // the task is compared as it is.
-// 'open': a task that this request opened (the list `opened` of the session) is not ended: a
-// check of this change is under way. `only` names one scenario: then only its tasks count (a
-// review that is under way, not any other check). A task that has no report yet
-// has no root of its work: it counts. A task that the request only took again is not in the list.
-// undefined: neither. A task whose work lies in another repository says nothing about this work.
-function scenarioSays(rt: Runtime, session: string | undefined, seen: SessionFile, top: string, now: string, only?: string): 'judged' | 'open' | undefined {
-  const here = (id: string | undefined): Task | null => {
+// `open`: the scenarios of the tasks that this request opened (the list `opened` of the session)
+// and that are not ended: a check of this change is under way. A task that has no report yet has
+// no root of its work: it counts. A task that the request only took again is not in the list.
+// A task whose work lies in another repository says nothing about this work. The repository of a
+// root is asked of git last, and once for a root: the stop has a time limit.
+function scenarioFacts(rt: Runtime, session: string | undefined, seen: SessionFile, top: string, now: string): { judged: boolean; open: string[] } {
+  const tops = new Map<string, string | null>();
+  const here = (task: Task): boolean => {
+    if (task.root === undefined) return true;
+    if (!tops.has(task.root)) tops.set(task.root, workTop(task.root));
+    return tops.get(task.root) === top;
+  };
+  const mine = (id: string | undefined): Task | null => {
     const task = id === undefined ? null : loadTask(rt, id);
-    if (task === null || task.kind !== 'scenario' || ownerOf(rt, task) !== session) return null;
-    return task.root !== undefined && workTop(task.root) !== top ? null : task;
+    return task !== null && task.kind === 'scenario' && ownerOf(task) === session ? task : null;
   };
   const ended = (task: Task): boolean => task.state === 'closed' || task.state === 'publishing' || task.state === 'skipped';
-  const last = here(seen.scenario);
-  if (last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && last.work === now) return 'judged';
-  return (seen.opened ?? []).some((id) => { const task = here(id); return task !== null && !ended(task) && (only === undefined || task.scenario === only); }) ? 'open' : undefined;
+  const last = mine(seen.scenario);
+  const judged = last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && last.work === now && here(last);
+  const open: string[] = [];
+  for (const id of seen.opened ?? []) {
+    const task = mine(id);
+    if (task !== null && !ended(task) && here(task)) open.push(task.scenario ?? '');
+  }
+  return { judged, open };
 }
 
 export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
@@ -365,20 +374,18 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   // stop is returned once, until the same scenario judges the work as it is now (AA31 - AA34).
   // The session keeps one review for a scenario in a repository: the ones of this repository are
   // read. A review that this request opened and did not end yet holds the return back.
-  if (changed === true && now !== null && facts !== null && seen?.returned !== true && seen?.top === facts.top) {
-    const due = (seen.reviews ?? []).find((r) => {
-      if (r.top !== facts.top) return false;
-      const reviewed = loadTask(rt, r.task);
-      return reviewed !== null && ownerOf(rt, reviewed) === e.session && r.work !== now;
-    });
+  const says = changed === true && now !== null && facts !== null && seen?.returned !== true && seen?.top === facts.top ? scenarioFacts(rt, e.session, seen, facts.top, now) : null;
+  if (says !== null && facts !== null && seen !== null) {
+    // The record lies in the file of this session: the session is the owner of that review.
+    const due = (seen.reviews ?? []).find((r) => r.top === facts.top && r.work !== now);
     // Only the same scenario under way holds the return back: tests that run are no review.
-    if (due !== undefined && scenarioSays(rt, e.session, seen, facts.top, now, due.scenario) !== 'open') {
+    if (due !== undefined && !says.open.includes(due.scenario)) {
       patchSession(rt, e.session, { returned: true, returnedFor: due.task });
       return { ...unguarded, unreviewed: { task: due.task, scenario: due.scenario, open: due.open } };
     }
   }
   // The request and the stop must be in one repository: else the two fingerprints are of two works.
-  if (changed === true && now !== null && facts !== null && max !== undefined && seen?.returned !== true && seen?.top === facts.top && scenarioSays(rt, e.session, seen, facts.top, now) === undefined) {
+  if (says !== null && facts !== null && seen !== null && max !== undefined && !says.judged && says.open.length === 0) {
     const files = changedFiles(facts, seen.head, seen.at);
     if (files !== null && files >= max) {
       patchSession(rt, e.session, { returned: true });
@@ -416,9 +423,12 @@ export function sessionEnd(rt: Runtime, e: SessionEvent): { closed: string[] } {
 // current task of that session. This is how a suspended task comes back, and how a task moves to
 // another session. A task belongs to the harness, not to the session that opened it. A contract
 // that the human did not approve is not a task to take: only its approval starts it.
-export function resumeTask(rt: Runtime, id: string, session: string | undefined): boolean {
+// A session with a window becomes the owner of the task. A client without a window (`headless`:
+// a run of `reins run`) takes the task for its run only: the owner stays, and the answers about
+// the task go to the session of the author.
+export function resumeTask(rt: Runtime, id: string, session: string | undefined, headless: boolean = process.env.REINS_HEADLESS === '1'): boolean {
   if (session === undefined) return false;
-  const task = mutateTask(rt, id, (t) => (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract' ? null : { ...t, session }));
+  const task = mutateTask(rt, id, (t) => (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract' ? null : { ...t, session, ...(headless ? {} : { opener: session }) }));
   if (task === null) return false;
   patchSession(rt, session, { scenario: id });
   return true;

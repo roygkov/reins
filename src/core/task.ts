@@ -29,7 +29,7 @@ export type Task = {
   manifest?: Manifest; // the copy the task started with; a later change of the file does not reach it
   instructions?: string; // the text for the model, also a copy
   session?: string; // the session of the client that holds the task now
-  opener?: string; // the session that opened the task: it stays when another session takes the task
+  opener?: string; // the owner of the task: the session that opened it, or the session with a window that took it last
   raised?: boolean; // the level of the model was raised once
   inputs: Inputs;
   envelope: Grant[];
