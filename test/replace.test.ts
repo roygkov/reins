@@ -14,7 +14,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import { openScenario, type Runtime } from '../src/core/runtime.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
 import { agentStopped, humanRequest, sessionEnd, sessionStart } from '../src/client/session.ts';
-import { pause, pausedUntil } from '../src/core/pause.ts';
+import { MAX_PAUSE_MINUTES, pause, pausedUntil } from '../src/core/pause.ts';
 import { workState } from '../src/core/work.ts';
 import { loadCases } from './cases.ts';
 
@@ -198,6 +198,31 @@ test('pause: while the barriers are paused a question passes, a protected path d
   pause(b.rt, 0);
   assert.equal(ask().outcome, 'ask');
   assert.ok(readJournal(b.rt.journal.file).some((r) => r.kind === 'harness.barriers_off'));
+});
+
+test('pause: a pause file that the command did not write is no pause', () => {
+  const b = box();
+  workTool(b);
+  const ask = () => beforeAction(b.rt, { ...e(b), tool: 'post_note', input: {} }, CLIENT);
+  const file = path.join(b.rt.stateDir, 'pause.json');
+  fs.mkdirSync(b.rt.stateDir, { recursive: true });
+  const now = Date.now();
+  const put = (value: unknown): void => fs.writeFileSync(file, JSON.stringify(value));
+  // The command never pauses for longer than its limit: a time past the limit is not its work.
+  for (const until of ['2099-01-01T00:00:00Z', new Date(now + (MAX_PAUSE_MINUTES + 1) * 60_000).toISOString()]) {
+    put({ until });
+    assert.equal(pausedUntil(b.rt, now), null, until);
+    assert.equal(ask().outcome, 'ask', until);
+  }
+  // A time in another form, a number, a list: no pause.
+  for (const value of [{ until: '2026' }, { until: 'tomorrow' }, { until: now + 60_000 }, [new Date(now + 60_000).toISOString()], { until: new Date(now + 60_000).toISOString(), more: 1 }]) {
+    put(value);
+    assert.equal(pausedUntil(b.rt, now), null, JSON.stringify(value));
+  }
+  // The limit itself is a pause of the command.
+  const edge = new Date(now + MAX_PAUSE_MINUTES * 60_000).toISOString();
+  put({ until: edge });
+  assert.equal(pausedUntil(b.rt, now), edge);
 });
 
 test('pause: a write into production or into an unknown environment and a write that cannot be undone still ask', () => {
