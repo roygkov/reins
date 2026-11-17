@@ -40,6 +40,7 @@ export type Answer = {
   // wrote an error text has the cause `fail` and the end of that text. The text is for the agent
   // and the human: the journal has only the cause of a script without an answer.
   why?: { name: string; cause: string; exit?: number; stderr?: string; limit_s?: number }[];
+  recheck?: number; // a PASS: the items with a value that the manifest names as an item to fix (`done.recheck`)
 };
 
 export type CitationOptions = {
@@ -50,6 +51,7 @@ export type CitationOptions = {
   texts?: Readonly<Record<string, string>>; // the named texts of the source: a ticket, a log, the output of a command
   reject?: Readonly<Record<string, readonly string[]>>; // the values of a field that fail an item
   unquoted?: Readonly<Record<string, readonly string[]>>; // the values of a field that free an item from its quote
+  recheck?: Readonly<Record<string, readonly string[]>>; // the values of a field that mark an item which needs a fix
   expired?: () => boolean; // the deadline of the caller, asked before each file
 };
 
@@ -186,5 +188,9 @@ export function checkCitations(text: string, options: CitationOptions): Answer {
     const fault = faultOf(realRoot, item, options);
     if (fault !== null) faults.push({ n: i + 1, fault });
   }
-  return faults.length > 0 ? { result: 'FAIL', reason: 'faults', n, faults } : { result: 'PASS', n, faults };
+  if (faults.length > 0) return { result: 'FAIL', reason: 'faults', n, faults };
+  // The items that need a fix are counted in a report that holds: the count is a fact for the stop.
+  const lists = Object.entries(options.recheck ?? {});
+  const recheck = lists.length === 0 ? undefined : items.filter((item) => isObj(item) && lists.some(([key, values]) => typeof item[key] === 'string' && values.includes(item[key]))).length;
+  return { result: 'PASS', n, faults, ...(recheck !== undefined ? { recheck } : {}) };
 }

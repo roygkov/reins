@@ -53,7 +53,7 @@ export type Manifest = {
   permissions: { read: string[]; write?: WriteGrant[]; harness?: string };
   // `source` and `changed` belong to the citation check: the names of the collect results that hold
   // the directory of the source and the list of the changed files.
-  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; unbound?: boolean; proves?: 'form'; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]> };
+  done: { kind: DoneKind; check?: string; checks?: string[]; retries: number; unbound?: boolean; proves?: 'form'; source?: string; changed?: string; guards?: string[]; valid_minutes?: number; soak_minutes?: number; texts?: string[]; reject?: Record<string, string[]>; unquoted?: Record<string, string[]>; recheck?: Record<string, string[]> };
   output: { format: (typeof OUTPUT_FORMATS)[number]; sections?: string[]; fields?: Record<string, string[]>; max_items?: number; max_bytes?: number; to?: (typeof OUTPUT_RECEIVERS)[number] };
   memory?: { write: RecordType[]; class?: (typeof MEMORY_CLASSES)[number] };
 };
@@ -386,7 +386,7 @@ export function guardPattern(guard: string): RegExp {
 }
 
 function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>): void {
-  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'unbound', 'proves', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted'], ['kind', 'retries']);
+  const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'unbound', 'proves', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted', 'recheck'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
   const needsCheck = kind === 'command' || kind === 'artifact' || kind === 'external';
@@ -464,6 +464,18 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
         else if (decided.has(`${field} ${v}`)) r.add('duplicate', `${at}[${i}]`);
         else decided.add(`${field} ${v}`);
       });
+    }
+  }
+  // The values of a field that mark a finding which needs a fix. A report with such an item is
+  // accepted as any other; a change of the work after it needs the scenario again (AA31).
+  if (d.recheck !== undefined) {
+    if (kind !== null && kind !== 'citations') r.add('not_allowed', 'done.recheck');
+    else if (!isObj(d.recheck)) r.add('not_object', 'done.recheck');
+    else for (const [field, values] of Object.entries(d.recheck)) {
+      const at = `done.recheck.${field}`;
+      const allowed = itemFields[field];
+      if (!Array.isArray(allowed)) { r.add('unknown_field', at); continue; }
+      (list(r, values, at) ?? []).forEach((v, i) => { if (typeof v !== 'string' || !allowed.includes(v)) r.add('not_in_list', `${at}[${i}]`); });
     }
   }
   // The term of an answer: after it a green answer holds no more. The soak: an outer state changes

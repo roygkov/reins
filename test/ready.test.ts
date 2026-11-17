@@ -590,6 +590,11 @@ test('ready: the texts and the deciding values of a citation check are named in 
   // One value cannot both fail an item and free it.
   assert.deepEqual(errors({ ...ok, reject: { severity: ['note'] }, unquoted: { severity: ['note'] } }), ['duplicate done.unquoted.severity[0]']);
   assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, texts: ['discussion'], reject: {}, unquoted: {} }), ['not_allowed done.texts', 'not_allowed done.reject', 'not_allowed done.unquoted']);
+  // The values of a finding that needs a fix: a change of the work after such a report needs the scenario again.
+  assert.deepEqual(errors({ ...ok, recheck: { severity: ['blocking'] } }), []);
+  assert.deepEqual(errors({ ...ok, recheck: { other: ['x'], severity: ['fatal'] } }), ['unknown_field done.recheck.other', 'not_in_list done.recheck.severity[0]']);
+  assert.deepEqual(errors({ ...ok, recheck: ['blocking'] }), ['not_object done.recheck']);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 1, recheck: {} }), ['not_allowed done.recheck']);
 });
 
 // ---- A step that ran past its time is a fact of the journal.

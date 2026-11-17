@@ -730,6 +730,7 @@ function citations(rt: Runtime, task: Task, text: string): Answer {
     ...(texts !== undefined ? { texts } : {}),
     ...(done.reject !== undefined ? { reject: done.reject } : {}),
     ...(done.unquoted !== undefined ? { unquoted: done.unquoted } : {}),
+    ...(done.recheck !== undefined ? { recheck: done.recheck } : {}),
     ...(changed !== undefined ? { changed } : {}),
     ...(task.manifest?.output.max_items !== undefined ? { maxItems: task.manifest.output.max_items } : {}),
     ...(task.manifest?.output.fields !== undefined ? { fields: task.manifest.output.fields } : {}),
@@ -914,9 +915,27 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
       if (task.state !== 'checking' || task.returns !== before.returns || task.soak !== before.soak || readReport(rt, id) !== text) return { error: 'not_checking' };
       return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null && answer.reason !== 'work_changed' ? { work } : {}), ...(onlyRejected ? { rejected: true } : {}) })), answer };
     });
-    if (r !== 'busy') return r;
+    if (r !== 'busy') {
+      if (!('error' in r)) noteReview(rt, r.step.task, answer);
+      return r;
+    }
   }
   return { error: 'busy' };
+}
+
+// A review that the check accepted and that names findings to fix (`done.recheck`): the session
+// of the task keeps it. A change of the work after it needs the scenario again (AA31 - AA34). An
+// accepted report of the same scenario without such a finding ends that: the review ran again.
+function noteReview(rt: Runtime, task: Task, answer: Answer): void {
+  if (answer.result !== 'PASS' || answer.recheck === undefined || task.session === undefined || task.scenario === undefined) return;
+  const { id, scenario } = task;
+  const open = answer.recheck;
+  withSession(rt, task.session, (now) => {
+    if (open > 0) return { next: { ...now, review: { task: id, scenario, open } }, result: undefined };
+    if (now.review?.scenario !== scenario) return { next: null, result: undefined };
+    const { review: _review, ...rest } = now;
+    return { next: rest, result: undefined };
+  });
 }
 
 // The agent submits the text of its report. The core keeps the text and, for a check that the core

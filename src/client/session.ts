@@ -299,7 +299,7 @@ function unfinishedTask(rt: Runtime, e: SessionEvent): { task: string; scenario:
 // `unchecked`: the request changed that many files of the work, the packs name a count from which
 // a check is due (`limits.free_unchecked`), and no check of a scenario of this session judged the
 // work as it is now. The client does not end the turn and says it to the agent, once for a request.
-type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string }; judged?: string[]; unchecked?: { files: number } };
+type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string }; judged?: string[]; unchecked?: { files: number }; unreviewed?: { task: string; scenario: string; open: number } };
 
 // The labels of a result that somebody judged: a check of the harness, or the human.
 const JUDGED: readonly string[] = ['verified_result', 'verified_form', 'approved_by_human'];
@@ -349,6 +349,17 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   // A free task that changed the work and that no check judged is returned once for a request
   // (contracts AA26 - AA30). The stop is then not the end of the request: its free task stays open.
   const max = rt.merged.context.maxFreeUnchecked;
+  // A review of this session left findings to fix and the request changed the work after it: the
+  // stop is returned once, until the same scenario judges the work as it is now (AA31 - AA34).
+  // A review that this request opened and did not end yet holds the return back.
+  if (changed === true && now !== null && facts !== null && seen?.returned !== true && seen?.top === facts.top && seen.review !== undefined) {
+    const reviewed = loadTask(rt, seen.review.task);
+    const here = reviewed !== null && reviewed.session === e.session && (reviewed.root === undefined || workTop(reviewed.root) === facts.top);
+    if (here && reviewed.work !== undefined && reviewed.work !== now && scenarioSays(rt, e.session, seen, facts.top, now) !== 'open') {
+      patchSession(rt, e.session, { returned: true });
+      return { ...unguarded, unreviewed: seen.review };
+    }
+  }
   // The request and the stop must be in one repository: else the two fingerprints are of two works.
   if (changed === true && now !== null && facts !== null && max !== undefined && seen?.returned !== true && seen?.top === facts.top && scenarioSays(rt, e.session, seen, facts.top, now) === undefined) {
     const files = changedFiles(facts, seen.head, seen.at);
