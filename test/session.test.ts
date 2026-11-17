@@ -14,7 +14,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import { applyEvent, loadTask, mutateTask, openScenario, openTasks, submitReport, type Runtime } from '../src/core/runtime.ts';
 import { workNow, workState } from '../src/core/work.ts';
 import { afterAction, beforeAction } from '../src/client/before.ts';
-import { agentStopped, humanRequest, resumeTask, sessionEnd, sessionStart } from '../src/client/session.ts';
+import { agentStopped, humanRequest, resumeTask, sessionEnd, sessionStart, takesOwnership } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
 import { mergeView } from '../src/core/merged.ts';
 import { resolveQueued } from '../src/core/queue.ts';
@@ -644,14 +644,14 @@ test('session: "this request opened the task" is a fact of the request, not the 
   // The next request takes an older open task again: the session points at it, but the request did not open it.
   humanRequest(b.rt, { session: 's1', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
-  assert.equal(resumeTask(b.rt, x.task.id, 's1'), true);
+  assert.equal(resumeTask(b.rt, x.task.id, 's1', true), true);
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
   // A request opens a task and then takes an older one: the task it opened still counts.
   const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed again\n');
   const z = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
   assert.ok(z.ok);
-  assert.equal(resumeTask(b.rt, y.task.id, 's1'), true);
+  assert.equal(resumeTask(b.rt, y.task.id, 's1', true), true);
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
 });
 
@@ -753,7 +753,7 @@ test('session: a review under way in the request of the fix holds the return bac
   const run = openScenario(c.rt, 'change-review', { change_id: '7' }, { session: 's1' });
   assert.ok(run.ok);
   if (!run.ok) return;
-  assert.equal(resumeTask(c.rt, run.task.id, 'headless', true), true);
+  assert.equal(resumeTask(c.rt, run.task.id, 'headless', false), true);
   assert.deepEqual(agentStopped(c.rt, { session: 's1', cwd: c.cwd }), { task: fix.task, label: 'not_verified', changed: true });
 });
 
@@ -808,7 +808,7 @@ test('session: a review belongs to the session that opened it, also when another
     const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
     assert.ok(opened.ok);
     if (!opened.ok) return '';
-    assert.equal(resumeTask(b.rt, opened.task.id, 'headless', true), true);
+    assert.equal(resumeTask(b.rt, opened.task.id, 'headless', false), true);
     const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: line, severity, text: 'x' }] }));
     assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
     return opened.task.id;
@@ -854,7 +854,7 @@ test('session: a check that this session opened and a client without a window fi
   const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
   assert.ok(opened.ok);
   if (!opened.ok) return;
-  assert.equal(resumeTask(b.rt, opened.task.id, 'headless', true), true);
+  assert.equal(resumeTask(b.rt, opened.task.id, 'headless', false), true);
   const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', text: 'x' }] }));
   assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
@@ -927,7 +927,7 @@ test('session: a task of a session that ended belongs to the session that took i
   sessionEnd(b.rt, { session: 'old', cwd: b.cwd });
   const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
-  assert.equal(resumeTask(b.rt, opened.task.id, 's1'), true);
+  assert.equal(resumeTask(b.rt, opened.task.id, 's1', true), true);
   const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', text: 'x' }] }));
   assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
   // The check that this session finished judges its work.
@@ -944,7 +944,7 @@ test('session: a session with a window that takes a task owns it, also when the 
   if (!opened.ok) return;
   const { task } = humanRequest(rt, { session: 'B', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
-  assert.equal(resumeTask(rt, opened.task.id, 'B'), true);
+  assert.equal(resumeTask(rt, opened.task.id, 'B', true), true);
   mutateTask(rt, opened.task.id, (t) => ({ ...t, read: workState(b.cwd) ?? '' }));
   const submitted = submitReport(rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', severity: 'should-fix', text: 'x' }] }));
   assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
@@ -952,4 +952,28 @@ test('session: a session with a window that takes a task owns it, also when the 
   assert.deepEqual(agentStopped(rt, { session: 'B', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
   assert.deepEqual(readSession(rt, 'B')?.reviews?.map((r) => r.task), [opened.task.id]);
   assert.equal(readSession(rt, 'A')?.reviews, undefined);
+});
+
+test('session: a take that is not the one of a window itself leaves the owner of the task', () => {
+  const b = reviewBox();
+  humanRequest(b.rt, { session: 'A', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 'A' });
+  assert.ok(opened.ok);
+  if (!opened.ok) return;
+  // The human reads the input in a terminal: the harness finds the session B through the directory.
+  humanRequest(b.rt, { session: 'B', cwd: b.cwd });
+  assert.equal(resumeTask(b.rt, opened.task.id, 'B', false), true);
+  assert.deepEqual([loadTask(b.rt, opened.task.id)?.session, loadTask(b.rt, opened.task.id)?.opener], ['B', 'A']);
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, read: workState(b.cwd) ?? '' }));
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', severity: 'should-fix', text: 'x' }] }));
+  assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
+  // The review with its finding is the one of the author.
+  assert.deepEqual(readSession(b.rt, 'A')?.reviews?.map((r) => r.task), [opened.task.id]);
+  assert.equal(readSession(b.rt, 'B')?.reviews, undefined);
+  // The rule of the take: only the session that the client itself names, and not in a run without a window.
+  assert.equal(takesOwnership('A', 'A', {}), true);
+  assert.equal(takesOwnership(undefined, 'A', {}), false, 'a session found through the directory');
+  assert.equal(takesOwnership('A', 'A', { REINS_HEADLESS: '1' }), false, 'a client without a window');
+  assert.equal(takesOwnership('A', 'B', {}), false);
 });

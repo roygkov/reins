@@ -3,6 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -827,4 +828,32 @@ test('cli: the channel of the human is a terminal on the standard input with no 
   // The words that are a decision: the list of the barrier without the starts of a client.
   for (const words of ['stop t1', 'pause 5', 'enable x', 'approve t1', 'dispute t1', 'retry t1', 'memory decide x', 'memory wrong m1', 'memory step m1 x', 'craft reject c1', 'queue approve q1']) assert.equal(humanDecision(words.split(' ')), true, words);
   for (const words of ['run x', 'tick run', 'fire x', 'tasks', 'report t1 -', 'memory find x', 'memory next m1 x', 'queue', 'craft', 'tick']) assert.equal(humanDecision(words.split(' ')), false, words);
+});
+
+test('cli: reading the input moves the owner of a task only for the session that the client itself names', () => {
+  const b = box();
+  const run = (args: string[], more: Record<string, string>): Out => {
+    const p = spawnSync(process.execPath, [CLI, ...args], { env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config, ...more }, input: '', encoding: 'utf8', cwd: b.tree });
+    let json: unknown = null;
+    try { json = JSON.parse(p.stdout); } catch { json = null; }
+    return { code: p.status, json, stdout: p.stdout };
+  };
+  const owner = (id: string): unknown => (JSON.parse(fs.readFileSync(path.join(b.state, 'tasks', `${id}.json`), 'utf8')) as { opener?: string }).opener;
+  // The harness knows two sessions: a file of each lies in its state.
+  fs.mkdirSync(path.join(b.state, 'sessions'), { recursive: true });
+  for (const name of ['author', 'other']) fs.writeFileSync(path.join(b.state, 'sessions', `${name}.json`), JSON.stringify({ since: new Date().toISOString() }));
+  const id = run(['open', 'change-review', 'change_id=7'], { CLAUDE_CODE_SESSION_ID: 'author' }).json.task as string;
+  assert.equal(owner(id), 'author');
+  // A client without a window takes the task for its run: the owner stays.
+  assert.equal(run(['input', id], { CLAUDE_CODE_SESSION_ID: 'other', REINS_HEADLESS: '1' }).code, 0);
+  assert.equal(owner(id), 'author');
+  // A command with no session of its own (the terminal of the human): the harness finds the last
+  // session of the directory, and that is the other one. The owner stays.
+  fs.mkdirSync(path.join(b.state, 'dirs'), { recursive: true });
+  fs.writeFileSync(path.join(b.state, 'dirs', `${createHash('sha256').update(fs.realpathSync(b.tree)).digest('hex').slice(0, 24)}.json`), JSON.stringify({ session: 'other' }));
+  assert.equal(run(['input', id], {}).code, 0);
+  assert.deepEqual([owner(id), (JSON.parse(fs.readFileSync(path.join(b.state, 'tasks', `${id}.json`), 'utf8')) as { session?: string }).session], ['author', 'other']);
+  // The window of another session takes the task: it is the owner now.
+  assert.equal(run(['input', id], { CLAUDE_CODE_SESSION_ID: 'other' }).code, 0);
+  assert.equal(owner(id), 'other');
 });

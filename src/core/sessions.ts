@@ -146,11 +146,17 @@ export function sessionOfDirectory(rt: Runtime, cwd: string): string | undefined
 // knows the session: two sessions in one directory then never take the task of each other.
 // Without such a number the directory answers.
 export function sessionOfCommand(rt: Runtime, cwd: string, names: readonly string[], env: Record<string, string | undefined> = process.env): string | undefined {
+  return sessionNamed(rt, names, env) ?? sessionOfDirectory(rt, cwd);
+}
+
+// The session that the client of the command names itself, when the harness knows it. A session
+// that only the directory gives is not this one: it is a guess about who runs the command.
+export function sessionNamed(rt: Runtime, names: readonly string[], env: Record<string, string | undefined> = process.env): string | undefined {
   for (const name of names) {
     const value = env[name];
     if (typeof value === 'string' && SESSION.test(value) && readSession(rt, value) !== null) return value;
   }
-  return sessionOfDirectory(rt, cwd);
+  return undefined;
 }
 
 export function forgetDirectory(rt: Runtime, cwd: string, session: string | undefined): void {

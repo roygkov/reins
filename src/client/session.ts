@@ -374,18 +374,22 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   // stop is returned once, until the same scenario judges the work as it is now (AA31 - AA34).
   // The session keeps one review for a scenario in a repository: the ones of this repository are
   // read. A review that this request opened and did not end yet holds the return back.
-  const says = changed === true && now !== null && facts !== null && seen?.returned !== true && seen?.top === facts.top ? scenarioFacts(rt, e.session, seen, facts.top, now) : null;
-  if (says !== null && facts !== null && seen !== null) {
+  // The two rules of a return act on a request that changed the work of its own repository and was
+  // not returned yet. The answer about the scenario tasks is read once, and only when a rule needs it.
+  const acts = changed === true && now !== null && facts !== null && seen !== null && seen.returned !== true && seen.top === facts.top;
+  let read: { judged: boolean; open: string[] } | undefined;
+  const says = (): { judged: boolean; open: string[] } => (read ??= scenarioFacts(rt, e.session, seen ?? {}, facts?.top ?? '', now ?? ''));
+  if (acts && facts !== null && seen !== null) {
     // The record lies in the file of this session: the session is the owner of that review.
     const due = (seen.reviews ?? []).find((r) => r.top === facts.top && r.work !== now);
     // Only the same scenario under way holds the return back: tests that run are no review.
-    if (due !== undefined && !says.open.includes(due.scenario)) {
+    if (due !== undefined && !says().open.includes(due.scenario)) {
       patchSession(rt, e.session, { returned: true, returnedFor: due.task });
       return { ...unguarded, unreviewed: { task: due.task, scenario: due.scenario, open: due.open } };
     }
   }
   // The request and the stop must be in one repository: else the two fingerprints are of two works.
-  if (says !== null && facts !== null && seen !== null && max !== undefined && !says.judged && says.open.length === 0) {
+  if (acts && facts !== null && seen !== null && max !== undefined && !says().judged && says().open.length === 0) {
     const files = changedFiles(facts, seen.head, seen.at);
     if (files !== null && files >= max) {
       patchSession(rt, e.session, { returned: true });
@@ -419,16 +423,23 @@ export function sessionEnd(rt: Runtime, e: SessionEvent): { closed: string[] } {
   return { closed };
 }
 
+// A take moves the owner of a task only when the window itself takes it: the client names the
+// session (`named`), that session is the one of the take, and the client has a window. A session
+// that the directory gave (the terminal of the human, another window of the same directory) and a
+// client without a window (`reins run`) take the task as its holder only.
+export function takesOwnership(named: string | undefined, session: string | undefined, env: Record<string, string | undefined> = process.env): boolean {
+  return named !== undefined && named === session && env.REINS_HEADLESS !== '1';
+}
+
 // A session takes a task: the task of a scenario or of a contract continues there, and it is the
 // current task of that session. This is how a suspended task comes back, and how a task moves to
 // another session. A task belongs to the harness, not to the session that opened it. A contract
 // that the human did not approve is not a task to take: only its approval starts it.
-// A session with a window becomes the owner of the task. A client without a window (`headless`:
-// a run of `reins run`) takes the task for its run only: the owner stays, and the answers about
-// the task go to the session of the author.
-export function resumeTask(rt: Runtime, id: string, session: string | undefined, headless: boolean = process.env.REINS_HEADLESS === '1'): boolean {
+// `owns`: the take moves the owner of the task to this session (`takesOwnership`). Else the
+// session only holds the task: the owner stays, and the answers about the task go to it.
+export function resumeTask(rt: Runtime, id: string, session: string | undefined, owns: boolean): boolean {
   if (session === undefined) return false;
-  const task = mutateTask(rt, id, (t) => (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract' ? null : { ...t, session, ...(headless ? {} : { opener: session }) }));
+  const task = mutateTask(rt, id, (t) => (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract' ? null : { ...t, session, ...(owns ? { opener: session } : {}) }));
   if (task === null) return false;
   patchSession(rt, session, { scenario: id });
   return true;

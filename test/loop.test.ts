@@ -86,7 +86,7 @@ test('loop: a new scenario in a session suspends the one before it, a resume bri
   assert.equal(beforeAction(b.rt, comment(b, 's1', '7'), CLIENT).task, undefined, 'the first task is not the current one');
   assert.equal(beforeAction(b.rt, comment(b, 's1', '8'), CLIENT).task, second);
   assert.equal(loadTask(b.rt, first)?.state, 'executing', 'a suspended task stays open');
-  assert.equal(resumeTask(b.rt, first, 's1'), true);
+  assert.equal(resumeTask(b.rt, first, 's1', true), true);
   assert.equal(beforeAction(b.rt, comment(b, 's1', '7'), CLIENT).task, first);
   assert.equal(beforeAction(b.rt, comment(b, 's1', '8'), CLIENT).task, undefined);
 });
@@ -96,11 +96,11 @@ test('loop: a task continues in another session after a resume there', () => {
   const id = open(b, 's1');
   sessionEnd(b.rt, { session: 's1', cwd: b.cwd });
   assert.equal(loadTask(b.rt, id)?.state, 'executing', 'the end of a session does not close a scenario task');
-  assert.equal(resumeTask(b.rt, id, 's2'), true);
+  assert.equal(resumeTask(b.rt, id, 's2', true), true);
   assert.equal(loadTask(b.rt, id)?.session, 's2');
   assert.equal(beforeAction(b.rt, comment(b, 's2'), CLIENT).task, id);
   assert.equal(beforeAction(b.rt, comment(b, 's1'), CLIENT).task, undefined);
-  assert.equal(resumeTask(b.rt, 'tffffffffffff', 's2'), false);
+  assert.equal(resumeTask(b.rt, 'tffffffffffff', 's2', true), false);
 });
 
 test('loop: the command line binds a task to the session that last spoke in that directory', () => {
@@ -357,7 +357,7 @@ test('loop: a contract that waits for the human is not taken by reading its inpu
   const id = open(b, 's1');
   const proposed = proposeContract(b.rt, CONTRACT, { session: 's1' });
   assert.ok(proposed.ok);
-  assert.equal(resumeTask(b.rt, proposed.task.id, 's1'), false);
+  assert.equal(resumeTask(b.rt, proposed.task.id, 's1', true), false);
   assert.equal(beforeAction(b.rt, comment(b, 's1'), CLIENT).task, id, 'the task of the session still answers');
 });
 

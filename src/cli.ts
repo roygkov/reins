@@ -29,8 +29,8 @@ import { ConfigError, loadRuntime, readConfig } from './client/config.ts';
 import { humanChannel, humanDecision } from './client/human.ts';
 import { runProbes } from './client/probes.ts';
 import { runTask, runTasks } from './client/run.ts';
-import { resumeTask } from './client/session.ts';
-import { sessionOfCommand } from './core/sessions.ts';
+import { resumeTask, takesOwnership } from './client/session.ts';
+import { sessionOfCommand, sessionNamed } from './core/sessions.ts';
 import { isObj } from './contracts/shape.ts';
 import { acceptedLabel } from './contracts/manifest.ts';
 import { findRoot } from './gate/index.ts';
@@ -315,7 +315,10 @@ function main(args: string[]): Out {
     if (loadTask(rt, first) === null) throw new Stop('unknown_task');
     // Reading the input takes the task for the session of this directory: a suspended task comes
     // back, a task of an ended session continues here.
-    resumeTask(rt, first, sessionOfCommand(rt, process.cwd(), SESSION_ENV));
+    const taker = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
+    // Only the window itself becomes the owner of the task; a session that the directory gave and a
+    // client without a window hold the task and leave its owner.
+    resumeTask(rt, first, taker, takesOwnership(sessionNamed(rt, SESSION_ENV), taker));
     const task = loadTask(rt, first);
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
