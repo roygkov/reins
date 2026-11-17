@@ -16,7 +16,7 @@ import type { Runtime } from './runtime.ts';
 // before: such a word came in this session. unguarded: an action ended and no such word had come.
 // told: the human heard about it at a stop.
 // returns: how many times a stop of a client without a window got the task back.
-export type SessionFile = { returns?: { task: string; n: number }; claims?: string; noChoice?: boolean; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; requests?: number; fails?: Record<string, number>; executors?: { role: string; task: string; at: number }[]; judged?: string[] };
+export type SessionFile = { returns?: { task: string; n: number }; claims?: string; noChoice?: boolean; before?: boolean; unguarded?: boolean; told?: boolean; since?: string; costMarks?: Record<string, number>; compacted?: string; task?: string; scenario?: string; work?: string | null; head?: string | null; top?: string; at?: number; opened?: string[]; returned?: boolean; requests?: number; fails?: Record<string, number>; executors?: { role: string; task: string; at: number }[]; judged?: string[] };
 
 const SESSION = /^[A-Za-z0-9_-]{1,64}$/;
 export const sessionName = (session: string | undefined): string =>

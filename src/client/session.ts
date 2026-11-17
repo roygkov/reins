@@ -7,9 +7,10 @@ import { RULE_NAME } from '../contracts/journal.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, type Runtime } from '../core/runtime.ts';
-import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, takeJudged, withSession } from '../core/sessions.ts';
+import type { Task } from '../core/task.ts';
+import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, takeJudged, withSession, type SessionFile } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
-import { workState } from '../core/work.ts';
+import { changedFiles, workNow, workTop } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { applyDue, listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
@@ -252,13 +253,19 @@ export function settleQuestions(rt: Runtime, session: string | undefined, who: '
 export function humanRequest(rt: Runtime, e: SessionEvent): { task: string; long?: number } {
   settleQuestions(rt, e.session);
   // The state of the work tree at the request: at the stop it says whether the request changed the work.
-  const work = workState(e.cwd);
+  // For a repository also its root and its commit: at the stop they name the files that the request
+  // committed, and they say that the stop is in the same work as the request.
+  const { state: work, facts } = workNow(e.cwd);
   // The count of requests and the new task change in one step under the lock of the session file:
   // two request events of one session must not lose a count.
   const { before, task, requests } = withSession(rt, e.session, (file) => {
     const opened = openFreeTask(rt);
     const requests = (file.requests ?? 0) + 1;
-    return { next: { ...file, task: opened.id, work, requests }, result: { before: file.task, task: opened.id, requests } };
+    // A new request can be returned again: the mark of the return belongs to one request.
+    // The list of the scenario tasks that a request opened starts anew: a task that is still open
+    // from an earlier request is not a check of the change of this one.
+    const { returned: _returned, head: _head, top: _top, opened: _opened, ...rest } = file;
+    return { next: { ...rest, task: opened.id, work, at: Date.now(), ...(facts !== null ? { head: facts.head, top: facts.top } : {}), requests }, result: { before: file.task, task: opened.id, requests } };
   });
   if (typeof before === 'string' && loadTask(rt, before)?.state === 'executing') applyEvent(rt, before, { type: 'expire' }, 'harness');
   noteDirectory(rt, e.cwd, e.session);
@@ -289,7 +296,35 @@ function unfinishedTask(rt: Runtime, e: SessionEvent): { task: string; scenario:
 // `judged`: the roles of the subordinates whose report got the answer FAIL and that the main
 // executor did not hear: it took no action after their end (a subordinate in the background).
 // The client does not end the turn and says the answer to the agent, once.
-type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string }; judged?: string[] };
+// `unchecked`: the request changed that many files of the work, the packs name a count from which
+// a check is due (`limits.free_unchecked`), and no check of a scenario of this session judged the
+// work as it is now. The client does not end the turn and says it to the agent, once for a request.
+type Stopped = { task?: string; label?: string; changed?: boolean; unguarded?: boolean; unfinished?: { task: string; scenario: string }; judged?: string[]; unchecked?: { files: number } };
+
+// The labels of a result that somebody judged: a check of the harness, or the human.
+const JUDGED: readonly string[] = ['verified_result', 'verified_form', 'approved_by_human'];
+
+// What the scenario tasks of the session say about the work of the session at a stop.
+// 'judged': the scenario task of the session carries a label of a judged result (it is closed, or
+// accepted and waits for its publication) and its answer is about the state of the work now. One
+// repository has one fingerprint from any of its directories, so the fingerprint of the task is
+// compared as it is.
+// 'open': a task that this request opened (the list `opened` of the session) is not ended: a
+// check of this change is under way. A task that has no report yet has no root of its work: it
+// counts. A task that the request only took again is not in the list.
+// undefined: neither. A task that another session holds now, and a task whose work lies in
+// another repository, say nothing about this work.
+function scenarioSays(rt: Runtime, session: string | undefined, seen: SessionFile, top: string, now: string): 'judged' | 'open' | undefined {
+  const mine = (id: string | undefined): Task | null => {
+    const task = id === undefined ? null : loadTask(rt, id);
+    if (task === null || task.kind !== 'scenario' || task.session !== session) return null;
+    return task.root !== undefined && workTop(task.root) !== top ? null : task;
+  };
+  const ended = (task: Task): boolean => task.state === 'closed' || task.state === 'publishing' || task.state === 'skipped';
+  const last = mine(seen.scenario);
+  if (last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && last.work === now) return 'judged';
+  return (seen.opened ?? []).some((id) => { const task = mine(id); return task !== null && !ended(task); }) ? 'open' : undefined;
+}
 
 export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   settleQuestions(rt, e.session);
@@ -309,8 +344,19 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   const before = seen?.work;
   // A fact, not the words of the agent: the work tree is not what it was at the request.
   // A work with no fingerprint (a directory of too many files, no answer of git) gives no fact: nothing is said.
-  const now = workState(e.cwd);
+  const { state: now, facts } = workNow(e.cwd);
   const changed = typeof before === 'string' && now !== null ? now !== before : undefined;
+  // A free task that changed the work and that no check judged is returned once for a request
+  // (contracts AA26 - AA30). The stop is then not the end of the request: its free task stays open.
+  const max = rt.merged.context.maxFreeUnchecked;
+  // The request and the stop must be in one repository: else the two fingerprints are of two works.
+  if (changed === true && now !== null && facts !== null && max !== undefined && seen?.returned !== true && seen?.top === facts.top && scenarioSays(rt, e.session, seen, facts.top, now) === undefined) {
+    const files = changedFiles(facts, seen.head, seen.at);
+    if (files !== null && files >= max) {
+      patchSession(rt, e.session, { returned: true });
+      return { ...unguarded, unchecked: { files } };
+    }
+  }
   const r = applyEvent(rt, id, { type: 'report', size: 0, fp: '00000000', ...(changed === true ? { changed: true } : {}) }, 'agent');
   if (!('task' in r) || r.error !== undefined) return { ...unguarded };
   // The answer of the free task, when the client gives it: a record of the memory that it cites by

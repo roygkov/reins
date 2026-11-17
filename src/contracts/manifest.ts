@@ -77,6 +77,7 @@ export type PackContext = {
   maxFreeTokens?: number; // the tokens of one free task before the harness says so; nothing stops
   maxSessionRequests?: number; // the requests of one session before the harness says to start a new one
   maxFreeChanges?: number; // the changes of a free task before the offer of a contract
+  maxFreeUnchecked?: number; // the changed files of a free task from which a stop without a check of a scenario is returned once
   maxWriteLimit?: number;
   maxExecutors?: number;
 };

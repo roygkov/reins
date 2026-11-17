@@ -61,26 +61,91 @@ function treeState(dir: string): string | null {
   return hash.digest('hex').slice(0, 32);
 }
 
-// null: git did not answer in time, or the directory is no repository and has no state of its own.
-export function workState(cwd: string): string | null {
-  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 5000, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } });
-  // No answer is no fact. git answered that this is no repository: the directory itself is the
-  // work. Another refusal (a repository that git does not trust, a broken one) is no fact too.
+// What git says about the work of a directory, read in one pass: its fingerprint, the root of the
+// repository (links resolved), the commit (null: the repository has no commit yet) and the files
+// that git sees as changed or new.
+export type WorkFacts = { state: string; top: string; head: string | null; dirty: string[] };
+
+const ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' };
+
+// 'none': git answered that the directory is no repository. null: no answer in time, or a refusal
+// (a repository that git does not trust, a broken one): no fact.
+function repoFacts(cwd: string): WorkFacts | 'none' | null {
+  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 5000, env: ENV });
   if (top.error !== undefined || top.status === null) return null;
-  if (top.status !== 0) return /not a git repository/.test(top.stderr) ? treeState(cwd) : null;
+  if (top.status !== 0) return /not a git repository/.test(top.stderr) ? 'none' : null;
   const root = top.stdout.trim();
   if (root === '') return null;
-  const head = git(root, ['rev-parse', '--verify', '-q', 'HEAD'])?.trim() ?? 'none';
+  // No commit is an answer of git (it ends with a code); no answer in time is no fact.
+  const rev = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5000, env: ENV });
+  if (rev.error !== undefined || rev.status === null) return null;
+  const head = rev.status === 0 && rev.stdout.trim() !== '' ? rev.stdout.trim() : null;
   const status = git(root, ['status', '--porcelain=v1', '-uall', '-z']);
-  const diff = head === 'none' ? '' : git(root, ['diff', 'HEAD']);
+  const diff = head === null ? '' : git(root, ['diff', 'HEAD']);
   if (status === null || diff === null) return null;
+  const entries = status.split('\0');
   // A file that git does not track has no diff: its content is hashed, so an edit of it is a change.
-  const untracked = status.split('\0').filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3)).slice(0, MAX_UNTRACKED);
+  const untracked = entries.filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3)).slice(0, MAX_UNTRACKED);
   let contents = '';
   if (untracked.length > 0) {
     const hashed = spawnSync('git', ['hash-object', '--stdin-paths'], { cwd: root, input: untracked.join('\n'), encoding: 'utf8', timeout: 5000 });
     if (hashed.status !== 0 || hashed.error !== undefined) return null;
     contents = hashed.stdout;
   }
-  return crypto.createHash('sha256').update(`${head}\n${status}\n${diff}\n${contents}`).digest('hex').slice(0, 32);
+  // A renamed file gives two entries: the new name with its two letters, then the old name alone.
+  // The letter of the rename stands in the column of the index or in the column of the work tree.
+  const dirty: string[] = [];
+  for (let n = 0; n < entries.length; n += 1) {
+    const entry = entries[n] ?? '';
+    if (entry.length <= 3) continue;
+    dirty.push(entry.slice(3));
+    if (entry[0] === 'R' || entry[0] === 'C' || entry[1] === 'R' || entry[1] === 'C') n += 1;
+  }
+  let real: string;
+  try {
+    real = fs.realpathSync(root);
+  } catch {
+    return null;
+  }
+  return { state: crypto.createHash('sha256').update(`${head ?? 'none'}\n${status}\n${diff}\n${contents}`).digest('hex').slice(0, 32), top: real, head, dirty };
+}
+
+// The fingerprint of the work and, for a repository, the facts of git behind it: one pass.
+export function workNow(cwd: string): { state: string | null; facts: WorkFacts | null } {
+  const facts = repoFacts(cwd);
+  if (facts === 'none') return { state: treeState(cwd), facts: null };
+  return facts === null ? { state: null, facts: null } : { state: facts.state, facts };
+}
+
+// null: git did not answer in time, or the directory is no repository and has no state of its own.
+export const workState = (cwd: string): string | null => workNow(cwd).state;
+
+// The root of the repository of a directory, with links resolved: two directories of one work
+// tree have one root. null: the directory is no repository, or git gave no answer.
+export function workTop(cwd: string): string | null {
+  const top = git(cwd, ['rev-parse', '--show-toplevel'])?.trim();
+  if (top === undefined || top === '') return null;
+  try {
+    return fs.realpathSync(top);
+  } catch {
+    return null;
+  }
+}
+
+// How many files of the work differ: the files that git sees as changed or new, and the files of
+// the commits that came after `since` and were committed after the moment `after` (milliseconds).
+// A commit that a pull, a checkout or a merge brought in was committed before the request: it is
+// the work of other people and does not count. `since` null: the repository had no commit at that
+// moment. `since` undefined: the moment is not known, only the files of now count. null as the
+// answer: git gave no answer. A file that was changed before `since` and not committed counts
+// too: the harness keeps no list of the files of an earlier moment.
+export function changedFiles(facts: WorkFacts, since?: string | null, after?: number): number | null {
+  const files = new Set(facts.dirty);
+  if (since !== undefined && facts.head !== null && since !== facts.head) {
+    const from = after === undefined ? [] : [`--since=${new Date(Math.floor(after / 1000) * 1000).toISOString()}`];
+    const committed = git(facts.top, ['log', '--format=', '--name-only', '--no-renames', '-z', ...from, since === null ? 'HEAD' : `${since}..HEAD`]);
+    if (committed === null) return null;
+    for (const file of committed.split(/[\0\n]/)) if (file !== '') files.add(file);
+  }
+  return files.size;
 }

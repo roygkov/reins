@@ -12,7 +12,7 @@ import type { Action, Decision, LayerDecision } from '../contracts/policy.ts';
 import { LEVELS, fixedStart, guardPattern, inputForm, validateManifest, type Level, type Manifest } from '../contracts/manifest.ts';
 import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
-import { patchSession } from './sessions.ts';
+import { patchSession, withSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect, type Sandbox } from './collect.ts';
 import { workState } from './work.ts';
@@ -277,7 +277,8 @@ export function openByForm(rt: Runtime, value: string, opts: { session?: string 
 function hold(rt: Runtime, task: Task, session: string | undefined): void {
   if (session === undefined) return;
   task.session = session;
-  patchSession(rt, session, { scenario: task.id });
+  // The tasks that the request of now opened: at a stop they say that a check of its change is under way.
+  withSession(rt, session, (now) => ({ next: { ...now, scenario: task.id, opened: [...(now.opened ?? []), task.id].slice(-20) }, result: undefined }));
 }
 
 // A step of the harness ran past its time: a fact of the journal, with the step and the task.

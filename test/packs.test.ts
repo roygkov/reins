@@ -155,6 +155,10 @@ test('packs: the number of changes of a free task before the offer of a contract
   assert.deepEqual(m.packs.map((p) => p.errors), [[], [], []]);
   assert.equal(m.context.maxFreeChanges, 8);
   assert.deepEqual(faults(three({ 'person/pack.json': { ...person, limits: { ...person.limits, free_changes: 0 } } }), 'person'), ['not_positive limits.free_changes']);
+  // The count of changed files from which a free task without a check is returned: the smallest value holds.
+  assert.equal(three({ 'organization/pack.json': { ...org, limits: { ...org.limits, free_unchecked: 5 } }, 'person/pack.json': { ...person, limits: { ...person.limits, free_unchecked: 2 } } }).context.maxFreeUnchecked, 2);
+  assert.equal(three({ 'organization/pack.json': { ...org, limits: { ...org.limits, free_unchecked: 2 } }, 'person/pack.json': { ...person, limits: { ...person.limits, free_unchecked: 5 } } }).context.maxFreeUnchecked, 2);
+  assert.deepEqual(faults(three({ 'person/pack.json': { ...person, limits: { ...person.limits, free_unchecked: 0 } } }), 'person'), ['not_positive limits.free_unchecked']);
   // The tokens of a free task: the lowest number of the packs acts, as for the other limits.
   const tokens = three({ 'organization/pack.json': { ...org, limits: { ...org.limits, free_tokens: 900000 } }, 'person/pack.json': { ...person, limits: { ...person.limits, free_tokens: 400000 } } });
   assert.equal(tokens.context.maxFreeTokens, 400000);

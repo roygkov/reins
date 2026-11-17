@@ -10,9 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
-import { applyEvent, loadTask, openScenario, openTasks, type Runtime } from '../src/core/runtime.ts';
+import { applyEvent, loadTask, mutateTask, openScenario, openTasks, submitReport, type Runtime } from '../src/core/runtime.ts';
+import { workNow, workState } from '../src/core/work.ts';
 import { afterAction, beforeAction } from '../src/client/before.ts';
-import { agentStopped, humanRequest, sessionEnd, sessionStart } from '../src/client/session.ts';
+import { agentStopped, humanRequest, resumeTask, sessionEnd, sessionStart } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
 import { mergeView } from '../src/core/merged.ts';
 import { resolveQueued } from '../src/core/queue.ts';
@@ -413,4 +414,252 @@ test('session: a start without a window writes no summary of the week, by the wo
   assert.equal(fs.existsSync(path.join(b.rt.stateDir, 'summaries')), false);
   // The summary waits for a session with a window.
   assert.match(sessionStart(b.rt, { session: 's2', cwd: b.cwd }).context.join('\n'), /summary of the week/);
+});
+
+// A free task that changed the work and that no check of a scenario judged is returned once
+// (contracts AA26 - AA30). The packs give the count of changed files from which this holds.
+function repoBox(max?: number): Box {
+  const b = box();
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  git('init', '-q');
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+  fs.writeFileSync(path.join(b.cwd, 'b.txt'), 'b\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  return max === undefined ? b : { ...b, rt: { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, maxFreeUnchecked: max } } } };
+}
+
+test('session: a free task that changed the work without a check of a scenario is returned once', () => {
+  const b = repoBox(1);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  // The first stop does not end the request: the free task stays open, the agent hears the rule.
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+  assert.equal(loadTask(b.rt, task)?.state, 'executing');
+  // The second stop of the same request passes: the result keeps the label "not verified".
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
+  assert.equal(loadTask(b.rt, task)?.state, 'closed');
+  // A new request is returned again: the count belongs to one request.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed again\n');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+});
+
+test('session: no count of the packs, or a change below the count, returns nothing', () => {
+  const none = repoBox();
+  const first = humanRequest(none.rt, { session: 's1', cwd: none.cwd });
+  fs.writeFileSync(path.join(none.cwd, 'a.txt'), 'changed\n');
+  assert.deepEqual(agentStopped(none.rt, { session: 's1', cwd: none.cwd }), { task: first.task, label: 'not_verified', changed: true });
+  const two = repoBox(2);
+  const second = humanRequest(two.rt, { session: 's1', cwd: two.cwd });
+  fs.writeFileSync(path.join(two.cwd, 'a.txt'), 'changed\n');
+  assert.deepEqual(agentStopped(two.rt, { session: 's1', cwd: two.cwd }), { task: second.task, label: 'not_verified', changed: true });
+  // A request that changed nothing is a question: it is never returned.
+  const quiet = repoBox(1);
+  const third = humanRequest(quiet.rt, { session: 's1', cwd: quiet.cwd });
+  assert.deepEqual(agentStopped(quiet.rt, { session: 's1', cwd: quiet.cwd }), { task: third.task, label: 'not_verified', changed: false });
+});
+
+test('session: a commit of the request counts as its change', () => {
+  const b = repoBox(2);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  fs.writeFileSync(path.join(b.cwd, 'b.txt'), 'changed\n');
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-am', 'work'], { cwd: b.cwd, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  // The tree is clean now: the two files are in the commit that the request made.
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 2 } });
+});
+
+test('session: a check of a scenario of the session that judged the work as it is now lifts the return', () => {
+  const b = repoBox(1);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  const id = opened.task.id;
+  const work = workState(b.cwd);
+  assert.ok(work !== null);
+  // The scenario task closed with a verified label for this very state of the work.
+  mutateTask(b.rt, id, (t) => ({ ...t, state: 'closed', label: 'verified_result', work: work ?? '' }));
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
+  // An edit after the check: the answer of the check is about another state of the work.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed after the check\n');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+});
+
+test('session: the answer of a check counts by its label and by the work of its own directory', () => {
+  // A scenario with writes is accepted and waits for its publication: the check judged the work.
+  const b = repoBox(1);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  // The task names the root of its work: a directory inside the same repository as the session.
+  const sub = path.join(b.cwd, 'sub');
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'new.txt'), 'new\n');
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'publishing', label: 'verified_result', root: sub, work: workState(sub) ?? '' }));
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
+  // The human accepted the result: that is a decision about this work too.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed twice\n');
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'closed', label: 'approved_by_human', root: b.cwd, work: workState(b.cwd) ?? '' }));
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unchecked, undefined);
+  // A label without a check lifts nothing.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed three times\n');
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'closed', label: 'not_verified', root: b.cwd, work: workState(b.cwd) ?? '' }));
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 2 } });
+});
+
+test('session: a check of another repository does not judge the work of the session', () => {
+  const b = repoBox(1);
+  const other = repoBox();
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  // The fingerprint is the one of the session directory, but the task checked another repository.
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'closed', label: 'verified_result', root: other.cwd, work: workState(b.cwd) ?? '' }));
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+});
+
+test('session: the first commit of a repository, made by the request, counts as its change', () => {
+  const b = box();
+  const rt: Runtime = { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, maxFreeUnchecked: 2 } } };
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  git('init', '-q');
+  humanRequest(rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+  fs.writeFileSync(path.join(b.cwd, 'b.txt'), 'b\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'first');
+  assert.deepEqual(agentStopped(rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 2 } });
+});
+
+test('session: a request and a stop in two directories give no return', () => {
+  // The request came in a directory that is no repository; the session then moved into one.
+  const b = repoBox(1);
+  const plain = path.join(b.root, 'plain');
+  fs.mkdirSync(plain);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: plain });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  const stopped = agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  assert.equal(stopped.unchecked, undefined, 'the fingerprints are of two works: no count of files is a fact');
+  assert.equal(stopped.task, task);
+  // Two repositories: the commit of the request is not a commit of the repository of the stop.
+  const other = repoBox(1);
+  humanRequest(other.rt, { session: 's2', cwd: other.cwd });
+  const moved = repoBox();
+  fs.writeFileSync(path.join(moved.cwd, 'a.txt'), 'changed\n');
+  assert.equal(agentStopped(other.rt, { session: 's2', cwd: moved.cwd }).unchecked, undefined);
+});
+
+test('session: a judged task of the same repository with an older state of the work lifts nothing', () => {
+  const b = repoBox(1);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'checked\n');
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'closed', label: 'verified_result', root: b.cwd, work: workState(b.cwd) ?? '' }));
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'edited after the check\n');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+});
+
+test('session: a scenario task that this request opened holds the return back; an older open task does not', () => {
+  const b = repoBox(1);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  // A real open task: it executes, it has no report yet and so no root of its work.
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  assert.equal(loadTask(b.rt, opened.task.id)?.root, undefined);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true }, 'the check of this change is under way');
+  // The next request: the task is still open, but this request did not open it. It holds nothing back.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed again\n');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+  // A task that this request opened for another repository holds nothing back.
+  const other = repoBox();
+  const c = repoBox(1);
+  humanRequest(c.rt, { session: 's1', cwd: c.cwd });
+  fs.writeFileSync(path.join(c.cwd, 'a.txt'), 'changed\n');
+  const far = openScenario(c.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(far.ok, true);
+  if (!far.ok) return;
+  mutateTask(c.rt, far.task.id, (t) => ({ ...t, root: other.cwd }));
+  assert.deepEqual(agentStopped(c.rt, { session: 's1', cwd: c.cwd }), { unchecked: { files: 1 } });
+});
+
+test('session: a real check of a scenario lifts the return: the report goes through the check of the harness', () => {
+  const b = repoBox(1);
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  // The scenario reads its source from the directory of the session and checks the quotes there.
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', text: 'x' }] }));
+  assert.ok('step' in submitted);
+  if (!('step' in submitted)) return;
+  // The task has writes: it is accepted and waits for its publication. Its work is the one of now.
+  assert.deepEqual([submitted.step.task.state, submitted.step.task.label], ['publishing', 'verified_form']);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
+  // The task moved to another session: its answer is no answer for this session.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, session: 's9' }));
+  fs.writeFileSync(path.join(b.cwd, 'b.txt'), 'another change\n');
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, work: workState(b.cwd) ?? '' }));
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 2 } });
+});
+
+test('session: commits of other people that the request brought in are not its change', () => {
+  const b = repoBox(1);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  // A commit with a time before the request: this is what a pull or a checkout brings.
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'from another person\n');
+  const old = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-am', 'theirs'], { cwd: b.cwd, encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: '2001-01-01T00:00:00Z', GIT_AUTHOR_DATE: '2001-01-01T00:00:00Z' } });
+  assert.equal(old.status, 0, old.stderr);
+  const stopped = agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  assert.equal(stopped.unchecked, undefined);
+  assert.equal(stopped.changed, true);
+});
+
+test('session: "this request opened the task" is a fact of the request, not the last task of the session', () => {
+  const b = repoBox(1);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  const x = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  const y = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.ok(x.ok && y.ok);
+  if (!x.ok || !y.ok) return;
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  // The next request takes an older open task again: the session points at it, but the request did not open it.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  assert.equal(resumeTask(b.rt, x.task.id, 's1'), true);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+  // A request opens a task and then takes an older one: the task it opened still counts.
+  const { task } = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed again\n');
+  const z = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.ok(z.ok);
+  assert.equal(resumeTask(b.rt, y.task.id, 's1'), true);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task, label: 'not_verified', changed: true });
+});
+
+test('work: a rename in the work tree column gives one changed file, not a made-up path', () => {
+  const b = repoBox();
+  const git = (...args: string[]): void => { assert.equal(spawnSync('git', args, { cwd: b.cwd }).status, 0); };
+  fs.renameSync(path.join(b.cwd, 'a.txt'), path.join(b.cwd, 'renamed.txt'));
+  git('add', '-N', 'renamed.txt');
+  const facts = workNow(b.cwd).facts;
+  assert.ok(facts !== null);
+  for (const file of facts?.dirty ?? []) assert.ok(['a.txt', 'renamed.txt'].includes(file), `a path that is no file of the work: ${file}`);
 });

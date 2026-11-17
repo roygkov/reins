@@ -857,3 +857,26 @@ test('claude-code: the words of the question about a write that another human se
   // Another rule has no such words.
   assert.doesNotMatch(reason({ ...base, rule: 'default.write' }), /claims of a text/);
 });
+
+test('claude-code: a free task that changed the work without a check of a scenario: the stop is returned once', () => {
+  const b = box();
+  // The person pack names the count of changed files from which a check is due.
+  const pack = path.join(b.root, 'packs/person/pack.json');
+  const value = JSON.parse(fs.readFileSync(pack, 'utf8')) as { limits?: Record<string, unknown> };
+  fs.writeFileSync(pack, JSON.stringify({ ...value, limits: { ...value.limits, free_unchecked: 1 } }));
+  const git = (...args: string[]): void => { assert.equal(spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd }).status, 0); };
+  git('init', '-q');
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  run(HOOK, b, ['session-start'], hookEvent(b, 'SessionStart'));
+  run(HOOK, b, ['prompt'], hookEvent(b, 'UserPromptSubmit'));
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  const first = run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json as { decision?: string; reason?: string } | null;
+  assert.equal(first?.decision, 'block');
+  assert.match(first?.reason ?? '', /changed 1 file\(s\) of the work tree and no check of a scenario judged/);
+  // The second stop of the same request ends the turn: the label of the result goes to the human.
+  const second = run(HOOK, b, ['stop'], hookEvent(b, 'Stop')).json as { decision?: string; systemMessage?: string } | null;
+  assert.equal(second?.decision, undefined);
+  assert.match(second?.systemMessage ?? '', /not verified/);
+});
