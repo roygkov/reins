@@ -274,6 +274,13 @@ export function listProposals(rt: Runtime): Proposal[] {
   return out.sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
 }
 
+// The proposals that wait for a decision at a moment: made before it and not resolved before it.
+// A proposal with a term waits too. A rejected proposal that opened again carries only its last
+// dates: the days of its first wait are not counted.
+export function openAt(list: { created: string; state: string; resolved?: string }[], at: number): number {
+  return list.filter((p) => Date.parse(p.created) < at && (p.state === 'open' || p.resolved === undefined || !(Date.parse(p.resolved) < at))).length;
+}
+
 function save(rt: Runtime, p: Proposal): void {
   fs.mkdirSync(dirOf(rt), { recursive: true });
   fs.writeFileSync(path.join(dirOf(rt), `${p.id}.json`), JSON.stringify(p));

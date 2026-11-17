@@ -45,7 +45,7 @@ import { timerText } from './client/timer.ts';
 import { writeWeek } from './craft/weekly.ts';
 import { enableScenario, scenarioOff } from './core/idle.ts';
 import { fire, tick } from './core/triggers.ts';
-import { applyDue, listProposals, measure, propose, resolveProposal } from './craft/craft.ts';
+import { applyDue, listProposals, measure, openAt, propose, resolveProposal } from './craft/craft.ts';
 import { BY, EIGHT, MEASURES, eight, ofProject, overTargets, series, summarize } from './journal/metrics.ts';
 import { readJournal, readJournalSince } from './journal/writer.ts';
 import { addRecord, brokenRecords, census, noteShown, closeCase, countUses, importRecords, isShared, listRecords, recordsForInput, restoreRecord, searchRecords, shareRecord, stepCase, vetoRecord, wrongRecord } from './memory/store.ts';
@@ -562,7 +562,9 @@ function main(args: string[]): Out {
     const to = Math.floor(Date.now() / edge) * edge + edge;
     const from = to - Math.ceil((Number(daysWord) * DAY_MS) / stepMs) * stepMs;
     const all = readJournalSince(rt.stateDir, from);
-    const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs);
+    // The proposals of the craft are of the machine: the series of a project carries the same count of the waiting ones.
+    const proposals = listProposals(rt);
+    const points = series(project === undefined ? all : ofProject(all, project), from, to, stepMs, (end) => openAt(proposals, end));
     // The projects of the window, the busiest first: a program outside asks for the series of each one.
     const seen = new Map<string, number>();
     if (project === undefined) for (const row of all) if (/^p[0-9a-f]{8}$/.test(row.project)) seen.set(row.project, (seen.get(row.project) ?? 0) + 1);
@@ -576,7 +578,9 @@ function main(args: string[]): Out {
     // The form 9: `projects`, the projects of the window, when the series is of the machine.
     // The form 10: the context of the sessions (the smallest, the largest and the middle one, by
     // session too) and the share of the text of the harness in it.
-    return { ok: true, metrics: 11, ...(project === undefined ? { projects } : {}), targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
+    // The form 12: the measures of the craft (`craft_proposed`, `craft_accepted`, `craft_rejected`,
+    // `craft_open`, `craft_last_ts`).
+    return { ok: true, metrics: 12, ...(project === undefined ? { projects } : {}), targets: rt.merged.targets ?? {}, step, project: project ?? 'all', from: new Date(from).toISOString(), to: new Date(to).toISOString(), names: [...EIGHT], measures: [...MEASURES], by: [...BY], points };
   }
   if (command === 'memory') {
     const rt = runtime();

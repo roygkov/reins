@@ -60,6 +60,9 @@ export type Metrics = {
   // largest context of each session. `harness_share`: the text that the hooks gave to these
   // sessions, as tokens by an estimate (`BYTES_PER_TOKEN`), against the sum of the largest contexts.
   session_context: { sessions: number; min: number | null; max: number | null; avg: number | null; harness_share: number | null };
+  // The craft: the proposals that it made, and those that were accepted (by the human or by their
+  // term) and rejected, by the rows of the period. `last`: the time of the last row of the craft.
+  craft: { proposed: number; accepted: number; rejected: number; last: string | null };
 };
 // The harness counts its text in bytes, a model counts tokens. One token of a text in English is
 // about four bytes; a text in Cyrillic has more bytes for a token, so its share reads too high.
@@ -124,6 +127,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     probes: { runs: 0, n: null, misses: null, noise: null },
     tokens: { total: 0, calls: 0, rewrites: 0, by_model: {}, by_executor: {}, by_kind: { input: 0, output: 0, cache_write: 0, cache_read: 0 } },
     session_context: contextOf(sessionContexts(rows, since)),
+    craft: { proposed: 0, accepted: 0, rejected: 0, last: null },
   };
   type Asked = { asked: number; yes: number; no: number };
   const asked = new Map<string, Asked>();
@@ -141,7 +145,16 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
     const time = Date.parse(row.ts);
     if (Number.isNaN(time) || time < since) continue;
     const data = row.data ?? {};
+    // A row of the craft of any kind is its activity: the rows are read in no order of time.
+    if (row.kind.startsWith('craft.') && (m.craft.last === null || time > Date.parse(m.craft.last))) m.craft.last = row.ts;
     switch (row.kind) {
+      case 'craft.proposal_created':
+        m.craft.proposed += 1;
+        break;
+      case 'craft.proposal_resolved':
+        if (data.state === 'accepted') m.craft.accepted += 1;
+        else if (data.state === 'rejected') m.craft.rejected += 1;
+        break;
       case 'task.opened':
         m.tasks.opened += 1;
         if (row.scenario !== undefined) scenario(row.scenario).opened += 1;
@@ -380,7 +393,7 @@ function period(rows: JournalRow[], from: number, to: number): Record<(typeof EI
 // that fall on one task, the time of a decision of the hook (the middle and the tail), the time
 // of a done check, the bytes that the hooks gave to the agent, the results that a human disputed,
 // the pitfalls that somebody hit again. A measure without rows has no value.
-export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened', 'session_context_min', 'session_context_max', 'session_context_avg', 'sessions_measured', 'harness_context_share'] as const;
+export const MEASURES = ['asks_per_task', 'hook_ms_p50', 'hook_ms_p95', 'hook_ms_max', 'check_ms_p50', 'check_ms_p95', 'context_bytes', 'disputed', 'pitfall_repeats', 'denied', 'checks_no_answer', 'probe_misses', 'probe_noise', 'tokens_total', 'model_calls', 'fails_disputed', 'memory_finds', 'memory_find_misses', 'memory_wrong', 'memory_bytes', 'memory_active', 'memory_cited', 'memory_dead', 'memory_unseen', 'cache_rewrites', 'actions', 'tasks_opened', 'session_context_min', 'session_context_max', 'session_context_avg', 'sessions_measured', 'harness_context_share', 'craft_proposed', 'craft_accepted', 'craft_rejected', 'craft_open', 'craft_last_ts'] as const;
 export type Measures = Record<(typeof MEASURES)[number], number | null>;
 // The numbers of a period that have a name of their own inside one measure (the form 3): the
 // questions that the human saw and the "yes" among them by rule, the bytes that the hooks gave by
@@ -434,6 +447,14 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
       session_context_avg: m.session_context.avg,
       sessions_measured: m.session_context.sessions,
       harness_context_share: m.session_context.harness_share,
+      // The craft: what it proposed and what was decided in the period. The proposals that wait
+      // are a state of the machine, not rows of the period: `series` takes their count from its
+      // caller. The moment of the last row of the craft, in seconds: a period without a row has none.
+      craft_proposed: m.craft.proposed,
+      craft_accepted: m.craft.accepted,
+      craft_rejected: m.craft.rejected,
+      craft_open: null,
+      craft_last_ts: m.craft.last === null ? null : Math.floor(Date.parse(m.craft.last) / 1000),
     },
     by: {
       questions_asked: pick(m.questions, (at) => at.asked),
@@ -458,7 +479,9 @@ function measured(rows: JournalRow[]): { measures: Measures; by: By } {
 }
 
 export type Point = { from: string; to: string; measures: Measures; by: By } & Record<(typeof EIGHT)[number], { value: number | null; n: number; parts?: Record<string, number> }>;
-export function series(rows: JournalRow[], from: number, to: number, step: number): Point[] {
+// `open`: the count of the proposals of the craft that wait for a decision at a moment; each point
+// gets the count at its end as the measure `craft_open`. Without it the measure has no value.
+export function series(rows: JournalRow[], from: number, to: number, step: number, open?: (end: number) => number): Point[] {
   // Each row goes to its bucket once: a long series does not read the whole journal for every bucket.
   const count = Math.max(0, Math.ceil((to - from) / step));
   const buckets: JournalRow[][] = Array.from({ length: count }, () => []);
@@ -470,7 +493,8 @@ export function series(rows: JournalRow[], from: number, to: number, step: numbe
   return buckets.map((bucket, i) => {
     const start = from + i * step;
     const end = Math.min(start + step, to);
-    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end), ...measured(bucket) };
+    const { measures: counted, by } = measured(bucket);
+    return { from: new Date(start).toISOString(), to: new Date(end).toISOString(), ...period(bucket, start, end), measures: open === undefined ? counted : { ...counted, craft_open: open(end) }, by };
   });
 }
 

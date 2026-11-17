@@ -9,7 +9,7 @@ import { BY, EIGHT, MEASURES } from '../src/journal/metrics.ts';
 const DAY1 = '2026-11-12T00:00:00.000Z';
 const DAY2 = '2026-11-13T00:00:00.000Z';
 const series: Series = {
-  metrics: 11, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
+  metrics: 12, targets: { hook_ms_p50: 100, 'Bad-Name': 1 }, step: 'day', project: 'all', names: ['verified_share', 'cost_per_scenario'], measures: ['asks_per_task', 'hook_ms_p50'], by: ['questions_asked'],
   points: [
     { from: DAY1, to: DAY2, verified_share: { value: 0.04, n: 156, parts: { verified_form: 69, verified_result: 7 } }, cost_per_scenario: { value: null, n: 0 }, measures: { asks_per_task: 0.86, hook_ms_p50: null } },
     { from: DAY2, to: '2026-11-14T00:00:00.000Z', verified_share: { value: 0.23, n: 125 }, cost_per_scenario: { value: 38333, n: 37 }, measures: { asks_per_task: 0.95, hook_ms_p50: 125 }, by: { questions_asked: { 'protect.harness': 12, 'default.write': 3, 'bad"name': 1 }, not_named: { x: 1 } } },
@@ -54,7 +54,7 @@ test('grafana export: a name that is not a plain token gives no series', () => {
 
 test('grafana export: a number by session goes to the series by hours only', () => {
   const point = { from: DAY1, to: DAY2, by: { session_context: { '0ac7e3a3': 225_000 }, context_bytes: { session_start: 9000 } } };
-  const of = (step: string): string[] => toLines({ metrics: 11, step, project: 'all', names: [], by: ['session_context', 'context_bytes'], points: [point] }).map((l) => `${l.metric.__name__} ${l.metric.name}`);
+  const of = (step: string): string[] => toLines({ metrics: 12, step, project: 'all', names: [], by: ['session_context', 'context_bytes'], points: [point] }).map((l) => `${l.metric.__name__} ${l.metric.name}`);
   assert.deepEqual(of('hour'), ['reins_session_context_by 0ac7e3a3', 'reins_context_bytes_by session_start']);
   // A series by days lives for months: a label for every session would grow without end.
   assert.deepEqual(of('day'), ['reins_context_bytes_by session_start']);
@@ -113,4 +113,34 @@ test('grafana export: the dashboard asks only for the numbers that the series ha
   const ports = compose.split('\n').filter((l) => /^\s+- [\d.:]+:\d+$/.test(l));
   assert.equal(ports.length, 2);
   for (const p of ports) assert.match(p, /- 127\.0\.0\.1:\d+:\d+$/);
+});
+
+test('grafana export: the dashboard shows the craft: its last activity, the proposals that wait, and what was decided', () => {
+  const dash = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'examples', 'grafana', 'dashboards', 'reins.json'), 'utf8')) as { panels: { id: number; type: string; title: string; targets: { expr: string; legendFormat: string; instant?: boolean }[] }[] };
+  const ids = dash.panels.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length);
+  const state = dash.panels.find((p) => p.title === 'Крафт: состояние');
+  assert.equal(state?.type, 'stat');
+  assert.deepEqual(state?.targets.map((t) => [t.legendFormat, /reins_[a-z_]+/.exec(t.expr)?.[0], t.instant]), [
+    ['последняя активность', 'reins_craft_last_ts', true], ['без активности', 'reins_craft_last_ts', true], ['ждут решения', 'reins_craft_open', true],
+    ['предложено', 'reins_craft_proposed', true], ['принято', 'reins_craft_accepted', true], ['отклонено', 'reins_craft_rejected', true],
+  ]);
+  // A day without a row of the craft has no moment: the tile takes the last moment of the window, not of the last day.
+  assert.ok(state?.targets.filter((t) => t.expr.includes('reins_craft_last_ts')).every((t) => t.expr.includes('max_over_time(')));
+  const days = dash.panels.find((p) => p.title === 'Крафт: предложения');
+  assert.deepEqual(days?.targets.map((t) => t.legendFormat), ['предложено', 'принято', 'отклонено', 'ждут решения']);
+  for (const t of [...(state?.targets ?? []), ...(days?.targets ?? [])]) assert.ok(t.expr.includes('project="$project", step="day"'), t.expr);
+  // The bars of one day stand on one another, not behind one another: a bar of the same height hides no other. The line of the waiting ones is outside the stack.
+  const drawn = days as unknown as { fieldConfig: { defaults: { custom: { drawStyle: string; stacking: { mode: string } } }; overrides: { matcher: { options: string }; properties: { id: string; value: unknown }[] }[] } } | undefined;
+  assert.deepEqual([drawn?.fieldConfig.defaults.custom.drawStyle, drawn?.fieldConfig.defaults.custom.stacking.mode], ['bars', 'normal']);
+  const line = drawn?.fieldConfig.overrides.find((o) => o.matcher.options === 'ждут решения')?.properties ?? [];
+  assert.deepEqual([line.find((x) => x.id === 'custom.drawStyle')?.value, line.find((x) => x.id === 'custom.stacking')?.value], ['line', { mode: 'none' }]);
+});
+
+test('grafana export: a measure of the craft gives a series, and a day without its row gives no moment', () => {
+  const lines = toLines({ metrics: 12, step: 'day', project: 'all', names: [], measures: ['craft_open', 'craft_last_ts'], points: [
+    { from: DAY1, to: DAY2, measures: { craft_open: 2, craft_last_ts: 1794480000 } },
+    { from: DAY2, to: '2026-11-14T00:00:00.000Z', measures: { craft_open: 0, craft_last_ts: null } },
+  ] });
+  assert.deepEqual(lines.map((l) => [l.metric.__name__, l.values]), [['reins_craft_open', [2, 0]], ['reins_craft_last_ts', [1794480000]]]);
 });

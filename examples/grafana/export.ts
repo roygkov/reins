@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The export of the series of `reins metrics` (form 10) to a local VictoriaMetrics.
+// The export of the series of `reins metrics` (form 12) to a local VictoriaMetrics.
 // The journal is the source: the store of the stand is a view of it. Each run removes the series
 // `reins_*` from the store and writes the whole window again, so a point of the current day
 // always has its last value. Before the export the script runs `reins probes`: the run writes the
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   const read = (words: string[]): (Series & { ok?: boolean; projects?: string[] }) | null => {
     try {
       const value = JSON.parse(execFileSync(process.execPath, [cli, 'metrics', ...words], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })) as Series & { ok?: boolean; projects?: string[] };
-      return value.ok === true && value.metrics === 11 ? value : null;
+      return value.ok === true && value.metrics === 12 ? value : null;
     } catch {
       return null;
     }

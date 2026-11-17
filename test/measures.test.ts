@@ -120,7 +120,7 @@ test('measures: a point of the series carries the numbers by rule, by place and 
   assert.deepEqual(Object.keys(points[0]?.measures ?? {}), [...MEASURES]);
   assert.deepEqual(Object.keys(points[0]?.by ?? {}), [...BY]);
   assert.deepEqual(points[0]?.by, { questions_asked: { 'protect.harness': 2 }, questions_yes: { 'protect.harness': 1 }, context_bytes: { session_start: 9000, after: 120 }, disputed: { verified_form: 1 }, model_tokens: { 'claude-fable-5-2': 1500, 'claude-haiku-5-5': 200, unknown: 300 }, model_calls: { 'claude-fable-5-2': 3, 'claude-haiku-5-5': 1, unknown: 1 }, executor_tokens: { main: 1800, sub: 200 }, executor_calls: { main: 4, sub: 1 }, token_kinds: { input: 150, output: 550, cache_write: 1000, cache_read: 90_000 }, memory_given: { start: 12, task: 3, find: 2, unknown: 4 }, memory_bytes: { start: 2400, task: 900 }, session_context: { s1: 50 }, session_context_min: { s1: 50 }, session_context_avg: { s1: 50 }, session_harness_tokens: { s1: 2280 }, scenario_tokens: {}, scenario_cost_tasks: {} });
-  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119, cache_rewrites: 0, actions: 4, tasks_opened: 1, session_context_min: 50, session_context_max: 50, session_context_avg: 50, sessions_measured: 1, harness_context_share: 45.6 });
+  assert.deepEqual(points[0]?.measures, { asks_per_task: 2, hook_ms_p50: 300, hook_ms_p95: 900, hook_ms_max: 900, check_ms_p50: 4000, check_ms_p95: 300_000, context_bytes: 9120, disputed: 1, pitfall_repeats: 0, denied: 2, checks_no_answer: 1, probe_misses: 1, probe_noise: 2, tokens_total: 2000, model_calls: 5, fails_disputed: 0, memory_finds: 2, memory_find_misses: 1, memory_wrong: 1, memory_bytes: 3300, memory_active: 301, memory_cited: 41, memory_dead: 8, memory_unseen: 119, cache_rewrites: 0, actions: 4, tasks_opened: 1, session_context_min: 50, session_context_max: 50, session_context_avg: 50, sessions_measured: 1, harness_context_share: 45.6, craft_proposed: 0, craft_accepted: 0, craft_rejected: 0, craft_open: null, craft_last_ts: null });
   // A day without rows: no name by rule, no value of the barrier.
   assert.deepEqual(points[1]?.by, { questions_asked: {}, questions_yes: {}, context_bytes: {}, disputed: {}, model_tokens: {}, model_calls: {}, executor_tokens: {}, executor_calls: {}, token_kinds: {}, memory_given: {}, memory_bytes: {}, session_context: {}, session_context_min: {}, session_context_avg: {}, session_harness_tokens: {}, scenario_tokens: {}, scenario_cost_tasks: {} });
   assert.equal(points[1]?.measures.probe_misses, null);
@@ -225,4 +225,33 @@ test('measures: a scenario whose result the human accepts counts that as accepte
   assert.deepEqual(m.scenarios['code-change'], { opened: 1, accepted: 1, returns: 0 });
   // The counts of the checks are of checks only.
   assert.deepEqual([m.checks.PASS, m.checks.FAIL], [1, 0]);
+});
+
+test('measures: the craft is counted from its rows: the proposals made, accepted, rejected, and its last row', () => {
+  const day = 24 * 60 * 60 * 1000;
+  const from = Date.UTC(2026, 10, 12);
+  const at = (ms: number, kind: string, data: Record<string, unknown>): JournalRow => ({ ...row(kind, data), ts: new Date(ms).toISOString() });
+  const rows = [
+    at(from + 1000, 'craft.pattern_found', { pattern: 'repeated_question', key: 'default.write', n: 6 }),
+    at(from + 2000, 'craft.proposal_created', { proposal: 'c000000000a', pattern: 'repeated_question' }),
+    at(from + 3000, 'craft.proposal_created', { proposal: 'c000000000b', pattern: 'record_unused' }),
+    at(from + day + 5000, 'craft.proposal_resolved', { proposal: 'c000000000a', state: 'accepted' }),
+    at(from + day + 6000, 'craft.proposal_resolved', { proposal: 'c000000000b', state: 'rejected' }),
+    // A proposal that applied itself after its term is an accepted one.
+    at(from + day + 7000, 'craft.proposal_resolved', { proposal: 'c000000000c', state: 'accepted', auto: 1 }),
+    at(from + day + 9000, 'craft.effect_measured', { proposal: 'c000000000a', effect: 'better' }),
+  ];
+  assert.deepEqual(summarize(rows).craft, { proposed: 2, accepted: 2, rejected: 1, last: new Date(from + day + 9000).toISOString() });
+  assert.deepEqual(summarize([]).craft, { proposed: 0, accepted: 0, rejected: 0, last: null });
+  // The proposals that wait for a decision are a state, not rows of a bucket: the caller gives the count at the end of each bucket.
+  const points = series(rows, from, from + 3 * day, day, (end) => (end - from) / day);
+  assert.deepEqual(points.map((p) => [p.measures.craft_proposed, p.measures.craft_accepted, p.measures.craft_rejected, p.measures.craft_last_ts, p.measures.craft_open]), [
+    [2, 0, 0, (from + 3000) / 1000, 1],
+    [0, 2, 1, (from + day + 9000) / 1000, 2],
+    // A day without a row of the craft has no moment of a last row: the dashboard keeps the one before.
+    [0, 0, 0, null, 3],
+  ]);
+  // Without the count of the caller the number of the waiting proposals has no value.
+  assert.equal(series(rows, from, from + day, day)[0]?.measures.craft_open, null);
+  for (const name of ['craft_proposed', 'craft_accepted', 'craft_rejected', 'craft_open', 'craft_last_ts'] as const) assert.ok(MEASURES.includes(name), name);
 });

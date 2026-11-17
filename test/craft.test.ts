@@ -12,7 +12,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { approveContract, proposeContract, type Runtime } from '../src/core/runtime.ts';
 import type { JournalRow } from '../src/contracts/journal.ts';
-import { applyDue, detect, listProposals, measure, propose, resolveProposal, proposalLine } from '../src/craft/craft.ts';
+import { applyDue, detect, listProposals, openAt, measure, propose, resolveProposal, proposalLine } from '../src/craft/craft.ts';
 import { addRecord, countUses, listRecords, restoreRecord, searchRecords } from '../src/memory/store.ts';
 import { writeWeek, weekText } from '../src/craft/weekly.ts';
 import { loadCases } from './cases.ts';
@@ -831,4 +831,19 @@ test('craft: the summary names the targets, and the packs set how often it is wr
   // The form of the section of the targets.
   assert.deepEqual(validateSettings({ pack: 1, level: 'person', name: 'me', targets: { hook_ms_p95: 300, probe_noise: 0, asks_per_task: 1.5, disputed: -1, 'Bad Name': 1 } }, 'person').errors.map((e) => `${e.code} ${e.path}`).sort(), ['bad_name targets.Bad Name', 'not_integer targets.asks_per_task', 'not_positive targets.disputed']);
   assert.equal(validateSettings({ pack: 1, level: 'person', name: 'me', targets: [] }, 'person').errors[0]?.code, 'not_object');
+});
+
+test('craft: the proposals that wait for a decision at a moment are those made before it and not resolved before it', () => {
+  const t = (day: number): string => new Date(Date.UTC(2026, 10, day)).toISOString();
+  const list = [
+    { created: t(10), state: 'accepted', resolved: t(12) },
+    { created: t(11), state: 'rejected', resolved: t(13) },
+    { created: t(12), state: 'open' },
+    // A proposal with a term waits too: the human can still say "no".
+    { created: t(13), state: 'open', auto_at: t(20) },
+  ];
+  const at = (day: number): number => openAt(list, Date.UTC(2026, 10, day));
+  // A moment is the end of a bucket: a proposal made or resolved at that moment belongs to the next one.
+  assert.deepEqual([at(10), at(11), at(12), at(13), at(14), at(30)], [0, 1, 2, 2, 2, 2]);
+  assert.equal(openAt([], Date.UTC(2026, 10, 14)), 0);
 });
