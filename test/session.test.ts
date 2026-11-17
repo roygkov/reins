@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPacks } from '../src/packs/packs.ts';
 import { openJournal, readJournal } from '../src/journal/writer.ts';
+import { readSession } from '../src/core/sessions.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { applyEvent, loadTask, mutateTask, openScenario, openTasks, submitReport, type Runtime } from '../src/core/runtime.ts';
 import { workNow, workState } from '../src/core/work.ts';
@@ -699,11 +700,12 @@ test('session: a fix after a review with findings is returned until the review r
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
   assert.equal(loadTask(b.rt, second.task)?.state, 'executing');
-  // Once for a request: the second stop passes.
-  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: second.task, label: 'not_verified', changed: true });
-  // The review ran again on the fix and left nothing to fix: later changes are free of this rule.
+  // The next request, with no second stop before it: the session still holds the review with the finding.
   const third = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  assert.deepEqual(readSession(b.rt, 's1')?.reviews?.map((r) => [r.task, r.open]), [[id, 1]]);
+  // The review ran again on the fix and left nothing to fix: it ends the record. Later changes are free of this rule.
   review(b, 'note', 'the fix of the finding here');
+  assert.equal(readSession(b.rt, 's1')?.reviews, undefined);
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'one more change after it\n');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: third.task, label: 'not_verified', changed: true });
 });
@@ -736,8 +738,23 @@ test('session: a review under way in the request of the fix holds the return bac
   const next = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
   // The agent opened the review of the fix and stopped before its report.
-  assert.ok(openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' }).ok);
+  const under = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(under.ok);
+  if (!under.ok) return;
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: next.task, label: 'not_verified', changed: true });
+  // The same with a review that a client without a window took for its run: the author opened it.
+  const c = reviewBox();
+  humanRequest(c.rt, { session: 's1', cwd: c.cwd });
+  fs.writeFileSync(path.join(c.cwd, 'a.txt'), 'a changed line of the work\n');
+  review(c, 'should-fix', 'a changed line of the work');
+  agentStopped(c.rt, { session: 's1', cwd: c.cwd });
+  const fix = humanRequest(c.rt, { session: 's1', cwd: c.cwd });
+  fs.writeFileSync(path.join(c.cwd, 'a.txt'), 'the fix of the finding here\n');
+  const run = openScenario(c.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(run.ok);
+  if (!run.ok) return;
+  assert.equal(resumeTask(c.rt, run.task.id, 'headless'), true);
+  assert.deepEqual(agentStopped(c.rt, { session: 's1', cwd: c.cwd }), { task: fix.task, label: 'not_verified', changed: true });
 });
 
 test('session: a review of another repository neither replaces nor ends the review of this one', () => {
@@ -799,11 +816,14 @@ test('session: a review belongs to the session that opened it, also when another
   humanRequest(b.rt, { session: 's1', cwd: b.cwd });
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
-  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
-  // The review of the fix, again without a window, leaves nothing to fix: it ends the review of the session that opened it.
+  // The next request, with no second stop before it: the record of the author is still there.
   const next = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  assert.deepEqual(readSession(b.rt, 's1')?.reviews?.map((r) => r.task), [id]);
+  // The review of the fix, again without a window, leaves nothing to fix: it ends the review of the session that opened it.
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the second fix of the finding\n');
   report('note', 'the second fix of the finding');
+  assert.equal(readSession(b.rt, 's1')?.reviews, undefined);
+  assert.equal(readSession(b.rt, 'headless')?.reviews, undefined);
   fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a change after the clean review\n');
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: next.task, label: 'not_verified', changed: true });
 });
