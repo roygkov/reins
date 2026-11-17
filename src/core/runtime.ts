@@ -277,6 +277,7 @@ export function openByForm(rt: Runtime, value: string, opts: { session?: string 
 function hold(rt: Runtime, task: Task, session: string | undefined): void {
   if (session === undefined) return;
   task.session = session;
+  task.opener = session;
   // The tasks that the request of now opened: at a stop they say that a check of its change is under way.
   withSession(rt, session, (now) => ({ next: { ...now, scenario: task.id, opened: [...(now.opened ?? []), task.id].slice(-20) }, result: undefined }));
 }
@@ -931,13 +932,16 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
 // ended is not written.
 const MAX_REVIEWS = 20;
 function noteReview(rt: Runtime, task: Task, answer: Answer): void {
-  if (answer.result !== 'PASS' || answer.recheck === undefined || task.session === undefined || task.scenario === undefined) return;
+  // The review belongs to the session that opened it: a client without a window takes the task
+  // for its run and ends, and the session of the author must see the answer.
+  const session = task.opener ?? task.session;
+  if (answer.result !== 'PASS' || answer.recheck === undefined || session === undefined || task.scenario === undefined) return;
   if (task.work === undefined || task.root === undefined) return;
   const top = workTop(task.root);
   if (top === null) return;
   const { id, scenario } = task;
   const open = answer.recheck;
-  withSession(rt, task.session, (now) => {
+  withSession(rt, session, (now) => {
     const others = (now.reviews ?? []).filter((r) => r.scenario !== scenario || r.top !== top);
     if (open === 0 && others.length === (now.reviews ?? []).length) return { next: null, result: undefined };
     const reviews = open > 0 ? [...others, { task: id, scenario, open, top }].slice(-MAX_REVIEWS) : others;

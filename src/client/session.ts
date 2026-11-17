@@ -264,7 +264,7 @@ export function humanRequest(rt: Runtime, e: SessionEvent): { task: string; long
     // A new request can be returned again: the mark of the return belongs to one request.
     // The list of the scenario tasks that a request opened starts anew: a task that is still open
     // from an earlier request is not a check of the change of this one.
-    const { returned: _returned, head: _head, top: _top, opened: _opened, ...rest } = file;
+    const { returned: _returned, returnedFor: _for, head: _head, top: _top, opened: _opened, ...rest } = file;
     return { next: { ...rest, task: opened.id, work, at: Date.now(), ...(facts !== null ? { head: facts.head, top: facts.top } : {}), requests }, result: { before: file.task, task: opened.id, requests } };
   });
   if (typeof before === 'string' && loadTask(rt, before)?.state === 'executing') applyEvent(rt, before, { type: 'expire' }, 'harness');
@@ -349,6 +349,16 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   // A free task that changed the work and that no check judged is returned once for a request
   // (contracts AA26 - AA30). The stop is then not the end of the request: its free task stays open.
   const max = rt.merged.context.maxFreeUnchecked;
+  // The second stop of a request that was returned for a review: the agent said to the human why
+  // the review does not run again. The human read it: that review returns no later request.
+  if (seen?.returned === true && seen.returnedFor !== undefined) {
+    const answered = seen.returnedFor;
+    withSession(rt, e.session, (file) => {
+      const { returnedFor: _for, reviews, ...rest } = file;
+      const left = (reviews ?? []).filter((r) => r.task !== answered);
+      return { next: left.length > 0 ? { ...rest, reviews: left } : rest, result: undefined };
+    });
+  }
   // A review of this session left findings to fix and the request changed the work after it: the
   // stop is returned once, until the same scenario judges the work as it is now (AA31 - AA34).
   // The session keeps one review for a scenario in a repository: the ones of this repository are
@@ -357,10 +367,10 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
     const due = (seen.reviews ?? []).find((r) => {
       if (r.top !== facts.top) return false;
       const reviewed = loadTask(rt, r.task);
-      return reviewed !== null && reviewed.session === e.session && reviewed.work !== undefined && reviewed.work !== now;
+      return reviewed !== null && (reviewed.opener ?? reviewed.session) === e.session && reviewed.work !== undefined && reviewed.work !== now;
     });
     if (due !== undefined && scenarioSays(rt, e.session, seen, facts.top, now) !== 'open') {
-      patchSession(rt, e.session, { returned: true });
+      patchSession(rt, e.session, { returned: true, returnedFor: due.task });
       return { ...unguarded, unreviewed: { task: due.task, scenario: due.scenario, open: due.open } };
     }
   }
