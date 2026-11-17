@@ -48,7 +48,7 @@ function box(extra: Record<string, object> = {}): Box {
   const stateDir = path.join(root, 'state');
   fs.mkdirSync(path.join(stateDir, 'tasks'), { recursive: true });
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir, human_channel: 'any' }));
   return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', configFile: config }, root, cwd, config };
 }
 const shell = (b: Box, command: string, cwd = b.cwd) => beforeAction(b.rt, { cwd, tool: 'shell', input: { command }, session: 's1' }, CLIENT);

@@ -25,7 +25,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ConfigError, loadRuntime } from './client/config.ts';
+import { ConfigError, loadRuntime, readConfig } from './client/config.ts';
+import { humanChannel, humanDecision } from './client/human.ts';
 import { runProbes } from './client/probes.ts';
 import { runTask, runTasks } from './client/run.ts';
 import { resumeTask } from './client/session.ts';
@@ -84,6 +85,7 @@ const HARNESS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 
 // The variables of the environment where the clients give a command the number of its session.
 // Each client names its variable in the file `client.json` of its directory: the core names no client.
+const AGENT_ENV: string[] = [];
 const SESSION_ENV: readonly string[] = ((): string[] => {
   const names: string[] = [];
   try {
@@ -93,6 +95,9 @@ const SESSION_ENV: readonly string[] = ((): string[] => {
         const value: unknown = JSON.parse(fs.readFileSync(path.join(root, client, 'client.json'), 'utf8'));
         const name = value !== null && typeof value === 'object' ? (value as { session_env?: unknown }).session_env : undefined;
         if (typeof name === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(name)) names.push(name);
+        // `agent_env`: the other variables that the client gives to the shell of its agent.
+        const more = value !== null && typeof value === 'object' ? (value as { agent_env?: unknown }).agent_env : undefined;
+        if (Array.isArray(more)) for (const one of more) if (typeof one === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(one)) AGENT_ENV.push(one);
       } catch {
         // this client names no variable
       }
@@ -279,6 +284,19 @@ function report(rt: Runtime, id: string, source: string): Out {
 
 function main(args: string[]): Out {
   const [command, first, ...rest] = args;
+  // A decision of the human runs in a terminal and in no shell of a client: the text of a
+  // command can hide from the barrier, the place where the command runs cannot.
+  if (humanDecision(args)) {
+    let mode: 'terminal' | 'any' = 'terminal';
+    try {
+      mode = readConfig().humanChannel ?? 'terminal';
+    } catch (e) {
+      if (e instanceof ConfigError) throw new Stop(e.code, { file: e.file });
+      throw e;
+    }
+    const refusal = humanChannel({ tty: process.stdin.isTTY === true, env: process.env, markers: [...SESSION_ENV, ...AGENT_ENV], mode });
+    if (refusal !== null) throw new Stop('human_only', { reason: refusal, next: 'this command is a decision of the human: the human runs it in a terminal, outside the client' });
+  }
   if (command === 'scenarios' && first === undefined) return scenarios(runtime());
   // The merge of the packs: which pack is connected, which manifest was refused, which level gave each value.
   if (command === 'packs' && first === undefined) return { ok: true, ...mergeView(runtime()) };

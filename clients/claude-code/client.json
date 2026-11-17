@@ -1,3 +1,4 @@
 {
-  "session_env": "CLAUDE_CODE_SESSION_ID"
+  "session_env": "CLAUDE_CODE_SESSION_ID",
+  "agent_env": ["CLAUDECODE"]
 }

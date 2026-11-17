@@ -285,7 +285,7 @@ export function touchedPlaces(command: string, cwd: string, home: string, every 
 // a variable in the place of the program or of the command, a shell that reads its commands from
 // a heredoc or a pipe, a program that runs its words as a command (`find -exec`, `watch`, `ssh`),
 // and code of an interpreter that names the command and starts a process.
-const HUMAN_WORDS = /^(stop|pause|enable|approve|dispute|memory (veto|decide|restore|import|share|wrong|step|end)|craft (accept|reject)|queue (approve|reject)|retry|run|tick run|fire)( |$)/;
+export const HUMAN_WORDS = /^(stop|pause|enable|approve|dispute|memory (veto|decide|restore|import|share|wrong|step|end)|craft (accept|reject)|queue (approve|reject)|retry|run|tick run|fire)( |$)/;
 const HUMAN_HEADS = new Set(['memory', 'craft', 'queue', 'tick']);
 const HUMAN_TEXT = /(^|[\s;&|(/`])(reins|cli\.ts)\s+(stop|pause|enable|approve|dispute|memory\s+(veto|decide|restore|import|share|wrong|step|end)|craft\s+(accept|reject)|queue\s+(approve|reject)|retry|run|tick\s+run|fire)(\s|$|[`)])/;
 const namesHuman = (text: string): boolean => HUMAN_TEXT.test(text.replace(/\$?['"\\]/g, ''));

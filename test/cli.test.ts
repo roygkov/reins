@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPacks } from '../src/packs/packs.ts';
 import { readJournal } from '../src/journal/writer.ts';
+import { humanChannel, humanDecision } from '../src/client/human.ts';
 import { loadCases } from './cases.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
@@ -49,7 +50,7 @@ function box(options: { flag?: boolean; instructions?: string | null; manifest?:
   if (options.instructions !== null) fs.writeFileSync(path.join(root, 'project/manifests/change-review.md'), options.instructions ?? INSTRUCTIONS);
   const state = path.join(root, 'state');
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs: { organization: path.join(root, 'organization'), project: path.join(root, 'project'), person: path.join(root, 'person') }, state_dir: state }));
+  fs.writeFileSync(config, JSON.stringify({ packs: { organization: path.join(root, 'organization'), project: path.join(root, 'project'), person: path.join(root, 'person') }, state_dir: state, human_channel: 'any' }));
   return { root, config, state, tree };
 }
 
@@ -768,4 +769,60 @@ test('cli: a command that the state of a task does not take says the state and t
   assert.equal(reins(b, ['approve', id]).json.state, 'closed');
   assert.deepEqual(reins(b, ['finish', id]).json, { ok: false, error: 'bad_event', state: 'closed', label: 'approved_by_human' });
   assert.deepEqual(reins(b, ['report', id, '-'], 'a draft').json, { ok: false, error: 'bad_event', state: 'closed', label: 'approved_by_human' });
+});
+
+// ---- A decision of the human comes from a terminal, never from a shell of a client.
+
+test('cli: a decision of the human needs a terminal and a shell that is not of a client', () => {
+  const b = box();
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8')) as Record<string, unknown>;
+  const write = (channel?: string): void => {
+    const { human_channel: _, ...rest } = config;
+    fs.writeFileSync(b.config, JSON.stringify(channel === undefined ? rest : { ...rest, human_channel: channel }));
+  };
+  const call = (args: string[], more: Record<string, string> = {}): Out => {
+    const p = spawnSync(process.execPath, [CLI, ...args], { env: { PATH: process.env.PATH ?? '', HOME: b.root, REINS_CONFIG: b.config, ...more }, input: '', encoding: 'utf8', cwd: b.tree });
+    return { code: p.status, json: JSON.parse(p.stdout), stdout: p.stdout };
+  };
+  const state = (id: string): string | undefined => (call(['tasks']).json.tasks as { task: string; state: string }[]).find((t) => t.task === id)?.state;
+  write('any');
+  const id = call(['open', 'change-review', 'change_id=7']).json.task as string;
+  // No key in the config: the command reads no terminal, so it is not a word of the human.
+  write();
+  for (const args of [['stop', id], ['approve', id], ['retry', id], ['pause', '5'], ['queue', 'approve', 'q000000000000'], ['memory', 'decide', 'text', 'because=cause'], ['craft', 'accept', 'c00000000000']]) {
+    const r = call(args);
+    assert.deepEqual([r.code, r.json.ok, r.json.error, r.json.reason], [1, false, 'human_only', 'no_terminal'], args.join(' '));
+    assert.match(String(r.json.next), /terminal/);
+  }
+  assert.equal(state(id), 'executing');
+  assert.equal(fs.existsSync(path.join(b.state, 'pause.json')), false);
+  // The shell of a client: the variables of the client say so, whatever the config says.
+  write('any');
+  for (const more of [{ CLAUDE_CODE_SESSION_ID: 's1' }, { CLAUDECODE: '1' }]) {
+    const r = call(['stop', id], more);
+    assert.deepEqual([r.code, r.json.error, r.json.reason], [1, 'human_only', 'agent_shell'], JSON.stringify(more));
+  }
+  assert.equal(state(id), 'executing');
+  // A command of the agent is no decision: it runs in the shell of a client as before.
+  assert.equal(call(['tasks'], { CLAUDECODE: '1' }).json.ok, true);
+  assert.equal(call(['input', id], { CLAUDECODE: '1' }).json.ok, true);
+  // A start of a client (`run`, `tick run`, `fire`) is no decision either: the timer has no terminal.
+  assert.notEqual(call(['tick', 'run']).json.error, 'human_only');
+  // The config of a test names the other channel: the command works without a terminal.
+  assert.deepEqual(call(['stop', id]).json, { ok: true, task: id, state: 'closed', label: 'not_verified' });
+  // A value that the config does not know is a bad config.
+  write('agent');
+  assert.equal(call(['tasks']).json.error, 'bad_config');
+});
+
+test('cli: the channel of the human is a terminal on the standard input with no variable of a client', () => {
+  const markers = ['CLAUDE_CODE_SESSION_ID', 'CLAUDECODE'];
+  assert.equal(humanChannel({ tty: true, env: {}, markers, mode: 'terminal' }), null);
+  assert.equal(humanChannel({ tty: false, env: {}, markers, mode: 'terminal' }), 'no_terminal');
+  assert.equal(humanChannel({ tty: false, env: {}, markers, mode: 'any' }), null);
+  assert.equal(humanChannel({ tty: true, env: { CLAUDECODE: '1' }, markers, mode: 'terminal' }), 'agent_shell');
+  assert.equal(humanChannel({ tty: true, env: { CLAUDECODE: '' }, markers, mode: 'any' }), 'agent_shell');
+  // The words that are a decision: the list of the barrier without the starts of a client.
+  for (const words of ['stop t1', 'pause 5', 'enable x', 'approve t1', 'dispute t1', 'retry t1', 'memory decide x', 'memory wrong m1', 'memory step m1 x', 'craft reject c1', 'queue approve q1']) assert.equal(humanDecision(words.split(' ')), true, words);
+  for (const words of ['run x', 'tick run', 'fire x', 'tasks', 'report t1 -', 'memory find x', 'memory next m1 x', 'queue', 'craft', 'tick']) assert.equal(humanDecision(words.split(' ')), false, words);
 });

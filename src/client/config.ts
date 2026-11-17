@@ -16,7 +16,7 @@ import { PACK_LEVELS, loadPacks, type PackLevel } from '../packs/packs.ts';
 // cache has no core beside it: its entry loads the adapter from this directory.
 // `runner`: the command that starts a client without a window, as a list of words; `{task}` and
 // `{prompt}` in a word are filled in, and `{model}` with the model of the level of the task. `runner_timeout_s`: the time limit of one run.
-const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'script_sandbox', 'repo_packs', 'runner', 'runner_timeout_s', 'check_timeout_s', 'runner_parallel', 'notify', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos'];
+const KEYS = ['packs', 'source', 'state_dir', 'memory_dir', 'memory_commit', 'script_sandbox', 'repo_packs', 'runner', 'runner_timeout_s', 'check_timeout_s', 'runner_parallel', 'notify', 'markers', 'protected_branches', 'prod_hosts', 'prod_scripts', 'prod_fastlane_lanes', 'mcp_prod_servers', 'forms', 'ignore', 'rules', 'repos', 'human_channel'];
 
 export class ConfigError extends Error {
   code: 'no_config' | 'bad_config';
@@ -28,7 +28,7 @@ export class ConfigError extends Error {
   }
 }
 
-export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; checkScriptTimeoutMs?: number; runnerParallel?: number } {
+export function readConfig(): { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; checkScriptTimeoutMs?: number; runnerParallel?: number; humanChannel?: 'any' } {
   const file = process.env.REINS_CONFIG ?? path.join(os.homedir(), '.config', 'reins', 'config.json');
   let text: string;
   try {
@@ -71,7 +71,9 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   if (value.check_timeout_s !== undefined && (typeof value.check_timeout_s !== 'number' || !Number.isInteger(value.check_timeout_s) || value.check_timeout_s < 1 || value.check_timeout_s > 86_400)) throw bad;
   // How many clients the schedule or an event runs at one time, each in its own work tree.
   if (value.runner_parallel !== undefined && (typeof value.runner_parallel !== 'number' || !Number.isInteger(value.runner_parallel) || value.runner_parallel < 1 || value.runner_parallel > 8)) throw bad;
-  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; checkScriptTimeoutMs?: number; runnerParallel?: number } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
+  // The channel of a decision of the human: a terminal, unless the config of a test names `any`.
+  if (value.human_channel !== undefined && value.human_channel !== 'terminal' && value.human_channel !== 'any') throw bad;
+  const out: { file: string; packs: Partial<Record<PackLevel, string>>; stateDir: string; repoPacks: boolean; memoryDir?: string; memoryCommit?: boolean; scriptSandbox?: boolean; notify?: string[]; runner?: string[]; runnerTimeoutMs?: number; checkScriptTimeoutMs?: number; runnerParallel?: number; humanChannel?: 'any' } = { file, packs, stateDir, repoPacks: value.repo_packs === true };
   if (Array.isArray(value.runner)) out.runner = value.runner as string[];
   if (Array.isArray(value.notify)) out.notify = value.notify as string[];
   if (typeof value.runner_timeout_s === 'number') out.runnerTimeoutMs = value.runner_timeout_s * 1000;
@@ -80,6 +82,7 @@ export function readConfig(): { file: string; packs: Partial<Record<PackLevel, s
   if (typeof value.memory_dir === 'string') out.memoryDir = value.memory_dir;
   if (value.memory_commit === true) out.memoryCommit = true;
   if (value.script_sandbox === true) out.scriptSandbox = true;
+  if (value.human_channel === 'any') out.humanChannel = 'any';
   return out;
 }
 

@@ -47,7 +47,7 @@ function box(): Box {
   const state = path.join(root, 'state');
   const config = path.join(root, 'config.json');
   const packs = path.join(root, 'packs');
-  fs.writeFileSync(config, JSON.stringify({ packs: { organization: path.join(packs, 'organization'), project: path.join(packs, 'project'), person: path.join(packs, 'person') }, state_dir: state }));
+  fs.writeFileSync(config, JSON.stringify({ packs: { organization: path.join(packs, 'organization'), project: path.join(packs, 'project'), person: path.join(packs, 'person') }, state_dir: state, human_channel: 'any' }));
   return { root, config, state, cwd };
 }
 

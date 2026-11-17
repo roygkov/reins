@@ -46,7 +46,7 @@ function box(memory: unknown = { write: ['case'], class: 'auto' }): Box {
   const packs = { organization: path.join(root, 'packs/organization'), project: path.join(root, 'packs/project'), person: path.join(root, 'packs/person') };
   const stateDir = path.join(root, 'state');
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir, human_channel: 'any' }));
   return { rt: { merged: loadPacks(packs), stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000 }, root, cwd, config };
 }
 function scenario(b: Box, name = 'change-review'): string {

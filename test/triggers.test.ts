@@ -45,7 +45,7 @@ function box(o: Opts = {}): Box {
   const merged = loadPacks(packs);
   const stateDir = path.join(root, 'state');
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir, human_channel: 'any' }));
   return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000 }, root, cwd, config };
 }
 const SCHEDULED = { trigger: { kind: 'schedule', value: 'daily 09:00' } };

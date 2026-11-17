@@ -46,7 +46,7 @@ function box(): Box {
   assert.deepEqual(merged.packs.map((p) => p.errors), [[], [], []]);
   const stateDir = path.join(root, 'state');
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir, human_channel: 'any' }));
   return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000, configFile: config }, root, cwd, config, env: { PATH: process.env.PATH ?? '', HOME: root, REINS_CONFIG: config } };
 }
 const levels = (b: Box) => readJournal(b.rt.journal.file).filter((r) => r.kind === 'harness.client_level_detected').map((r) => r.data?.level);

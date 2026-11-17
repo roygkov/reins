@@ -43,7 +43,7 @@ function box(runner: string | null, minimal: Record<string, unknown> = {}): Box 
   const script = path.join(root, 'client.cjs');
   if (runner !== null) fs.writeFileSync(script, `const fs = require('fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), headless: process.env.REINS_HEADLESS, cwd: process.cwd() }) + '\\n');\n${runner}\n`);
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: path.join(root, 'state'), ...(runner !== null ? { runner: [process.execPath, script, '{task}', '{prompt}'] } : {}) }));
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: path.join(root, 'state'), human_channel: 'any', ...(runner !== null ? { runner: [process.execPath, script, '{task}', '{prompt}'] } : {}) }));
   const run = (args: string[], env: Record<string, string> = {}) => {
     const p = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', cwd, env: { PATH: process.env.PATH ?? '', HOME: root, REINS_CONFIG: config, ...env } });
     return { code: p.status, json: JSON.parse(p.stdout) };

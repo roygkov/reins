@@ -70,7 +70,7 @@ function box(review: Record<string, unknown> = {}): Box {
   assert.deepEqual(merged.rejected, []);
   const stateDir = path.join(root, 'state');
   const config = path.join(root, 'config.json');
-  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir }));
+  fs.writeFileSync(config, JSON.stringify({ packs, state_dir: stateDir, human_channel: 'any' }));
   return { rt: { merged, stateDir, journal: openJournal(stateDir), project: 'p1a2b3c4', collectTimeoutMs: 10_000 }, root, cwd, config, env: { PATH: process.env.PATH ?? '', HOME: root, REINS_CONFIG: config } };
 }
 function scenario(b: Box, session = 's1'): string {
