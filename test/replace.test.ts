@@ -260,9 +260,18 @@ test('pause: a command of the shell that cannot be undone or that another human 
   const b = box();
   pause(b.rt, 30);
   const run = (command: string) => beforeAction(b.rt, { ...e(b), tool: 'shell', input: { command } }, CLIENT);
-  for (const command of ['git push origin --delete main', 'git push --mirror origin', 'gh api -X POST repos/o/r/issues/1/comments -f body=x']) {
-    assert.equal(run(command).outcome, 'ask', command);
+  // The question is the question of the rule of the gate, not of another rule.
+  for (const [command, rule] of [
+    ['git push origin --delete main', 'git.push-delete'],
+    ['git push --mirror origin', 'git.push-mirror'],
+    ['gh api -X POST repos/o/r/issues/1/comments -f body=x', 'hosting.api-write'],
+  ] as const) {
+    const r = run(command);
+    assert.deepEqual([r.outcome, r.rule], ['ask', rule], command);
   }
+  // A delete of a branch that is not protected is no question. The refspec form `:<ref>` is in the
+  // corpus of the gate: it needs a repository with a network remote.
+  assert.equal(run('git push origin --delete feature/old').outcome, 'allow');
   // A local command of the class git passes during the pause, as before.
   assert.equal(run('git commit --no-verify -m wip').rule, 'paused');
 });

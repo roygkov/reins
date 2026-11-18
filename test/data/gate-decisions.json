@@ -730,6 +730,36 @@
   "expect": "ask git.push-delete"
  },
  {
+  "repo": "onfeature",
+  "command": "git push origin :feature/old",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin :main",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin +:main",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin :refs/tags/v1.0",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin :v1.2.0",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin :",
+  "expect": "ask git.push-delete"
+ },
+ {
   "repo": "proj",
   "command": "git push origin HEAD",
   "expect": "allow"

@@ -1886,7 +1886,7 @@ flowchart TB
 
 | Класс | Правила | Что ловит | Пауза снимает вопрос |
 |---|---|---|---|
-| `protected` | `git.push-protected`, `git.force-protected`, `git.push-delete`, `git.push-mirror`, `hosting.merge`, `hosting.repo-delete`, `hosting.api-write` | push в защищённую ветку, удаление удалённой ссылки, `--mirror`, слияние и удаление на хостинге | нет |
+| `protected` | `git.push-protected`, `git.force-protected`, `git.push-delete`, `git.push-mirror`, `hosting.merge`, `hosting.repo-delete`, `hosting.api-write` | push в защищённую ветку, удаление защищённой ветки или тега в удалённом репозитории, `--mirror`, слияние и удаление на хостинге | нет |
 | `git` | `git.merge-protected`, `git.no-verify`, `git.alias`, `git.remote-ref.*` | локальный merge в защищённую ветку, обход хуков, запись локальных ссылок на удалённые ветки | да |
 | `git-discard` | `git.discard.*` | потеря незакоммиченной работы: `reset`, `clean`, `checkout`, `restore`, `stash`, `branch`, `worktree` | нет |
 | `prod-default` | `git.push-tag`, `git.push-tags`, `git.push-prod-remote`, `release.*`, `deploy.*`, `script.prod`, `http.prod-write` | теги, релизы, выкладка, запись по HTTP на рабочий хост | нет |
@@ -1899,6 +1899,7 @@ flowchart TB
 | `hosting` | `hosting.api-write` вне защищённой ветки | запись через API хостинга: её видит другой человек | нет |
 | `user` | `user.<id>` | формы человека и пакетов: вопрос или отказ | да (вопрос) |
 
+- Правило `git.push-delete` спрашивает об удалении защищённой ветки или тега. Обе формы команды идут через одно условие: `git push --delete <ветка>` и refspec `:<ветка>`. Удаление незащищённой ветки проходит. Удаление без имени ссылки спрашивает.
 - Конверт задачи на команды оболочки не действует: ключ разрешения строится только для вызова инструмента. Вопрос команды оболочки снимает ответ человека или пауза.
 - Вопрос о записи через API хостинга идёт под правилом `hosting.api-write`, а не `default.outward-write`. Слово о сверке цитат к нему не добавляется.
 - Среду команды оболочки называет класс правила, а не цель. Классы `prod-default`, `prod-env`, `infra`, `secrets` это производственная среда. Классы `data`, `publish`, `git-discard`, `blast-radius`, `protected` это неизвестная среда. Классы `git`, `hosting`, `user` это локальная среда.
@@ -1916,6 +1917,7 @@ flowchart TB
 ### Чего гейт не ловит
 
 - Запись вне рабочего дерева без опасного класса: `curl -X POST` на хост без маркера, `rm` без `-r` вне проекта, перенаправление вывода в файл.
+- Запись наружу через команды хостинга, кроме `api`, слияния и удаления: `gh pr comment`, `gh issue comment`, `gh pr create`, `glab mr note`, `glab mr create`. Они проходят без вопроса и без признака «наружу».
 - Команду внутри скрипта, heredoc для оболочки, pipe в `sh`, `ssh`, `python -c`.
 - Команду, которую он не понял: закрытия «спросить, потому что не разобрано» нет.
 

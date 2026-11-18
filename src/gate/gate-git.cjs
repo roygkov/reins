@@ -46,9 +46,12 @@ function evalGit(seg, cfg, info, cwd) {
   const refspecs = pos.slice(1);
   if (remote && (remote === 'heroku' || ctxr.isProdName(remote, cfg.markers))) return { decision: 'ask', id: 'git.push-prod-remote', cls: 'prod-default', why: 'remote "' + remote + '" deploys on push' };
   if (mirror) return { decision: 'ask', id: 'git.push-mirror', cls: 'protected', why: '--mirror/--prune can delete remote refs' };
+  // A delete of a remote ref asks when the ref is a protected branch or a tag, in both forms of the
+  // command: `--delete <ref>` and the refspec `:<ref>`. A ref that is not named asks too.
+  const guarded = (r) => r === '' || matchGlob(r.replace(/^refs\/(heads|tags)\//, ''), protectedBranches(cfg, info)) || /^(refs\/tags\/|v\d)/.test(r);
   if (del) {
-    const hit = refspecs.find((r) => matchGlob(r.replace(/^refs\/(heads|tags)\//, ''), protectedBranches(cfg, info)) || /^(refs\/tags\/|v\d)/.test(r));
-    if (hit || !refspecs.length) return { decision: 'ask', id: 'git.push-delete', cls: 'protected', why: 'deletes remote ref "' + (hit || '?') + '"' };
+    const hit = refspecs.find(guarded);
+    if (hit !== undefined || !refspecs.length) return { decision: 'ask', id: 'git.push-delete', cls: 'protected', why: 'deletes remote ref "' + (hit || '?') + '"' };
     return null;
   }
   if (tags) return { decision: 'ask', id: 'git.push-tags', cls: 'prod-default', why: 'pushing tags usually starts a release' };
@@ -59,7 +62,10 @@ function evalGit(seg, cfg, info, cwd) {
   for (const r of targets) {
     const plus = r.startsWith('+');
     const s = plus ? r.slice(1) : r;
-    if (s.startsWith(':')) return { decision: 'ask', id: 'git.push-delete', cls: 'protected', why: 'refspec "' + r + '" deletes a remote ref' };
+    if (s.startsWith(':')) {
+      if (guarded(s.slice(1))) return { decision: 'ask', id: 'git.push-delete', cls: 'protected', why: 'refspec "' + r + '" deletes a remote ref' };
+      continue;
+    }
     let dst = (s.includes(':') ? s.split(':').pop() : s).replace(/^refs\/heads\//, '');
     if (/^(HEAD|@)$/.test(dst)) dst = branchNow || '';
     if (/^refs\/tags\//.test(dst) || /^v\d/.test(dst)) return { decision: 'ask', id: 'git.push-tag', cls: 'prod-default', why: 'pushing tag "' + dst + '" usually starts a release' };
