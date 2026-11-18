@@ -666,6 +666,26 @@ test('cli: the config gives the time limit of a check script, and the answer nam
   }
 });
 
+test('cli: a check script gets the time limit of the harness in its input, from the config and by default', () => {
+  const b = box({ manifest: (m) => void (m.done = { kind: 'command', check: 'tests', retries: 1 }) });
+  const check = path.join(b.root, 'project/check/tests.sh');
+  const seen = path.join(b.root, 'seen.json');
+  fs.mkdirSync(path.dirname(check), { recursive: true });
+  // The script runs in its own directory: it keeps its input two levels up, outside the packs.
+  fs.writeFileSync(check, '#!/bin/sh\ncat >../../seen.json\nprintf \'%s\' \'{"outputs":{"result":"PASS"}}\'\n', { mode: 0o755 });
+  const config = JSON.parse(fs.readFileSync(b.config, 'utf8'));
+  const limit = (): unknown => {
+    fs.rmSync(seen, { force: true });
+    const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+    reins(b, ['report', id, '-'], 'green');
+    return JSON.parse(fs.readFileSync(seen, 'utf8')).limit_s;
+  };
+  // Without the key the limit is 300 seconds (W12).
+  assert.equal(limit(), 300);
+  fs.writeFileSync(b.config, JSON.stringify({ ...config, check_timeout_s: 7 }));
+  assert.equal(limit(), 7);
+});
+
 test('cli: the metrics are a series of the eight numbers by day or by week, in a form with a version', () => {
   const b = box();
   reins(b, ['open', 'change-review', 'change_id=7']);

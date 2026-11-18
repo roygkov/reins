@@ -748,8 +748,8 @@ function citations(rt: Runtime, task: Task, text: string): Answer {
 const DEFAULT_CHECK_SCRIPT_MS = 5 * 60_000;
 
 // A check of the kinds "command", "artifact" and "external state": a script of a pack decides.
-// The script gets the task, its inputs and the paths of the report and of the collected results,
-// and prints one result: PASS or FAIL. A script that is missing or fails gives no answer.
+// The script gets the task, its inputs, the paths of the report and of the collected results and
+// its time limit, and prints one result: PASS or FAIL. A script that is missing or fails gives no answer.
 function scriptCheck(rt: Runtime, task: Task, report: string = reportFile(rt, task.id)): Answer {
   const names = checkNames(task);
   if (names.length === 0) return { result: 'none', reason: 'no_check', n: 0, faults: [] };
@@ -776,7 +776,8 @@ function partCheck(rt: Runtime, task: Task, name: string, report: string): { res
   if (file === undefined) return { result: 'none', reason: 'no_check' };
   const collected = taskFile(rt, task.id, '.collect');
   const timeoutMs = rt.checkScriptTimeoutMs ?? DEFAULT_CHECK_SCRIPT_MS;
-  const r = runCollect(file, { inputs: task.inputs, task: task.id, report, collected: fs.existsSync(collected) ? collected : null }, {
+  // `limit_s`: the time limit of this script, in seconds. A script that divides its time reads it here, not from the config.
+  const r = runCollect(file, { inputs: task.inputs, task: task.id, report, collected: fs.existsSync(collected) ? collected : null, limit_s: timeoutMs / 1000 }, {
     outputs: ['result'], flags: [], timeoutMs, maxBytes: 64 * 1024,
     ...(task.manifest !== undefined ? { env: connectorEnv(rt, task.manifest) } : {}),
     // A check runs the tests of the work: it writes into the directory of the work that it checks,
