@@ -815,6 +815,31 @@
   "expect": "allow"
  },
  {
+  "repo": "onfeature",
+  "command": "git push origin :notes/commits",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin --delete notes/commits",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin :remotes/origin/main",
+  "expect": "ask git.push-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin HEAD:heads/main",
+  "expect": "ask git.push-protected"
+ },
+ {
+  "repo": "onfeature",
+  "command": "git push origin feature/x:tags/release-1",
+  "expect": "ask git.push-tag"
+ },
+ {
   "repo": "proj",
   "command": "git push origin HEAD",
   "expect": "allow"

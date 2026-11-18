@@ -46,18 +46,13 @@ function evalGit(seg, cfg, info, cwd) {
   const refspecs = pos.slice(1);
   if (remote && (remote === 'heroku' || ctxr.isProdName(remote, cfg.markers))) return { decision: 'ask', id: 'git.push-prod-remote', cls: 'prod-default', why: 'remote "' + remote + '" deploys on push' };
   if (mirror) return { decision: 'ask', id: 'git.push-mirror', cls: 'protected', why: '--mirror/--prune can delete remote refs' };
-  // A delete of a remote ref asks when the ref is a protected branch or a tag, in both forms of the
-  // command: `--delete <ref>` and the refspec `:<ref>`. A ref that is not named asks too.
-  // The name is read the way git resolves it on the remote: `refs/heads/x`, `heads/x` and `x` name one
-  // branch. A tag (`refs/tags/x`, `tags/x`, `v<digit>`), a ref outside refs/heads (notes, remotes) and
-  // HEAD ask always: the name alone does not show that the ref is safe to delete.
+  // Both forms of a delete go through one condition: `--delete <ref>` and the refspec `:<ref>`.
+  // A delete of a remote ref asks unless the ref is a branch that is not protected. A ref that is not
+  // named and HEAD ask too.
   const guarded = (r) => {
     if (r === '' || /^(HEAD|@)$/.test(r)) return true;
-    const explicit = /^refs\//.test(r);
-    let n = explicit ? r.slice(5) : r;
-    if (/^tags\//.test(n) || (explicit && !/^heads\//.test(n))) return true;
-    n = n.replace(/^heads\//, '');
-    return matchGlob(n, protectedBranches(cfg, info)) || /^v\d/.test(n);
+    const k = refKind(r);
+    return k.kind !== 'branch' || matchGlob(k.name, protectedBranches(cfg, info));
   };
   if (del) {
     const hit = refspecs.find(guarded);
@@ -76,10 +71,11 @@ function evalGit(seg, cfg, info, cwd) {
       if (guarded(s.slice(1))) return { decision: 'ask', id: 'git.push-delete', cls: 'protected', why: 'refspec "' + r + '" deletes a remote ref' };
       continue;
     }
-    let dst = (s.includes(':') ? s.split(':').pop() : s).replace(/^refs\/heads\//, '');
-    if (/^(HEAD|@)$/.test(dst)) dst = branchNow || '';
-    if (/^refs\/tags\//.test(dst) || /^v\d/.test(dst)) return { decision: 'ask', id: 'git.push-tag', cls: 'prod-default', why: 'pushing tag "' + dst + '" usually starts a release' };
-    if (dst && matchGlob(dst, prot)) {
+    const raw = s.includes(':') ? s.split(':').pop() : s;
+    const k = /^(HEAD|@)$/.test(raw) ? { kind: 'branch', name: branchNow || '' } : refKind(raw);
+    const dst = k.name;
+    if (k.kind === 'tag') return { decision: 'ask', id: 'git.push-tag', cls: 'prod-default', why: 'pushing tag "' + dst + '" usually starts a release' };
+    if (k.kind === 'branch' && dst && matchGlob(dst, prot)) {
       // a push to a protected or the default branch lands work without review, like a merge (A10.04 Human Gate)
       return force || plus ? { decision: 'ask', id: 'git.force-protected', cls: 'protected', why: 'force push to protected branch "' + dst + '"' }
         : { decision: 'ask', id: 'git.push-protected', cls: 'protected', why: 'push to protected branch "' + dst + '" lands work there without a review' };
@@ -337,6 +333,19 @@ function crossProtected(spec, prot) {
   // `pr/*` cannot give `main`; an empty prefix or one a protected name or pattern starts with can
   const pre = dst.slice(0, dst.indexOf('*'));
   return prot.some((p) => { const lit = p.split('*')[0]; return p.startsWith(pre) || pre.startsWith(lit) && (p.includes('*') || p === pre); });
+}
+
+// The kind of a ref by its name, read the way git resolves a name on the remote (`refs/<name>` is
+// tried before `refs/heads/<name>`): `refs/heads/x`, `heads/x` and `x` name one branch; `refs/tags/x`,
+// `tags/x` and `v<digit>` name a tag; a name in another namespace (notes, remotes, pull requests) is
+// neither. A tag with another name and no prefix reads as a branch: the name does not tell them apart.
+const OTHER_NAMESPACE = /^(notes|remotes|pull|merge-requests|changes|replace|stash|bisect|original)\//;
+function refKind(r) {
+  const n = r.replace(/^refs\//, '');
+  if (/^heads\//.test(n)) return { kind: 'branch', name: n.slice(6) };
+  if (/^tags\//.test(n)) return { kind: 'tag', name: n.slice(5) };
+  if (/^refs\//.test(r) || OTHER_NAMESPACE.test(n)) return { kind: 'other', name: n };
+  return /^v\d/.test(n) ? { kind: 'tag', name: n } : { kind: 'branch', name: n };
 }
 
 function evalRemoteRef(sub, rest, seg, where, conf, cwd, prot) {
