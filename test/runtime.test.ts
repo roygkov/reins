@@ -181,6 +181,12 @@ test('runtime: a script of a pack gets the path of the config of the harness', (
     const opened = openScenario(rt, 'change-review', { change_id: '7' });
     assert.ok(opened.ok);
     assert.deepEqual(readCollected(rt, opened.task.id)?.diff, '/some/where/config.json');
+    // A path that is not absolute is the one that the harness itself reads: from the directory
+    // of the harness, not from the directory of the script, where the script runs.
+    process.env.REINS_CONFIG = 'some/config.json';
+    const again = openScenario(rt, 'change-review', { change_id: '7' });
+    assert.ok(again.ok);
+    assert.deepEqual(readCollected(rt, again.task.id)?.diff, path.resolve('some/config.json'));
   } finally {
     if (before === undefined) delete process.env.REINS_CONFIG;
     else process.env.REINS_CONFIG = before;

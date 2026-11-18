@@ -77,6 +77,7 @@ export function sandboxProfile(s: Sandbox): string {
 
 
 // `REINS_CONFIG`: a script that calls the command line of the harness reaches the same config.
+// The script runs in its own directory, so it gets the path as the harness reads it: absolute.
 const PASSED_ENV = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'REINS_CONFIG'] as const;
 const SUPERVISOR = fileURLToPath(new URL('./collect-child.ts', import.meta.url));
 const BACKSTOP_MS = 5000; // the supervisor enforces the limits; this is for a supervisor that hangs
@@ -85,7 +86,7 @@ export function runCollect(file: string, input: { inputs: Record<string, string 
   const env: Record<string, string> = {};
   for (const key of [...PASSED_ENV, ...(opts.env ?? [])]) {
     const value = process.env[key];
-    if (value !== undefined) env[key] = value;
+    if (value !== undefined) env[key] = key === 'REINS_CONFIG' ? path.resolve(value) : value;
   }
   // The file runs directly, without a shell: the inputs never become a part of a command line.
   // A supervisor process starts it in its own process group and kills the group at a limit,

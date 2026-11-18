@@ -684,6 +684,14 @@ test('cli: a check script gets the time limit of the harness in its input, from 
   assert.equal(limit(), 300);
   fs.writeFileSync(b.config, JSON.stringify({ ...config, check_timeout_s: 7 }));
   assert.equal(limit(), 7);
+  // The check before the report gives the same field (W18).
+  const pack = path.join(b.root, 'organization/pack.json');
+  const value = JSON.parse(fs.readFileSync(pack, 'utf8'));
+  fs.writeFileSync(pack, JSON.stringify({ ...value, limits: { ...value.limits, probes: 1 } }));
+  fs.rmSync(seen, { force: true });
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  assert.equal(reins(b, ['check', id, '-'], 'green').json.probe, true);
+  assert.equal(JSON.parse(fs.readFileSync(seen, 'utf8')).limit_s, 7);
 });
 
 test('cli: the metrics are a series of the eight numbers by day or by week, in a form with a version', () => {
