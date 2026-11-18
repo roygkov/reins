@@ -1,7 +1,7 @@
 // The journal file: one JSON row per line, rows are only added. A row is checked before it is
 // written. A row that fails the check is not written; the failure is counted and noted.
 // A write error never stops the work.
-// Specification: docs/spec/harness-journal, pages 1 and 4.
+// Specification: docs/spec/harness-spec.md, sections 15 and П7.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';

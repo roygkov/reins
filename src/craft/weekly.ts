@@ -3,7 +3,7 @@
 // (seven when no pack gives it); `reins week` writes it at once.
 // The parts are those that the code has: the numbers of the week, the proposals that need a
 // decision, the memory records in their veto window, the accepted proposals and their effect.
-// Specification: docs/spec/harness-craft, page 7.
+// Specification: docs/spec/harness-spec.md, section П11 (the weekly summary).
 
 import fs from 'node:fs';
 import path from 'node:path';

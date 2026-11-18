@@ -1,6 +1,6 @@
 // A pause of the barriers, on the word of the human: for some minutes a question passes without
 // the question. A refusal and the protection of the harness itself hold during a pause.
-// Specification: docs/spec/harness-core, page 3.
+// Specification: docs/spec/harness-spec.md, section 7.
 
 import fs from 'node:fs';
 import path from 'node:path';

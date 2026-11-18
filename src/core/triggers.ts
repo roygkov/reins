@@ -1,7 +1,7 @@
 // Triggers without a human: a schedule and an event open a task of a scenario. The harness has
 // no process of its own: a timer of the system calls `tick`, a system that saw an event calls
 // `fire`. A task that needs the model waits for a client that runs without a window.
-// Specification: docs/spec/harness-manifest, page 2; harness-model, page 6.
+// Specification: docs/spec/harness-spec.md, sections П4 and П1 (the ways of work).
 
 import fs from 'node:fs';
 import { scenarioOff } from './idle.ts';

@@ -3,7 +3,7 @@
 // is not connected at all. The levels above it keep working; the levels below it are not connected,
 // because the limits of the faulty level are lost. A limit is the smallest value across the levels:
 // a larger value of a lower level changes nothing and is not a fault.
-// Specification: docs/spec/harness-packs, pages 1 - 4.
+// Specification: docs/spec/harness-spec.md, sections 19 and П9.
 
 import fs from 'node:fs';
 import path from 'node:path';

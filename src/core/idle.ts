@@ -1,7 +1,7 @@
 // A scenario that nobody called for a long time is switched off by the harness itself. The term
 // comes from the packs; without a term nothing is switched off. The fact lives in the state, not
 // in the pack: the harness does not write packs. One command of the human brings the scenario back.
-// Specification: docs/spec/harness-contracts, the page of the manifest.
+// Specification: docs/spec/harness-spec.md, section П4 (the life cycle of a manifest).
 
 import fs from 'node:fs';
 import path from 'node:path';

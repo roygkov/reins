@@ -1,7 +1,7 @@
 // What a task spends. A client reports the tokens that the model used; the core adds them to the
 // task of the session and stops a task that went past its limit. The limit of a task is the
 // limit of its manifest, else the limit of the packs. A free task has no limit.
-// Specification: docs/spec/harness-core, page 4, rule 4; page 5, rule 4.
+// Specification: docs/spec/harness-spec.md, section 8, rule 4; section 6, rule 4.
 
 import { applyEvent, frozenRuntime, loadTask, mutateTask, type Runtime } from '../core/runtime.ts';
 import { currentScenario } from '../core/sessions.ts';

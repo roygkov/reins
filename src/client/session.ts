@@ -1,7 +1,7 @@
 // The events of a client session. A request of the human opens a free task; the actions of the
 // session belong to it until the agent stops or the next request comes. The words of the human
 // never reach the core: a request is only the fact that it happened.
-// Specification: docs/spec/harness-client, page 1.
+// Specification: docs/spec/harness-spec.md, section 20.
 
 import { RULE_NAME } from '../contracts/journal.ts';
 import fs from 'node:fs';

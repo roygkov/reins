@@ -3,7 +3,7 @@
 // `{task}`, `{prompt}` and `{model}` of the command are filled in. The client
 // runs with REINS_HEADLESS=1: nobody answers a question there, so a question becomes a place in
 // the queue of the human.
-// Specification: docs/spec/harness-client, page 5.
+// Specification: docs/spec/harness-spec.md, section П10 (the work without a window).
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';

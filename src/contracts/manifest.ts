@@ -1,6 +1,6 @@
 // Scenario manifest: a header and eight fields. The manifest is data only: no conditions,
 // no branches, no code. A manifest that fails this validator is never connected.
-// Specification: docs/spec/harness-manifest, pages 1, 3, 4 and 7.
+// Specification: docs/spec/harness-spec.md, sections 11, 12 and П4.
 
 import { parseSchedule } from './schedule.ts';
 import { at, inList, isInt, isObj, oneLine, type Fault, type Obj } from './shape.ts';

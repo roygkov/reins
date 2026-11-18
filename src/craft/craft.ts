@@ -1,6 +1,6 @@
 // The craft: the harness looks at its own journal, finds what repeats, and proposes a change to
 // the human. It changes nothing itself: a proposal is resolved by the human.
-// Specification: docs/spec/harness-craft.
+// Specification: docs/spec/harness-spec.md, sections 22, 23 and П11.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';

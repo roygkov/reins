@@ -1,6 +1,6 @@
 // The decision before an action. A client tells the core that the agent wants to call a tool;
 // the core says what the action is and what the policy decides.
-// Specification: docs/spec/harness-client, pages 1 and 2; harness-core, page 3.
+// Specification: docs/spec/harness-spec.md, sections 20, 21 and 7.
 //
 // What a tool does comes from two places. The adapter of a client describes the tools of the
 // client itself (read a file, change a file, run a command). The organization pack describes the

@@ -1,7 +1,7 @@
 // The input of a task for the model: what a client gives to the agent when a scenario starts.
 // It is data. The harness adds only the rules of the exchange (`protocol`); what the model must
 // do is the instruction text of the scenario, which comes from a pack.
-// Specification: docs/spec/harness-client, page 2, "Добавить во вход".
+// Specification: docs/spec/harness-spec.md, section 21, "Добавить во вход".
 
 import type { Grant } from '../contracts/policy.ts';
 import type { Task } from '../core/task.ts';

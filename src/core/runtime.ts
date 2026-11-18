@@ -1,6 +1,6 @@
 // The runtime: opens tasks from the merged packs, keeps their state on the disk, runs the collect
 // script and writes the journal. One task is one file; the task belongs to the harness, not to a session.
-// Specification: docs/spec/harness-core, pages 2 and 7; harness-manifest, page 2.
+// Specification: docs/spec/harness-spec.md, sections 3, 5 and П4.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';

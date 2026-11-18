@@ -1,6 +1,6 @@
 // The journal read into counts: what the harness did in a period. The counts are facts of the
 // journal; nothing here judges them.
-// Specification: docs/spec/harness-journal.
+// Specification: docs/spec/harness-spec.md, section П7 (the metrics).
 
 import type { JournalRow } from '../contracts/journal.ts';
 import { acceptedLabel } from '../contracts/manifest.ts';

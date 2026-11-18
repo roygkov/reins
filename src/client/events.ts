@@ -1,7 +1,7 @@
 // One entry for the events of a client, in one form: an object with the name of the event. A
 // codec of a client that has no forms of its own passes its events here as they are, and prints
 // the answer of the core as it is. The answer has one form for every client.
-// Specification: docs/spec/harness-client, pages 1, 2 and 4.
+// Specification: docs/spec/harness-spec.md, sections 20, 21 and П10.
 
 import { afterAction, beforeAction, type ClientTools, type ToolCall } from './before.ts';
 import { noteCost } from './cost.ts';

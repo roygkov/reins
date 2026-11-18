@@ -2,7 +2,7 @@
 // the week. The config names the command of the machine that shows a notice; without it there is
 // none. The words of a notice are words of the harness: an id, a rule, a path. The text of an
 // action never goes into a notice: it can hold what only the queue may show.
-// Specification: docs/spec/harness-client, page 3 ("the question goes as a text or as a notice").
+// Specification: docs/spec/harness-spec.md, section П10 ("the question goes as a text or as a notice").
 
 import { spawn } from 'node:child_process';
 import type { Runtime } from './runtime.ts';

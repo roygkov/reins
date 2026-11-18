@@ -1,7 +1,7 @@
 // The memory of the harness: short records that outlive a task. The harness writes them without
 // a command of the human. A record of a scenario with the class "veto" waits for a veto before it
 // is used; a decision is written only on the word of the human (docs/port, R14).
-// Specification: docs/spec/harness-memory.
+// Specification: docs/spec/harness-spec.md, sections 17, 18 and П8.
 //
 // Three parts, as the specification names them:
 // - The source of truth: one record is one file that a human can read, in a directory that the

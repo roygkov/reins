@@ -1,7 +1,7 @@
 // Policy: layers of rules, the strictest decision wins, four outcomes.
 // A lower layer can only make a decision stricter. The envelope of a task turns "ask" into
 // "allow" for the actions that the manifest names, and for nothing else.
-// Specification: docs/spec/harness-core page 3, harness-manifest page 3, harness-connector page 2.
+// Specification: docs/spec/harness-spec.md, sections 7, 12 and П6.
 
 export const OUTCOMES = ['allow', 'ask', 'defer', 'deny'] as const; // strictness grows left to right
 export type Outcome = (typeof OUTCOMES)[number];

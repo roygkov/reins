@@ -1,7 +1,7 @@
 // Journal row: one event per row, rows are only added. The list of kinds is closed:
 // a row of an unknown kind is not written. A row holds lists, numbers and fingerprints,
 // never the text of a prompt, a command, a report or an error.
-// Specification: docs/spec/harness-journal, pages 1, 2 and 4.
+// Specification: docs/spec/harness-spec.md, sections 15, 16 and П7.
 
 import { inList, isInt, isObj, type Fault } from './shape.ts';
 import { DONE_KINDS, LEVELS, RESULT_LABELS } from './manifest.ts';

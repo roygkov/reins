@@ -1,7 +1,7 @@
 // Several executors in one task. A subordinate executor starts only in a role and a count that
 // the manifest of the task names; outside a scenario the packs limit the count. Its report is a
 // claim, not a fact. Every row of the journal about it carries the parent task.
-// Specification: docs/spec/harness-core, page 4.
+// Specification: docs/spec/harness-spec.md, section 8.
 //
 // The executors that run are kept with the session, each with the task that it started under:
 // the free task of a session changes at every request, and an executor that is still running

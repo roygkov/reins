@@ -1,6 +1,6 @@
 // The term of a task. A task that nobody touched for longer than its term ends: the harness does
 // not wait for a human to close what was left open. The time of a task is the time of its file.
-// Specification: docs/spec/harness-core, page 2.
+// Specification: docs/spec/harness-spec.md, section 3.
 
 import fs from 'node:fs';
 import path from 'node:path';

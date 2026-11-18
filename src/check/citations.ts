@@ -1,7 +1,7 @@
 // The citation check, a kind of the done check: every item of a report names a file and a line
 // and quotes the source, and the quote is found there. It proves that a claim rests on the source.
 // It does not prove that the claim is true: the label of the result is "form verified".
-// Specification: docs/spec/harness-manifest, page 4, rules 4, 6 and 7.
+// Specification: docs/spec/harness-spec.md, section П4, rules of the check 4, 6 and 7.
 //
 // The report is data, not prose: one JSON object `{"items": [...]}`. The core knows these fields of
 // an item: `file`, `line` (and `end` for a range), `quote`, a free `text`, and `source`: the name

@@ -1,5 +1,5 @@
 // The record "case": what is not finished. It has a next step, an outer status and a count of
-// the days it was carried without a step. Specification: docs/spec/harness-memory, page 2.
+// the days it was carried without a step. Specification: docs/spec/harness-spec.md, section 17.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

@@ -1,5 +1,5 @@
 // The merge of the packs as a fact: what the journal keeps of it, and what the human reads of it.
-// Specification: docs/spec/harness-packs, page 2: the result of the merge is written to the
+// Specification: docs/spec/harness-spec.md, section 19: the result of the merge is written to the
 // journal, and the human can see which level gave each value.
 
 import crypto from 'node:crypto';

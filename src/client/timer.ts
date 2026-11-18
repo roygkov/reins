@@ -1,7 +1,7 @@
 // The harness has no process of its own: a timer of the system runs `reins tick run`. This is the
 // text of such a timer for the human, for the three common timers. The harness writes no file of
 // the system and starts nothing: the human puts the text where the system reads it.
-// Specification: docs/spec/harness-manifest, the page of the triggers.
+// Specification: docs/spec/harness-spec.md, section 11 (the trigger).
 
 import os from 'node:os';
 import path from 'node:path';

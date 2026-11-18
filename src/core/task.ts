@@ -1,7 +1,7 @@
 // The task loop: the states of a task and the moves between them. Pure: no files, no clock.
 // The harness holds the state. The agent cannot move a task to "closed": only a check answer
 // or a decision of the human does that. Every move drafts the journal rows that describe it.
-// Specification: docs/spec/harness-core, pages 2, 5, 6 and 7; harness-manifest, page 2.
+// Specification: docs/spec/harness-spec.md, sections 3, 4, 5, 6 and П4.
 
 import { inputForm, labelOf, type Level, type Manifest, type ResultLabel } from '../contracts/manifest.ts';
 import type { EventKind, TASK_KINDS } from '../contracts/journal.ts';

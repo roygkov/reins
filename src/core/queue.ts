@@ -1,6 +1,6 @@
 // The queue of deferred actions. A rule of a pack can say "not now": the action is not done, it
 // waits for the human. The human approves it or rejects it; an approval lets the same call pass once.
-// Specification: docs/spec/harness-core, page 3.
+// Specification: docs/spec/harness-spec.md, section 7.
 
 import { notify } from './notify.ts';
 import crypto from 'node:crypto';
