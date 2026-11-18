@@ -256,6 +256,17 @@ test('pause: a write that another human sees still asks, in a known environment 
   assert.deepEqual(beforeAction(b.rt, { ...e(b), tool: 'post_note', input: {} }, CLIENT).rule, 'paused');
 });
 
+test('pause: a command of the shell that cannot be undone or that another human sees still asks', () => {
+  const b = box();
+  pause(b.rt, 30);
+  const run = (command: string) => beforeAction(b.rt, { ...e(b), tool: 'shell', input: { command } }, CLIENT);
+  for (const command of ['git push origin --delete main', 'git push --mirror origin', 'gh api -X POST repos/o/r/issues/1/comments -f body=x']) {
+    assert.equal(run(command).outcome, 'ask', command);
+  }
+  // A local command of the class git passes during the pause, as before.
+  assert.equal(run('git commit --no-verify -m wip').rule, 'paused');
+});
+
 test('pause: a rule that refuses holds during a pause', () => {
   const b = box();
   b.rt.merged.rules.push({ id: 'never', outcome: 'deny', tool: 'launch_rocket', level: 'person' });

@@ -149,6 +149,9 @@ for (const [command, rule] of [
   ['npm publish', 'publish.npm'],
   ['rm -rf ~/Documents', 'blast.rm-outside'],
   ['git push origin main', 'git.push-protected'],
+  // A delete of a protected ref of the remote and a mirror push cannot be undone.
+  ['git push origin --delete main', 'git.push-delete'],
+  ['git push --mirror origin', 'git.push-mirror'],
 ] as const) {
   test(`gate to policy: the envelope does not lift the question of ${rule}`, () => {
     const { action, layers, result } = shellAction(command, repos.proj ?? '');
@@ -159,6 +162,21 @@ for (const [command, rule] of [
     }
   });
 }
+
+test('gate to policy: a write through the API of the hosting is a write that another human sees', () => {
+  for (const command of ['gh api -X POST repos/o/r/issues/1/comments -f body=x', 'glab api -X POST projects/1/notes']) {
+    const { action, layers, result } = shellAction(command, repos.proj ?? '');
+    assert.deepEqual([result?.id, result?.cls], ['hosting.api-write', 'hosting']);
+    assert.equal(action.kind === 'write' && action.outward, true);
+    // The function of the policy asks for one confirmation, like for any outward write. The event
+    // entry gives no envelope to a command of the shell: there the question stays a question.
+    const d = decide({ action, layers, envelope: [{ action: action.name, target: '', env: 'local', limit: 1, confirm: 'none' }] });
+    assert.deepEqual([d.outcome, d.envelope], ['ask', 'confirm']);
+  }
+  // A local command of the class git stays a plain local write.
+  const local = shellAction('git commit --no-verify -m wip', repos.proj ?? '').action;
+  assert.equal(local.kind === 'write' && local.outward, undefined);
+});
 
 test('gate to policy: a git discard is approved one action at a time', () => {
   const { action, layers, result } = shellAction('git reset --hard', repos.dirty ?? '');

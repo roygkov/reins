@@ -74,8 +74,11 @@ export function shellAction(command: string, cwd: string, cfg?: GateConfig, info
   // counts as production. A one-by-one class is marked unknown: the human approves each action.
   const production = isProductionClass(result.cls);
   const known = !isOneByOneClass(result.cls);
+  // A write through the API of the hosting lands where another human reads it: a pause does not
+  // lift its question, and an envelope needs one confirmation for the task.
+  const outward = result.cls === 'hosting' ? { outward: true } : {};
   return {
-    action: { via: 'shell', kind: 'write', name: result.id, target: '', env: { name: production ? 'production' : known ? 'local' : 'unknown', known, production } },
+    action: { via: 'shell', kind: 'write', name: result.id, target: '', env: { name: production ? 'production' : known ? 'local' : 'unknown', known, production }, ...outward },
     layers: [{ layer: 'core', outcome: result.decision, rule: result.id }],
     result,
   };
