@@ -980,7 +980,7 @@ export function submitReport(rt: Runtime, id: string, text: string): Submitted {
   const submitted = withLock(rt, id, () => {
     const task = loadTask(rt, id);
     if (task === null) return null;
-    // The form of the result (harness-manifest, part 7): a text report is not larger than the
+    // The form of the result (harness-spec.md, section 11): a text report is not larger than the
     // manifest says, and it has every section that the manifest names. A report of another form
     // is not taken: nothing is written, the task goes on, no send-back is spent. A list of items
     // is data: the citation check reads its form.
