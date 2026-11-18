@@ -48,7 +48,17 @@ function evalGit(seg, cfg, info, cwd) {
   if (mirror) return { decision: 'ask', id: 'git.push-mirror', cls: 'protected', why: '--mirror/--prune can delete remote refs' };
   // A delete of a remote ref asks when the ref is a protected branch or a tag, in both forms of the
   // command: `--delete <ref>` and the refspec `:<ref>`. A ref that is not named asks too.
-  const guarded = (r) => r === '' || matchGlob(r.replace(/^refs\/(heads|tags)\//, ''), protectedBranches(cfg, info)) || /^(refs\/tags\/|v\d)/.test(r);
+  // The name is read the way git resolves it on the remote: `refs/heads/x`, `heads/x` and `x` name one
+  // branch. A tag (`refs/tags/x`, `tags/x`, `v<digit>`), a ref outside refs/heads (notes, remotes) and
+  // HEAD ask always: the name alone does not show that the ref is safe to delete.
+  const guarded = (r) => {
+    if (r === '' || /^(HEAD|@)$/.test(r)) return true;
+    const explicit = /^refs\//.test(r);
+    let n = explicit ? r.slice(5) : r;
+    if (/^tags\//.test(n) || (explicit && !/^heads\//.test(n))) return true;
+    n = n.replace(/^heads\//, '');
+    return matchGlob(n, protectedBranches(cfg, info)) || /^v\d/.test(n);
+  };
   if (del) {
     const hit = refspecs.find(guarded);
     if (hit !== undefined || !refspecs.length) return { decision: 'ask', id: 'git.push-delete', cls: 'protected', why: 'deletes remote ref "' + (hit || '?') + '"' };
