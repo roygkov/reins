@@ -242,7 +242,7 @@ function changeOf(rt: Runtime, found: Pattern, now: number): Change | undefined 
     const manifest = contractManifest(rt, found.key);
     if (manifest !== undefined && fits(rt, manifest)) return { kind: 'manifest', path: `manifests/${found.key}.json`, manifest };
   }
-  // A tool that fails again and again is a pitfall for the memory (harness-craft, page 2). The
+  // A tool that fails again and again is a pitfall for the memory (harness-spec.md, section 22). The
   // text is written by the code from the facts of the journal: the name of the tool and the
   // count. The journal keeps no text of an error, so the pitfall says where to look, not why.
   if (found.pattern === 'tool_fails_often' && RULE_NAME.test(found.key)) {

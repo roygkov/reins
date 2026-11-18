@@ -146,7 +146,7 @@ export function newScenarioTask(id: string, manifest: Manifest, inputs: Inputs, 
 }
 
 // A task with a contract: a manifest for one task, proposed by the agent. Nothing runs before
-// the human approves it (harness-core, page 5).
+// the human approves it (harness-spec.md, section 6).
 export function newContractTask(id: string, manifest: Manifest): { task: Task; rows: RowDraft[] } {
   const task: Task = {
     id, kind: 'contract', state: 'waiting_human', waiting: 'contract', scenario: manifest.name, version: manifest.version ?? 1,
@@ -215,7 +215,7 @@ export function step(task: Task, event: TaskEvent): Step {
       if (task.state !== 'executing') return refuse(task);
       const submitted: RowDraft = { kind: 'task.report_submitted', data: { size: event.size, fp: event.fp } };
       // The report of the agent is a claim. Without a manifest nothing checks it: the check step is
-      // skipped and the result is marked "not verified" (harness-core page 2, rule 4). This is the one
+      // skipped and the result is marked "not verified" (harness-spec.md, section 3, rule 4). This is the one
       // place where a report ends a task, and the label says that nothing was verified.
       if (done === undefined) {
         const closed = close(task, 'not_verified', [submitted]);

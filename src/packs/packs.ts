@@ -726,7 +726,7 @@ function manifestFiles(dir: string): string[] {
     .sort();
 }
 
-// A pack is data that people share: it holds no secret (harness-packs, page 3). The forms are
+// A pack is data that people share: it holds no secret (harness-spec.md, section П9). The forms are
 // the ones that cannot be anything else: a token of a known service, a bearer token, a private key.
 // A name like `token = ...` is not such a form: a script reads its secret from the environment.
 const SECRET_FORMS: readonly RegExp[] = [

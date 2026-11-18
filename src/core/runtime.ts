@@ -188,7 +188,7 @@ function defaultLevel(rt: Runtime): Level {
   return max !== undefined && LEVELS.indexOf(level) > LEVELS.indexOf(max) ? max : level;
 }
 
-// A change of a pack during a task does not reach the task (harness-packs, page 4): the task works
+// A change of a pack during a task does not reach the task (harness-spec.md, section П9): the task works
 // with the merge that it started with. What the policy reads of the merge is kept beside the task:
 // the table of the tools, the rules, the data of the gate, and the context with the environments
 // and the limits. One thing does reach the task at once: a barrier that became stricter. A rule of
@@ -249,7 +249,7 @@ export function openScenario(rt: Runtime, name: string, inputs: Inputs, opts: { 
   return { ok: true, ...prepareTask(rt, made.task) };
 }
 
-// A scenario by the form of the input (harness-core, page 8): a value that fits the form of one
+// A scenario by the form of the input (harness-spec.md, section 4): a value that fits the form of one
 // manifest opens that scenario without its name. The form is the pattern of the one input of a
 // command scenario. A value that fits the forms of several manifests opens nothing: the human
 // chooses by the name. A type alone is no form.
@@ -807,7 +807,7 @@ function hasSection(text: string, name: string): boolean {
   return text.split(/\r?\n/).some((line) => line.trim().replace(/^#{1,6}\s*/, '').replace(/[:：]\s*$/, '').replace(/^\*\*(.*)\*\*$/, '$1').replace(/[:：]\s*$/, '').trim().toLowerCase() === want);
 }
 
-// The done check before the report (harness-check, page 1): the agent asks for the answer of the
+// The done check before the report (harness-spec.md, section П5): the agent asks for the answer of the
 // check while it still works. The answer accepts nothing and returns nothing: the task executes
 // on, no send-back is spent. Only the report closes a task. The packs give the count of such runs
 // for one task (`limits.probes`); without the count there is no such run. A red answer protects

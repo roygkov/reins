@@ -585,7 +585,7 @@ export function beforeAction(now: Runtime, call: ToolCall, clientTools: ClientTo
   return r;
 }
 
-// The role of a subordinate executor bounds what it does (harness-core, page 6). The manifest of
+// The role of a subordinate executor bounds what it does (harness-spec.md, section 8). The manifest of
 // its parent task names the rights of the role: `read` changes nothing; `write` with an area
 // changes only the files of the area. A role without rights works in the envelope of its parent.
 const GIT_CHANGE = /(^|[\s;&|(`])git\b[^;&|]*?\s(add|commit|stash|checkout|switch|restore|reset|merge|rebase|cherry-pick|revert|rm|mv|clean|apply|am|pull|push|tag|worktree)(\s|$)/;
@@ -714,7 +714,7 @@ function decideBefore(rt: Runtime, call: ToolCall, clientTools: ClientTools): Re
     return { outcome: 'deny', rule: 'contract.scope', layer: 'core', envelope: 'none' };
   }
   let decision = decide({ action, layers });
-  // A read through a connector costs the system that answers it (harness-connector, page 4): the
+  // A read through a connector costs the system that answers it (harness-spec.md, section П6): the
   // packs bound the reads of one task. Past the limit the human decides each read.
   // The reads of a scenario are the reads that its manifest names (`permissions.read`). A read of
   // its task through another connector is outside what the pack described: the human decides,
@@ -813,8 +813,8 @@ function queued(rt: Runtime, call: ToolCall, clientTools: ClientTools, action: A
 // that skips permission questions). Then the run of the tool is no approval.
 // `failed`: the tool started and ended with an error (not broken off by the human).
 // `source`: the connector that the output of the call came from. What a connector returns is data
-// of an outer source, never instructions: the client says so to the agent (harness-connector, pages 4 and 6).
-// `offer`: a free task grew by facts (harness-core, page 8): it made the number of changes that
+// of an outer source, never instructions: the client says so to the agent (harness-spec.md, section П6).
+// `offer`: a free task grew by facts (harness-spec.md, section 4): it made the number of changes that
 // the packs name. The client offers the human a contract, once for a task; the work goes on.
 // `judged`: the roles of the subordinates whose report got the answer FAIL of the check of its
 // citations since the last action of the main executor. The client says it to the main executor, once.

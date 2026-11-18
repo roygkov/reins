@@ -317,7 +317,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
   return m;
 }
 
-// The eight numbers of the specification (harness-journal, page 5): each answers one question of
+// The eight numbers of the specification (harness-spec.md, section П7): each answers one question of
 // the human. `value` is for the last period, `prev` for the period before it, `n` is the count of
 // the rows that the value stands on. A number without rows has no value.
 // `parts`: for the share of verified results, the count of the results of each label other than

@@ -26,7 +26,7 @@ import { casesForStart, countUses, listRecords, recordsForStart, stateForStart }
 export type SessionEvent = { session?: string; cwd: string; client?: string; capabilities?: { before?: boolean; choice?: boolean }; headless?: boolean; answer?: string };
 export type ClientLevel = 'full' | 'no_choice' | 'no_before';
 
-// The level of a client (harness-client, page 3). Without the event before an action the harness
+// The level of a client (harness-spec.md, section П10). Without the event before an action the harness
 // is no barrier; without a question with a choice the question goes as text.
 export const levelOf = (c: SessionEvent['capabilities']): ClientLevel => (c?.before === false ? 'no_before' : c?.choice === false ? 'no_choice' : 'full');
 
@@ -275,7 +275,7 @@ export function humanRequest(rt: Runtime, e: SessionEvent): { task: string; long
 }
 
 // The agent stopped: its answer is the report of the free task. Nothing checks it, so the result
-// is "not verified" (harness-core, page 2, rule 4).
+// is "not verified" (harness-spec.md, section 3, rule 4).
 const MAX_RETURNS = 2; // a stop gets the task back this many times; after that the run ends as it is
 
 // The reply "return the report". A client without a window stopped, and the scenario task that

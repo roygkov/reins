@@ -20,7 +20,7 @@ export type Action = {
   name: string;
   target: string;
   env: { name: string; known: boolean; production: boolean };
-  // What the description of the connector says about the action (harness-connector, page 1).
+  // What the description of the connector says about the action (harness-spec.md, section 9).
   irreversible?: boolean; // it cannot be undone: the human decides each one
   outward?: boolean; // another human sees its result: at least one confirmation for a task
   sensitive?: boolean; // secrets or personal data, also when it only reads

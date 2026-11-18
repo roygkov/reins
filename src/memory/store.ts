@@ -405,7 +405,7 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     const memory = mayWrite(rt, input.task, type);
     if (memory === null) return { ok: false, error: 'not_allowed' };
     // A state is written anew at every wrap-up and the next one takes its place: it has no veto
-    // window (harness-memory, page 4: "a task is closed: a new state, by itself").
+    // window (harness-spec.md, section П8: "a task is closed: a new state, by itself").
     pending = memory.class !== 'auto' && type !== 'state';
   }
   // A next step is a thing of a case and of a state; an outer status of a case; what is not
@@ -420,7 +420,7 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
     const part = value.trim() === '' ? null : type === 'case' ? badText(key, value, MAX_STEP, true) : badText(key, value, MAX_STATE_PART);
     if (part !== null) return part;
   }
-  // A decision without its reason is of no use in a month (harness-memory, page 2, rule 1).
+  // A decision without its reason is of no use in a month (harness-spec.md, section 17, rule 1).
   if (type === 'decision' && (input.because === undefined || input.because.trim() === '')) return { ok: false, error: 'no_reason' };
   // Only a decision of the human replaces a record, and only another decision.
   if (input.supersedes !== undefined && input.by !== 'human') return { ok: false, error: 'human_only' };
@@ -803,7 +803,7 @@ export function wrongRecord(rt: Runtime, id: string, now: number = Date.now()): 
 
 // The records that go into the input of a task: with their ids, the most cited first, then the
 // newest, and only as many as fit the size limit.
-// A record is chosen by the keys of the task (harness-memory, page 5): the place (the files of
+// A record is chosen by the keys of the task (harness-spec.md, section П8): the place (the files of
 // the work), the scenario (a record that an earlier task of the same scenario wrote) and the
 // terms (a value of an input of the task that the text of the record names). A record about the
 // whole project is chosen always. The closest records come first: the place, then the scenario,
@@ -840,7 +840,7 @@ export function recordsForInput(rt: Runtime, query: { paths: string[]; maxBytes:
   return out;
 }
 
-// A record is used when a report cites it by its id (harness-memory, page 5). One report counts
+// A record is used when a report cites it by its id (harness-spec.md, section П8). One report counts
 // once for one record. Returns the ids that were counted.
 // `free`: the text is the answer of a free task. No check judged it, so it has a count of its own
 // (`free_uses`): the record stays in the work, and the count of the reports does not grow.
