@@ -124,8 +124,35 @@ test('runtime: no work closes the task without the model', () => {
   assert.equal(readCollected(rt, opened.task.id), null, 'nothing is kept for the model');
 });
 
+// A script that ran and ended with an exit code refused the task: bad inputs, most often. This is
+// not a failure of the harness. The journal keeps the code; the text goes to the one who opened the task.
+test('runtime: a collect script that exits with an error refuses the task, and the opener gets its error text', () => {
+  const rt = runtime(script('echo "change_id is not a number" >&2\nexit 3'));
+  const opened = openScenario(rt, 'change-review', { change_id: '7' });
+  assert.ok(opened.ok);
+  assert.deepEqual([opened.task.state, opened.task.label], ['closed', 'not_verified']);
+  assert.deepEqual(opened.why, { cause: 'exit', exit: 3, stderr: 'change_id is not a number' });
+  const rows = readJournal(rt.journal.file);
+  assert.deepEqual(rows.map((r) => r.kind), ['task.opened', 'task.kind_decided', 'task.collect_refused', 'task.closed']);
+  assert.deepEqual(rows[2]?.data, { exit: 3 });
+  assert.deepEqual(rows[3]?.data, { label: 'not_verified', reason: 'collect_failed' });
+  for (const r of rows) assert.deepEqual(validateRow(r), []);
+});
+
+test('runtime: a collect script that fails in another way says the cause to the opener, with no text', () => {
+  const rt = runtime(script('echo hello'));
+  const opened = openScenario(rt, 'change-review', { change_id: '7' });
+  assert.ok(opened.ok);
+  assert.deepEqual(opened.why, { cause: 'bad_json' });
+});
+
+test('runtime: a task that the collect step prepared has no cause of a failure', () => {
+  const opened = openScenario(runtime(), 'change-review', { change_id: '7' });
+  assert.ok(opened.ok);
+  assert.equal('why' in opened, false);
+});
+
 for (const [name, body, reason] of [
-  ['exits with an error', 'exit 3', 'exit'],
   ['prints no JSON', 'echo hello', 'bad_json'],
   ['misses a named result', `printf '%s' '{"outputs":{"diff":"d"},"flags":{"has_new_commits":true}}'`, 'missing_output'],
   ['misses the flag', `printf '%s' '{"outputs":{"diff":"d","task":1,"discussion":[],"worktree":"/nonexistent"},"flags":{}}'`, 'missing_flag'],

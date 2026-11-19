@@ -35,7 +35,7 @@ import { isObj } from './contracts/shape.ts';
 import { acceptedLabel } from './contracts/manifest.ts';
 import { findRoot } from './gate/index.ts';
 import { taskInput } from './client/input.ts';
-import { applyEvent, approveContract, collectedDir, disputeFail, disputeResult, loadTask, probeCheck, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type Runtime, readReport } from './core/runtime.ts';
+import { applyEvent, approveContract, collectedDir, disputeFail, disputeResult, loadTask, probeCheck, verifyWork, openByForm, openScenario, openTasks, proposeContract, raiseLevel, readCollected, runCheck, submitReport, type CollectWhy, type Runtime, readReport } from './core/runtime.ts';
 import type { Inputs, Task } from './core/task.ts';
 import { MAX_PAUSE_MINUTES, pause } from './core/pause.ts';
 import { listQueue, resolveQueued } from './core/queue.ts';
@@ -196,6 +196,12 @@ function view(rt: Runtime, task: Task): Out {
   return out;
 }
 
+// A task whose collect step failed: the one who opened it reads the cause, and for a script that
+// ended by itself its exit code and the end of its error text. Only this answer has the text.
+function withWhy(out: Out, why: CollectWhy | undefined): Out {
+  return why === undefined ? out : { ...out, why };
+}
+
 function scenarios(rt: Runtime): Out {
   return {
     ok: true,
@@ -253,7 +259,7 @@ function open(rt: Runtime, name: string, pairs: string[]): Out {
   const session = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
   const opened = openScenario(rt, name, inputs, session === undefined ? {} : { session });
   if (!opened.ok) throw new Stop(opened.error, 'details' in opened ? { details: opened.details } : {});
-  return view(rt, opened.task);
+  return withWhy(view(rt, opened.task), opened.why);
 }
 
 function report(rt: Runtime, id: string, source: string): Out {
@@ -308,7 +314,7 @@ function main(args: string[]): Out {
     const session = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
     const opened = openByForm(rt, first, session === undefined ? {} : { session });
     if (!opened.ok) throw new Stop(opened.error, 'details' in opened ? { details: opened.details } : 'scenarios' in opened ? { scenarios: opened.scenarios } : {});
-    return { ...view(rt, opened.task), scenario: opened.task.scenario ?? '' };
+    return { ...withWhy(view(rt, opened.task), opened.why), scenario: opened.task.scenario ?? '' };
   }
   if (command === 'input' && first !== undefined && rest.length === 0) {
     const rt = runtime();
@@ -350,7 +356,7 @@ function main(args: string[]): Out {
     }
     const r = approveContract(rt, first);
     if ('error' in r) throw new Stop(r.error);
-    return view(rt, r.task);
+    return withWhy(view(rt, r.task), r.why);
   }
   // The human gives a task that waits one more try: after a report, a limit, or the edge of a contract.
   if (command === 'retry' && first !== undefined && rest.length === 0) {

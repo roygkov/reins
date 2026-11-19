@@ -18,6 +18,7 @@ export type Metrics = {
   protected_attempts: number;
   protected: { ask: number; deny: number }; // the attempts at a protected place: a question to the human, or a refusal
   failures: number;
+  collect_refused: number; // the tasks that a collect script refused with an exit code: not a failure of the harness
   shape_changes: number;
   // `given`: the records that the reads gave, `bytes`: the size of the text of the memory in the
   // context, both by the way of the read (a row of an older journal names no way: `unknown`).
@@ -119,7 +120,7 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
   const m: Metrics = {
     tasks: { opened: 0, closed: 0, by_label: {}, changed_not_verified: 0 }, scenarios: {}, scenario_cost: {}, checks: { PASS: 0, FAIL: 0, none: 0 },
     unstable_checks: 0, fails_disputed: 0,
-    decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, shape_changes: 0,
+    decisions: { allow: 0, ask: 0, defer: 0, deny: 0 }, protected_attempts: 0, protected: { ask: 0, deny: 0 }, failures: 0, collect_refused: 0, shape_changes: 0,
     memory: { written: 0, vetoed: 0, reads: 0, given: {}, bytes: {}, finds: { asked: 0, missed: 0 }, wrong: 0, census: null },
     tool_output: {},
     questions: {}, timing: { hook_ms: spread([]), check_ms: spread([]) }, context: {}, disputed: {},
@@ -264,6 +265,9 @@ export function summarize(rows: JournalRow[], since = 0): Metrics {
         break;
       case 'harness.failure':
         m.failures += 1;
+        break;
+      case 'task.collect_refused':
+        m.collect_refused += 1;
         break;
       case 'harness.client_shape_changed':
         m.shape_changes += 1;

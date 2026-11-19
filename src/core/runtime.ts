@@ -14,7 +14,7 @@ import { isObj, type Fault } from '../contracts/shape.ts';
 import { closedContext } from '../packs/packs.ts';
 import { patchSession, withSession, readSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
-import { runCollect, type Sandbox } from './collect.ts';
+import { runCollect, type CollectResult, type Sandbox } from './collect.ts';
 import { workState, workTop } from './work.ts';
 import { notify } from './notify.ts';
 import { noteUse, scenarioOff } from './idle.ts';
@@ -58,8 +58,14 @@ const ALLOWED: Record<Origin, readonly TaskEvent['type'][]> = {
   harness: ['prepared', 'collect_failed', 'check', 'expire', 'invalidate', 'limit', 'scope'],
 };
 
+// Why the collect step of a task failed: the cause, and for a script that ran and ended by itself
+// its exit code and the end of its error text. The text goes to the one who opened the task and
+// is kept nowhere: the journal has the code only.
+export type CollectWhy = { cause: string; exit?: number; stderr?: string };
+type Prepared = { task: Task; collected: Record<string, unknown> | null; why?: CollectWhy };
+
 export type Opened =
-  | { ok: true; task: Task; collected: Record<string, unknown> | null }
+  | ({ ok: true } & Prepared)
   | { ok: false; error: 'unknown_scenario' | 'disabled' | 'idle' }
   | { ok: false; error: 'bad_inputs'; details: InputError[] };
 
@@ -288,13 +294,15 @@ export function stepTimeout(rt: Runtime, task: string, where: 'collect' | 'check
 }
 
 // The preparation of a task that has a manifest: the collect script and the run condition.
-function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<string, unknown> | null } {
+function prepareTask(rt: Runtime, start: Task): Prepared {
   const manifest = start.manifest;
   if (manifest === undefined) return { task: start, collected: null };
   // The preparation can take long, and the human can stop the task meanwhile. So the end of the
   // preparation is written under the lock, to the task as it is on the disk, and only when that
   // task still prepares. A stopped task stays stopped.
   const id = start.id;
+  // The task took the end of its preparation: a task that the human stopped meanwhile did not.
+  let took = false;
   const prepared = (event: TaskEvent, outputs?: Record<string, unknown>): Task => {
     // The state of the source that the collect step named, at this moment: the executor reads this
     // work. The check answers later, and the work can change meanwhile.
@@ -307,6 +315,7 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
         if (now === null || now.state !== 'preparing') return now;
         if (outputs !== undefined) writeAtomic(taskFile(rt, id, '.collect'), outputs);
         const next = step(now, event);
+        took = next.error === undefined;
         if (next.error === undefined && read !== null) next.task.read = read;
         return commit(rt, next).task;
       });
@@ -320,9 +329,9 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
   const file = rt.merged.scriptFiles[collect.script];
   // A collect script only reads. A change of the work of the client is a fact that it did not.
   const workBefore = rt.workDir === undefined ? null : workState(rt.workDir);
-  const result =
+  const result: CollectResult =
     file === undefined
-      ? ({ ok: false, reason: 'exit' } as const)
+      ? { ok: false, reason: 'exit' }
       : runCollect(file, { inputs: start.inputs }, {
           outputs: collect.outputs,
           flags: collect.flags ?? [],
@@ -333,11 +342,20 @@ function prepareTask(rt: Runtime, start: Task): { task: Task; collected: Record<
           ...scriptSandbox(rt, manifest, []),
         });
   if (workBefore !== null && rt.workDir !== undefined) {
-    if (workState(rt.workDir) !== workBefore) return { task: prepared({ type: 'collect_failed', reason: 'changed_work' }), collected: null };
+    if (workState(rt.workDir) !== workBefore) {
+      const task = prepared({ type: 'collect_failed', reason: 'changed_work' });
+      return { task, collected: null, ...(took ? { why: { cause: 'changed_work' } } : {}) };
+    }
   }
   if (!result.ok) {
     if (result.reason === 'timeout') stepTimeout(rt, id, 'collect');
-    return { task: prepared({ type: 'collect_failed', reason: result.reason }), collected: null };
+    // Only a script that ended by itself has an exit code and an error text of its own.
+    const exit = result.reason === 'exit' ? result.exit : undefined;
+    const task = prepared({ type: 'collect_failed', reason: result.reason, ...(exit !== undefined ? { exit } : {}) });
+    // A task that the human stopped meanwhile did not end by the collect step: it has no cause.
+    if (!took) return { task, collected: null };
+    const stderr = result.reason === 'exit' ? result.stderr : undefined;
+    return { task, collected: null, why: { cause: result.reason, ...(exit !== undefined ? { exit } : {}), ...(stderr !== undefined ? { stderr } : {}) } };
   }
   // The run condition is the name of a flag. False: the task closes without the model.
   if (manifest.run_if !== undefined && result.flags[manifest.run_if] === false) {
@@ -501,7 +519,7 @@ export function proposeContract(rt: Runtime, value: unknown, opts: { session?: s
 }
 
 // The approval of a contract by the human: the task starts as a scenario task would.
-export function approveContract(rt: Runtime, id: string): { task: Task; collected: Record<string, unknown> | null } | { error: 'unknown_task' | 'busy' | 'not_a_proposal' } {
+export function approveContract(rt: Runtime, id: string): Prepared | { error: 'unknown_task' | 'busy' | 'not_a_proposal' } {
   if (!TASK_ID.test(id)) return { error: 'unknown_task' };
   const approved = withLock(rt, id, () => {
     const task = loadTask(rt, id);

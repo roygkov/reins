@@ -89,6 +89,8 @@ test('week: the eight numbers of the specification are counted from the rows of 
     row(4, 'executor.cost', { task: 't2', data: { tokens: 500000, ms: 10, calls: 1 } }),
     row(4, 'memory.read', { data: { n: 4 } }), row(4, 'memory.record_used', { data: { record: 'm0123456789' } }),
     row(5, 'craft.effect_measured', { data: { proposal: 'c1', effect: 'better' } }), row(5, 'craft.effect_measured', { data: { proposal: 'c2', effect: 'same' } }),
+    // A collect script that refused a task is not a failure of the harness.
+    row(5, 'task.collect_refused', { task: 't1', scenario: 's', data: { exit: 1 } }),
     row(5, 'harness.failure', { data: { where: 'collect' } }), row(5, 'harness.step_timeout'), row(5, 'harness.client_shape_changed', { data: { client: 'x', event: 'pre' } }),
     // the week before
     row(8, 'task.closed', { task: 'u1', scenario: 's', data: { label: 'verified_form' } }),

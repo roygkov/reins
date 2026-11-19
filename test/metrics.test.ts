@@ -86,3 +86,14 @@ test('metrics: the summary counts the checks that answered PASS and FAIL for one
   assert.equal(m.unstable_checks, 1);
   assert.equal(summarize([check('PASS', 'a'.repeat(32), 'r1')]).unstable_checks, 0);
 });
+
+test('metrics: a task that a collect script refused is counted by itself, not as a failure of the harness', () => {
+  const rows = [
+    row('task.collect_refused', { exit: 1 }, { scenario: 'review', task: 't1' }),
+    row('task.collect_refused', { exit: 2 }, { scenario: 'review', task: 't2' }),
+    row('harness.failure', { where: 'collect', reason: 'bad_json' }, { scenario: 'review', task: 't3' }),
+  ];
+  const m = summarize(rows);
+  assert.deepEqual([m.collect_refused, m.failures], [2, 1]);
+  assert.equal(eight(rows, NOW).harness_failures.value, 1);
+});

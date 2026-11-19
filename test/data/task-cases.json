@@ -61,6 +61,47 @@
   }
  },
  {
+  "name": "a collect script that exits with a code refuses the task: no failure of the harness",
+  "task": "review",
+  "events": [
+   {
+    "type": "collect_failed",
+    "reason": "exit",
+    "exit": 2
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "task.collect_refused exit=2",
+    "task.closed label=not_verified reason=collect_failed"
+   ]
+  }
+ },
+ {
+  "name": "a collect script that ended with no exit code is a failure of the harness",
+  "task": "review",
+  "events": [
+   {
+    "type": "collect_failed",
+    "reason": "exit"
+   }
+  ],
+  "expect": {
+   "state": "closed",
+   "label": "not_verified",
+   "returns": 0,
+   "errors": 0,
+   "rows": [
+    "harness.failure reason=exit where=collect",
+    "task.closed label=not_verified reason=collect_failed"
+   ]
+  }
+ },
+ {
   "name": "a report goes to the check, PASS closes the task with the label of the check",
   "task": "review",
   "events": [

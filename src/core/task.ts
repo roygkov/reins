@@ -59,7 +59,8 @@ export type Task = {
 
 export type TaskEvent =
   | { type: 'prepared'; work: boolean; flag?: string; outputs?: number; bytes?: number }
-  | { type: 'collect_failed'; reason: string }
+  // `exit`: the exit code of a collect script that ran and ended by itself.
+  | { type: 'collect_failed'; reason: string; exit?: number }
   // `changed`: a fact of the client about a free request: the work tree is not what it was at the request.
   // `root`: the directory of the work that the report is about.
   | { type: 'report'; size: number; fp: string; changed?: boolean; root?: string }
@@ -208,6 +209,10 @@ export function step(task: Task, event: TaskEvent): Step {
     }
     case 'collect_failed': {
       if (task.state !== 'preparing') return refuse(task);
+      // A script that ran and ended with an exit code refused the task (inputs that it cannot read,
+      // most often): the harness did its part, so this is no failure of the harness. The journal
+      // keeps the code, never the text of the script.
+      if (event.reason === 'exit' && event.exit !== undefined) return close(task, 'not_verified', [{ kind: 'task.collect_refused', data: { exit: event.exit } }], 'collect_failed');
       // A failure of the harness itself is written down; the task ends without a verified result.
       return close(task, 'not_verified', [{ kind: 'harness.failure', data: { where: 'collect', reason: event.reason } }], 'collect_failed');
     }

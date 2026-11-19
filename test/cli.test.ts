@@ -208,10 +208,14 @@ test('cli: no work closes the task and gives no input', () => {
 
 test('cli: a failed collect closes the task as not verified', () => {
   const b = box();
-  fs.writeFileSync(path.join(b.root, 'project/collect/change.sh'), '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(b.root, 'project/collect/change.sh'), '#!/bin/sh\necho "repo is not a directory" >&2\nexit 3\n', { mode: 0o755 });
   const r = reins(b, ['open', 'change-review', 'change_id=7']);
   assert.equal(r.code, 2);
   assert.deepEqual([r.json.state, r.json.label, r.json.input], ['closed', 'not_verified', undefined]);
+  // The one who opened the task reads why: the exit code of the script and the end of its error text.
+  assert.deepEqual(r.json.why, { cause: 'exit', exit: 3, stderr: 'repo is not a directory' });
+  // A later read of the task has no text: the harness does not keep it.
+  assert.equal('why' in reins(b, ['input', r.json.task]).json, false);
 });
 
 test('cli: a scenario without an instruction file gives no instructions', () => {
