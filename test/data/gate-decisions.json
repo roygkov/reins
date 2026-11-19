@@ -1832,7 +1832,7 @@
  {
   "repo": "onfeature",
   "command": "gh pr create --fill",
-  "expect": "allow"
+  "expect": "ask hosting.create"
  },
  {
   "repo": "onfeature",
@@ -2197,6 +2197,31 @@
  {
   "repo": "onfeature",
   "command": "glab mr view 12",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh -R owner/repo pr create --title t --body b",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr create --fill",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue create --title t --body b",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab issue create -t t -d d",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr list --state open",
   "expect": "allow"
  }
 ]

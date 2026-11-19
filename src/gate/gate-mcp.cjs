@@ -21,6 +21,8 @@ function evalHostingCli(seg) {
   // a comment, a review or a note is a text that other people read: the words stand as positionals, so a flag
   // between them (`gh -R owner/repo pr comment`) does not hide the command
   if (matchSub(pos, [['pr', 'comment'], ['pr', 'review'], ['issue', 'comment'], ['mr', 'note'], ['issue', 'note']])) return { decision: 'ask', id: 'hosting.comment', cls: 'hosting', why: b + ' writes a text that other people read in the hosting' };
+  // a new pull request, merge request or issue is a record that other people read and act on
+  if (matchSub(pos, [['pr', 'create'], ['mr', 'create'], ['issue', 'create']])) return { decision: 'ask', id: 'hosting.create', cls: 'hosting', why: b + ' creates a record that other people read in the hosting' };
   const k = seg.argv.indexOf('api');
   if (k < 0 || k > 3) return null;
   const argv = seg.argv.slice(k);
@@ -39,8 +41,8 @@ function evalHostingCli(seg) {
   const prot = /^DELETE$/i.test(method) || /(^|\/)(merges?|git\/refs|contents)(\/|$)/i.test(endpoint);
   return { decision: 'ask', id: 'hosting.api-write', cls: prot ? 'protected' : 'hosting', why: b + ' api ' + method.toUpperCase() + ' ' + short(endpoint) + ' writes to the hosting' };
 }
-// `gh pr view` and `gh pr create` stay out of Node; a merge or an `api` call goes in (the release and repo rules are data)
-evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }];
+// `gh pr view` stays out of Node; a merge, a create, a comment or an `api` call goes in (the release and repo rules are data)
+evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }, { cmd: ['gh', 'glab'], sub: 'create' }];
 
 const MCP_DENY = /^(drop|delete[-_]?many|deletemany|drop[-_]?(database|collection|table|index)|rename[-_]?collection|truncate)/i;
 const MCP_ASK = /^(insert|update|delete|create|replace|bulk|write|put|set|upsert|patch|remove|move|rename|import|restore)/i;
