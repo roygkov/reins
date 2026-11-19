@@ -733,6 +733,25 @@ test('cli: the journal is read by a command: the last rows of a window, a filter
   assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).length, whole.length);
 });
 
+test('cli: the count of the journal by the scenario takes the scenario of the data when the row has no scenario of its own', () => {
+  const b = box();
+  reins(b, ['open', 'change-review', 'change_id=7']);
+  const file = path.join(b.state, 'journal.jsonl');
+  const before = reins(b, ['journal', 'count=scenario']).json.counts;
+  const own = readJournal(file).find((r) => r.scenario === 'change-review');
+  assert.ok(own !== undefined);
+  // An attempt on the harness inside a task carries the scenario in its data only (contracts AD7).
+  const row = { ts: new Date().toISOString(), v: 1, kind: 'policy.protected_attempt', project: own.project, session: 's1', client: 'claude_code', data: { outcome: 'ask', rule: 'protect.harness', in_scenario: 1, scenario: 'change-review', ms: 1 } };
+  const free = { ...row, data: { outcome: 'ask', rule: 'protect.harness', ms: 1 } };
+  fs.appendFileSync(file, `${JSON.stringify(row)}\n${JSON.stringify(free)}\n`);
+  const after = reins(b, ['journal', 'count=scenario']).json.counts;
+  assert.equal(after['change-review'], before['change-review'] + 1);
+  assert.equal(after.none, (before.none ?? 0) + 1);
+  // The scenario of the row itself comes first.
+  fs.appendFileSync(file, `${JSON.stringify({ ...row, scenario: 'wrapup', scenario_v: 1 })}\n`);
+  assert.equal(reins(b, ['journal', 'count=scenario']).json.counts.wrapup, 1);
+});
+
 test('cli: the metrics are a series of the eight numbers by day or by week, in a form with a version', () => {
   const b = box();
   reins(b, ['open', 'change-review', 'change_id=7']);

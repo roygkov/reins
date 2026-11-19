@@ -793,7 +793,11 @@ function main(args: string[]): Out {
     if (count === undefined) return { ok: true, n: rows.length, rows: rows.slice(-last) };
     const counts: Record<string, number> = {};
     for (const row of rows) {
-      const at = count === 'day' ? row.ts.slice(0, 10) : count === 'rule' || count === 'outcome' ? row.data?.[count] : (row as Record<string, unknown>)[count];
+      // The scenario of a row is its own field; a row of an attempt on the harness carries it in the data (contracts AD7).
+      const at = count === 'day' ? row.ts.slice(0, 10)
+        : count === 'rule' || count === 'outcome' ? row.data?.[count]
+        : count === 'scenario' ? row.scenario ?? row.data?.scenario
+        : (row as Record<string, unknown>)[count];
       const key = typeof at === 'string' || typeof at === 'number' ? String(at) : 'none';
       counts[key] = (counts[key] ?? 0) + 1;
     }
