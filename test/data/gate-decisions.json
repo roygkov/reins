@@ -2148,5 +2148,55 @@
   "repo": "prfetch",
   "command": "git pull",
   "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr comment 12 --body text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh -R owner/repo pr comment 12 --body text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr review 12 --approve",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue comment 12 --body text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr note 12 -m text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab -R group/project mr note 12 -m text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab issue note 12 -m text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr view 12 --json comments",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr list --search comment",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr view 12",
+  "expect": "allow"
  }
 ]

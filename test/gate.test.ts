@@ -115,9 +115,9 @@ for (const repo of [...new Set(cases.map((c) => c.repo))].sort()) {
 }
 
 test('gate: the corpus is whole', () => {
-  assert.equal(cases.length, 430);
+  assert.equal(cases.length, 440);
   const count = (o: string): number => cases.filter((c) => c.expect.split(' ')[0] === o).length;
-  assert.deepEqual({ allow: count('allow'), ask: count('ask'), deny: count('deny') }, { allow: 185, ask: 245, deny: 0 });
+  assert.deepEqual({ allow: count('allow'), ask: count('ask'), deny: count('deny') }, { allow: 188, ask: 252, deny: 0 });
 });
 
 test('gate to policy: a command that no rule matches passes by the default of the core', () => {

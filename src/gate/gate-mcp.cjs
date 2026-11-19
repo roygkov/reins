@@ -18,6 +18,9 @@ function evalHostingCli(seg) {
   if (b !== 'gh' && b !== 'glab') return null;
   const pos = positionals(seg.argv);
   if (matchSub(pos, [['pr', 'merge'], ['mr', 'merge']])) return { decision: 'ask', id: 'hosting.merge', cls: 'protected', why: b + ' merges a pull request into its base branch' };
+  // a comment, a review or a note is a text that other people read: the words stand as positionals, so a flag
+  // between them (`gh -R owner/repo pr comment`) does not hide the command
+  if (matchSub(pos, [['pr', 'comment'], ['pr', 'review'], ['issue', 'comment'], ['mr', 'note'], ['issue', 'note']])) return { decision: 'ask', id: 'hosting.comment', cls: 'hosting', why: b + ' writes a text that other people read in the hosting' };
   const k = seg.argv.indexOf('api');
   if (k < 0 || k > 3) return null;
   const argv = seg.argv.slice(k);
@@ -37,7 +40,7 @@ function evalHostingCli(seg) {
   return { decision: 'ask', id: 'hosting.api-write', cls: prot ? 'protected' : 'hosting', why: b + ' api ' + method.toUpperCase() + ' ' + short(endpoint) + ' writes to the hosting' };
 }
 // `gh pr view` and `gh pr create` stay out of Node; a merge or an `api` call goes in (the release and repo rules are data)
-evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }];
+evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }];
 
 const MCP_DENY = /^(drop|delete[-_]?many|deletemany|drop[-_]?(database|collection|table|index)|rename[-_]?collection|truncate)/i;
 const MCP_ASK = /^(insert|update|delete|create|replace|bulk|write|put|set|upsert|patch|remove|move|rename|import|restore)/i;
