@@ -19,6 +19,8 @@
 //   reins queue [approve|reject <id>]    the actions that a rule deferred; the human answers
 //   reins metrics [days=N] [step=day|week] [project=here|<project>]
 //                                        the eight numbers by day or by week, for a dashboard
+//   reins journal [hours=N] [last=N] [kind=..] [rule=..] [session=..] [task=..] [project=..] [count=<field>]
+//                                        the last rows of the journal, or a count of the rows by a field
 // The output is one JSON object. Exit codes: 0 done, 2 the task is not closed as verified,
 // 1 an error. The config names the packs: $REINS_CONFIG or ~/.config/reins/config.json.
 
@@ -324,7 +326,8 @@ function main(args: string[]): Out {
     const taker = sessionOfCommand(rt, process.cwd(), SESSION_ENV);
     // Only the window itself becomes the owner of the task; a session that the directory gave and a
     // client without a window hold the task and leave its owner.
-    resumeTask(rt, first, taker, takesOwnership(sessionNamed(rt, SESSION_ENV), taker));
+    const named = sessionNamed(rt, SESSION_ENV);
+    resumeTask(rt, first, taker, takesOwnership(named, taker), named !== undefined && named === taker ? 'named' : 'directory');
     const task = loadTask(rt, first);
     if (task === null) throw new Stop('unknown_task');
     return view(rt, task);
@@ -745,6 +748,56 @@ function main(args: string[]): Out {
     }
     return out;
   }
+  // The rows of the journal for a reader: the last rows of a window, with filters, or a count by
+  // a field. The journal holds no text of a request, a command or a report (harness-spec.md,
+  // section 15), so its rows are safe to give. A shell command that names the directory of the
+  // state asks the human; this command is the way to read the journal without that question.
+  if (command === 'journal') {
+    const rt = runtime();
+    const words = [first, ...rest].filter((w): w is string => w !== undefined);
+    const KEYS = ['hours', 'last', 'kind', 'rule', 'session', 'task', 'project', 'count'];
+    if (words.some((w) => !KEYS.includes(w.split('=')[0] ?? '') || !w.includes('=')) || new Set(words.map((w) => w.split('=')[0])).size !== words.length) throw new Stop('usage');
+    const value = (key: string): string | undefined => words.find((w) => w.startsWith(`${key}=`))?.slice(key.length + 1);
+    const number = (key: string, byDefault: number, max: number): number => {
+      const word = value(key);
+      if (word === undefined) return byDefault;
+      if (!/^[1-9][0-9]{0,3}$/.test(word) || Number(word) > max) throw new Stop('usage');
+      return Number(word);
+    };
+    const hours = number('hours', 24, 24 * 31);
+    const last = number('last', 50, 500);
+    const token = (key: string): string | undefined => {
+      const word = value(key);
+      if (word !== undefined && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(word)) throw new Stop('usage');
+      return word;
+    };
+    const kind = token('kind');
+    const rule = token('rule');
+    const session = token('session');
+    const task = token('task');
+    const named = value('project');
+    if (named !== undefined && named !== 'here' && !/^p[0-9a-f]{8}$/.test(named)) throw new Stop('usage');
+    const project = named === 'here' ? rt.project : named;
+    const count = value('count');
+    const FIELDS = ['kind', 'rule', 'day', 'project', 'scenario', 'outcome'];
+    if (count !== undefined && !FIELDS.includes(count)) throw new Stop('usage');
+    const from = Date.now() - hours * 60 * 60 * 1000;
+    const rows = readJournalSince(rt.stateDir, from).filter((row) =>
+      Date.parse(row.ts) >= from
+      && (kind === undefined || row.kind.startsWith(kind))
+      && (rule === undefined || row.data?.rule === rule)
+      && (session === undefined || (row.session ?? '').startsWith(session))
+      && (task === undefined || row.task === task)
+      && (project === undefined || row.project === project));
+    if (count === undefined) return { ok: true, n: rows.length, rows: rows.slice(-last) };
+    const counts: Record<string, number> = {};
+    for (const row of rows) {
+      const at = count === 'day' ? row.ts.slice(0, 10) : count === 'rule' || count === 'outcome' ? row.data?.[count] : (row as Record<string, unknown>)[count];
+      const key = typeof at === 'string' || typeof at === 'number' ? String(at) : 'none';
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return { ok: true, n: rows.length, counts: Object.fromEntries(Object.entries(counts).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))) };
+  }
   if (command === 'tasks' && first === undefined) {
     return {
       ok: true,
@@ -829,7 +882,7 @@ function main(args: string[]): Out {
     return { ok: true, task: r.task.id, state: r.task.state, probe: true, answer: r.answer, checks_left: r.left, returns_left: Math.max(0, (r.task.manifest?.done.retries ?? 0) - r.task.returns) };
   }
   if (command === 'report' && first !== undefined && rest.length === 1 && rest[0] !== undefined) return report(runtime(), first, rest[0]);
-  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=hour|day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory census', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
+  throw new Stop('usage', { commands: ['scenarios', 'packs', 'check <task> [file|-]', 'status [days] [project=here|<project>]', 'metrics [days=N] [step=hour|day|week] [project=here|<project>]', 'week', 'pause <minutes>', 'dispute <task>', 'dispute <task> fail', 'probes', 'sweep', 'enable <scenario>', 'tick', 'tick run', 'timer [minutes]', 'run <scenario> [name=value]', 'fire <event> [name=value]', 'fire run <event> [name=value]', 'craft', 'craft accept|reject <id>', 'tasks', 'journal [hours=N] [last=N] [kind=<start>] [rule=<rule>] [session=<start>] [task=<id>] [project=here|<project>] [count=kind|rule|day|project|scenario|outcome]', 'result <task>', 'queue', 'queue approve|reject <id>', 'open <scenario> [name=value]', 'match <value>', 'input <task>', 'propose <contract.json>', 'approve <task>', 'retry <task>', 'raise <task>', 'report <task> <file|->', 'finish <task>', 'stop <task>', 'memory', 'memory find <word>...', 'memory census', 'memory show <id>', 'memory next <case> <step> task=<id> [status=<s>]', 'memory close <case> task=<id>', 'memory step <case> <step> [status=<s>]', 'memory end <case>', 'memory add <type> <text> task=<id> [path=<p>]', 'memory decide <text> because=<reason>', 'memory veto <id>', 'memory restore <id>', 'memory share <id>', 'memory wrong <id>', 'memory import <file>'] });
 }
 
 const FIND_TEXT = 300; // characters of the text of a record in a row of a search

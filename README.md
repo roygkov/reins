@@ -100,6 +100,7 @@
     reins fire run <событие> [имя=значение]
     reins status [days] [project=here|<project>]
     reins metrics [days=N] [step=hour|day|week] [project=here|<project>]
+    reins journal [hours=N] [last=N] [kind=<начало>] [rule=<правило>] [session=<начало>] [task=<id>] [project=here|<project>] [count=<поле>]
     reins week
     reins craft
     reins craft accept|reject <id>

@@ -15,7 +15,7 @@ export type Source = (typeof SOURCES)[number];
 export const EVENT_KINDS = [
   // the loop
   'task.opened', 'task.kind_decided', 'task.contract_proposed', 'task.contract_approved', 'task.prepared', 'task.collect_refused', 'task.skipped',
-  'task.started', 'task.report_submitted', 'task.returned', 'task.waiting_human', 'task.human_decision', 'task.closed', 'task.result_disputed',
+  'task.started', 'task.report_submitted', 'task.returned', 'task.waiting_human', 'task.human_decision', 'task.closed', 'task.result_disputed', 'task.taken',
   // the policy
   'policy.decision', 'policy.basis', 'policy.envelope_opened', 'policy.envelope_closed', 'policy.action_deferred',
   'policy.deferred_resolved', 'policy.protected_attempt',
@@ -91,6 +91,10 @@ const DATA: Partial<Record<EventKind, Record<string, FieldSpec>>> = {
   'task.prepared': { outputs: 'number', bytes: 'number' },
   // A collect script ran and ended with this exit code: it refused the task.
   'task.collect_refused': { exit: 'number' },
+  // A task moved to another session. `owns`: the taker became its owner (1) or only holds it (0).
+  // `how`: the client named the session of the command, or only the directory gave it: a guess.
+  // `from`, when another session held the task before: that session.
+  'task.taken': { owns: 'number', how: ['named', 'directory'] },
   'task.report_submitted': { size: 'number' },
   'task.returned': { n: 'number', reason: ['check_fail', 'human'] },
   'task.waiting_human': { reason: ['gate', 'check', 'approval', 'contract', 'limit', 'scope'] },

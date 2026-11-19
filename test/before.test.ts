@@ -235,6 +235,54 @@ test('before: a change of the code of the harness asks the human', () => {
   assert.deepEqual([shell.outcome, shell.rule], ['ask', 'protect.harness']);
 });
 
+test('before: a run of the tests of the harness in its directory gets no question: a closed list of forms', () => {
+  const b = box();
+  const h = path.join(b.root, 'harness');
+  fs.mkdirSync(path.join(h, 'test'), { recursive: true });
+  b.rt.harnessDirs = [h];
+  const asks = (command: string): [string, string | undefined] => {
+    const r = beforeAction(b.rt, call(b, 'shell', { command }), CLIENT);
+    return [r.outcome, r.rule];
+  };
+  // The first part enters the directory of the harness; the other parts are the forms of a run of
+  // the tests, or programs that only read.
+  for (const command of [
+    `cd ${h} && npm test`,
+    `cd ${h} && npm test 2>&1 | tail -5`,
+    `cd ${h} && npm run typecheck`,
+    `cd ${h} && npx tsc --noEmit 2>&1 | head -20`,
+    `cd ${h} && node --test test/parts.test.ts`,
+    `cd ${h} && node --test --test-name-pattern='a week ago' test/parts.test.ts test/cli.test.ts 2>&1 | grep -E "^ℹ" | head`,
+    `cd ${h} && node --test test/*.test.ts 2>/dev/null; echo done`,
+  ]) assert.notEqual(asks(command)[0], 'ask', command);
+  // Any other form asks as before.
+  for (const command of [
+    `cd ${h} && npm test > out.txt`,
+    `cd ${h} && NODE_OPTIONS=--require=./x.js npm test`,
+    `cd ${h} && npm run build`,
+    `cd ${h} && npm test -- --watch`,
+    `cd ${h} && npm install`,
+    `cd ${h} && npx tsc`,
+    `cd ${h} && npx tsc --noEmit --outDir x`,
+    `cd ${h} && npx jest`,
+    `cd ${h} && node test/parts.test.ts`,
+    `cd ${h} && node --test`,
+    `cd ${h} && node --test src/cli.ts`,
+    `cd ${h} && node --test ../other/test/x.test.ts`,
+    `cd ${h} && node --test ${h}/test/x.test.ts`,
+    `cd ${h} && node --test --require ./x.js test/x.test.ts`,
+    `cd ${h} && node --test test/x.test.ts && rm -rf test`,
+    `cd ${h} && npm test && git commit -am x`,
+    `cd ${h}/sub && npm test`,
+    `cd ${h} && cd .. && npm test`,
+    `cd ${h} && npm test $(echo x)`,
+    `npm --prefix ${h} test`,
+    `sudo -u x sh -c "cd ${h} && npm test"`,
+  ]) assert.deepEqual(asks(command), ['ask', 'protect.harness'], command);
+  // The state keeps its question in every form.
+  assert.deepEqual(asks(`cd ${h} && npm test; cat ${b.rt.stateDir}/journal.jsonl`), ['ask', 'protect.state']);
+});
+
 test('before: a command that only reads the code of the harness or a pack gets no question', () => {
   const b = box();
   const h = path.join(b.root, 'harness');
@@ -276,7 +324,23 @@ test('before: a command that only reads the code of the harness or a pack gets n
     `sudo cat ${h}/a.ts`,
     `cat ${h}/list.txt | xargs cat`,
     `git -C ${h} -c core.pager=less log`,
+    // A reader inside the text of another shell: the parse opens the text, the program that
+    // starts is the shell (or `sudo`, or `eval`), not the reader.
+    `sh -c "cat ${h}/a.ts"`,
+    `sudo sh -c "cat ${h}/a.ts"`,
+    `bash -lc 'cat ${h}/a.ts | head'`,
+    `zsh -c "cat ${h}/a.ts"`,
+    `eval "cat ${h}/a.ts"`,
+    `ls ${h}; sh -c 'cat ${h}/a.ts'`,
   ]) assert.deepEqual(asks(command), ['ask', 'protect.harness'], command);
+  // The parts of a plain command stand at a place of a command: after `;`, `&&`, `||`, `|`, `(`.
+  for (const command of [
+    `(cd ${h} && git status --short) | head -3`,
+    `ls ${h} || echo none`,
+    `cat ${h}/a.ts | grep -n "sh -c" | head`,
+    `ls ${h}\nwc -l ${h}/a.ts`,
+    `grep -n "a; cat b | head" ${h}/a.ts | head -2`,
+  ]) assert.notEqual(asks(command)[0], 'ask', command);
   // A pack of the harness: the same rule.
   const pack = b.rt.merged.packs[0]?.dir;
   assert.ok(pack !== undefined);
@@ -819,6 +883,33 @@ test('before: a command of the human asks where it runs, not where a text names 
   }
   // A command of the agent stays one: the word after the program decides, not a word further in the line.
   for (const command of ['reins memory find stop', 'reins input t000000000000; echo run', 'reins check t000000000000 - < /tmp/report.txt']) assert.equal(run(command).outcome, 'allow', command);
+});
+
+test('before: the row of an attempt on the harness says whether a task of a scenario executes in the session, and which scenario', () => {
+  const b = box();
+  const h = path.join(b.root, 'harness');
+  fs.mkdirSync(path.join(h, 'src'), { recursive: true });
+  b.rt.harnessDirs = [h];
+  const attempts = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'policy.protected_attempt');
+  const edit = (session: string) => beforeAction(b.rt, { ...call(b, 'write_file', { path: path.join(h, 'src/a.ts') }), session }, CLIENT);
+  // No scenario in the session: the row carries the rule and the outcome only.
+  assert.equal(edit('s1').rule, 'protect.harness');
+  assert.deepEqual([attempts().at(-1)?.data?.in_scenario, attempts().at(-1)?.data?.scenario], [undefined, undefined]);
+  // A task of a scenario executes in the session: the row names it.
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  assert.equal(edit('s1').rule, 'protect.harness');
+  const row = attempts().at(-1);
+  assert.deepEqual([row?.data?.rule, row?.data?.in_scenario, row?.data?.scenario], ['protect.harness', 1, 'change-review']);
+  assert.ok(row !== undefined);
+  assert.deepEqual(validateRow(row), []);
+  // Another session has no scenario: its row does not get the mark.
+  assert.equal(edit('s2').rule, 'protect.harness');
+  assert.equal(attempts().at(-1)?.data?.in_scenario, undefined);
+  // The task ended: the mark goes away.
+  assert.ok('task' in applyEvent(b.rt, opened.task.id, { type: 'human', decision: 'stop' }, 'human'));
+  assert.equal(edit('s1').rule, 'protect.harness');
+  assert.equal(attempts().at(-1)?.data?.in_scenario, undefined);
 });
 
 test('before: a manifest with `permissions.harness` lets the task change the code of the harness without a question, but not the code of the barrier', () => {

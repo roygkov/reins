@@ -138,6 +138,23 @@ function readerSegment(seg: FullSegment): boolean {
   return true;
 }
 
+// Every part of the command stands in its text at the place of a command: at the start, or after
+// `;`, `&`, `|`, `(`, `{` or a new line. The parse opens the text that another shell gets
+// (`sh -c "..."`, `eval "..."`, with `sudo` before it or not): a part of such a text stands
+// after a quote, and the program that starts is that shell, not the part.
+function plain(command: string, segments: FullSegment[]): boolean {
+  let from = 0;
+  for (const seg of segments) {
+    const text = (seg.text ?? '').trim();
+    const at = text === '' ? -1 : command.indexOf(text, from);
+    if (at < 0) return false;
+    const before = command.slice(0, at).replace(/[ \t]+$/, '');
+    if (before !== '' && !/[;&|({\n]$/.test(before)) return false;
+    from = at + text.length;
+  }
+  return true;
+}
+
 export function readsOnly(command: string): boolean {
   if (/[$`]|[<>]\(/.test(command)) return false;
   let segments: FullSegment[];
@@ -146,7 +163,50 @@ export function readsOnly(command: string): boolean {
   } catch {
     return false;
   }
-  return segments.length > 0 && segments.every(readerSegment);
+  return segments.length > 0 && segments.every(readerSegment) && plain(command, segments);
+}
+
+// A run of the tests of a project, in a closed list of forms: `npm test`, `npm run typecheck`,
+// `npx tsc --noEmit`, and `node --test` with test files of the directory `test` (and a pattern of
+// the names of the tests). No variable, no assignment before the command, no output into a file,
+// no other flag: a flag of `node` can load a file, and a script of `npm` can be any program.
+const TEST_FILE = /^test\/[A-Za-z0-9_*-]+\.test\.ts$/;
+function testSegment(seg: FullSegment): boolean {
+  if (seg.argv.length === 0) return false;
+  if ((seg.vars ?? []).some(Boolean) || Object.keys(seg.env ?? {}).length > 0) return false;
+  if (seg.redirects.some((target) => target !== '/dev/null')) return false;
+  const words = (seg.text ?? '').trim().split(/\s+/);
+  const a = seg.argv;
+  if (words[0] === 'npm') return a[0] === 'npm' && ((a.length === 2 && a[1] === 'test') || (a.length === 3 && a[1] === 'run' && a[2] === 'typecheck'));
+  // The parse drops the wrapper `npx`: the words of the text name it.
+  if (words[0] === 'npx') return words[1] === 'tsc' && words[2] === '--noEmit' && a.length === 2 && a[0] === 'tsc' && a[1] === '--noEmit';
+  if (words[0] !== 'node' || a[0] !== 'node' || a[1] !== '--test') return false;
+  let rest = a.slice(2);
+  if (rest[0] === '--test-name-pattern' && rest[1] !== undefined) rest = rest.slice(2);
+  else if ((rest[0] ?? '').startsWith('--test-name-pattern=')) rest = rest.slice(1);
+  return rest.length > 0 && rest.every((file) => TEST_FILE.test(file));
+}
+
+// The directory that a command enters to run the tests there, or null. The first part is `cd` with
+// one directory, written whole; no other part moves; every other part is a form of a run of the
+// tests or a program that only reads, and one of them runs the tests.
+export function runsTests(command: string): string | null {
+  // The text itself starts with `cd`: the parse opens a wrapper (`sudo sh -c "..."`), and a command
+  // inside a wrapper runs as somebody else or somewhere else.
+  if (/[$`]|[<>]\(/.test(command) || !/^\(?\s*cd\s/.test(command.trim())) return null;
+  let segments: FullSegment[];
+  try {
+    segments = parse(command) as FullSegment[];
+  } catch {
+    return null;
+  }
+  if (!plain(command, segments)) return null;
+  const [first, ...rest] = segments;
+  if (first === undefined || rest.length === 0 || !readerSegment(first) || first.argv.length !== 2 || first.argv[0] !== 'cd') return null;
+  const dir = first.argv[1] ?? '';
+  if (!path.isAbsolute(dir) || rest.some((seg) => seg.argv[0] === 'cd')) return null;
+  if (!rest.every((seg) => testSegment(seg) || readerSegment(seg)) || !rest.some(testSegment)) return null;
+  return dir;
 }
 
 // The places of a command. `every`: a relative path is read from every directory that the command

@@ -33,6 +33,20 @@ test('manifest: the result label follows the kind of the done check', () => {
   assert.equal(labelOf('human', 'form'), 'approved_by_human');
 });
 
+test('manifest: the source of a script check can be an input of the type string; the source of a citation check is a result of the collect step only', () => {
+  const base = loadCases<{ name: string; manifest: Record<string, unknown> }>('manifest-bases').find((b) => b.name === 'review')?.manifest;
+  assert.ok(base !== undefined);
+  const trigger = { kind: 'command', inputs: [{ name: 'change_id', type: 'id' }, { name: 'repo', type: 'string' }] };
+  const errors = (done: unknown): string[] => validateManifest({ ...base, trigger, done }).map((e) => `${e.code} ${e.path}`);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 0, source: 'repo' }), []);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 0, source: 'worktree' }), []);
+  // An input of another type is no path, and a name that nothing declares is unknown.
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 0, source: 'change_id' }), ['unknown_output done.source']);
+  assert.deepEqual(errors({ kind: 'command', check: 'tests', retries: 0, source: 'tree' }), ['unknown_output done.source']);
+  // The citation check reads what the collect step prepared, never a path that the opener gave.
+  assert.deepEqual(errors({ kind: 'citations', retries: 2, source: 'repo' }), ['unknown_output done.source']);
+});
+
 test('manifest: only a script check says that it proves the form, and only that word is taken', () => {
   const base = loadCases<{ name: string; manifest: Record<string, unknown> }>('manifest-bases').find((b) => b.name === 'review')?.manifest;
   assert.ok(base !== undefined);

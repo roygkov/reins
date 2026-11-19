@@ -385,7 +385,7 @@ export function guardPattern(guard: string): RegExp {
   return new RegExp(`^${source}$`, 's');
 }
 
-function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>): void {
+function done(r: Report, value: unknown, pack: PackContext, outputs: readonly unknown[], itemFields: Record<string, unknown>, paths: ReadonlySet<string> = new Set()): void {
   const d = fields(r, value, 'done', ['kind', 'check', 'checks', 'retries', 'unbound', 'proves', 'source', 'changed', 'guards', 'valid_minutes', 'soak_minutes', 'texts', 'reject', 'unquoted', 'recheck'], ['kind', 'retries']);
   if (d === null) return;
   const kind = choice(r, d.kind, 'done.kind', DONE_KINDS);
@@ -426,7 +426,11 @@ function done(r: Report, value: unknown, pack: PackContext, outputs: readonly un
     if (kind !== null && kind !== 'citations' && (key === 'changed' || !needsCheck)) r.add('not_allowed', `done.${key}`);
     else {
       const name = named(r, d[key], `done.${key}`, IDENT);
-      if (name !== null && !outputs.includes(name)) r.add('unknown_output', `done.${key}`);
+      // The work of a script check can also be a directory that the opener of the task names: an
+      // input of the type string. The script gets the same input, so the answer and the
+      // fingerprint are of one directory, wherever the report is given.
+      const input = key === 'source' && needsCheck && name !== null && paths.has(name);
+      if (name !== null && !outputs.includes(name) && !input) r.add('unknown_output', `done.${key}`);
     }
   }
   // Without a source the check can never answer: such a manifest is refused when it is connected.
@@ -569,7 +573,10 @@ export function validateManifest(value: unknown, pack: PackContext = STRUCTURE_O
   }
   if (m.model !== undefined) model(r, m.model, pack);
   if (m.permissions !== undefined) permissions(r, m.permissions, pack, inputs);
-  if (m.done !== undefined) done(r, m.done, pack, isObj(m.collect) && Array.isArray(m.collect.outputs) ? m.collect.outputs : [], isObj(m.output) && isObj(m.output.fields) ? m.output.fields : {});
+  // The inputs of the type string: a script check can name one of them as the directory of its work.
+  const declared: unknown[] = isObj(m.trigger) && Array.isArray(m.trigger.inputs) ? m.trigger.inputs : [];
+  const paths = new Set(declared.flatMap((i) => (isObj(i) && i.type === 'string' && typeof i.name === 'string' && inputs.has(i.name) ? [i.name] : [])));
+  if (m.done !== undefined) done(r, m.done, pack, isObj(m.collect) && Array.isArray(m.collect.outputs) ? m.collect.outputs : [], isObj(m.output) && isObj(m.output.fields) ? m.output.fields : {}, paths);
   if (m.output !== undefined) output(r, m.output);
   // A result that goes into a system gets there by a write: the manifest names one.
   if (isObj(m.output) && m.output.to === 'system' && !(isObj(m.permissions) && Array.isArray(m.permissions.write) && m.permissions.write.length > 0)) r.add('missing', 'permissions.write');

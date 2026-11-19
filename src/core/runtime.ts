@@ -414,11 +414,16 @@ function checkedWork(rt: Runtime, task: Task): string[] {
 }
 
 // The directory of the work that a result of the task is about: the collect result that the
-// manifest names as the source.
+// manifest names as the source, else the input of the task of that name (a script check only:
+// the manifest check lets no other kind name an input).
 function sourceRoot(rt: Runtime, task: Task): string | null {
   const name = task.manifest?.done.source;
-  const root = name === undefined ? undefined : readCollected(rt, task.id)?.[name];
-  return typeof root === 'string' && root !== '' ? root : null;
+  if (name === undefined) return null;
+  const collected = readCollected(rt, task.id)?.[name];
+  if (typeof collected === 'string' && collected !== '') return collected;
+  // A path that the opener gave is taken only whole: a relative one would mean another directory in each session.
+  const given = collected === undefined && Object.hasOwn(task.inputs, name) ? task.inputs[name] : undefined;
+  return typeof given === 'string' && path.isAbsolute(given) ? given : null;
 }
 
 // The files of the checks that gave a red answer: the work of each such task and the patterns of

@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyEvent, collectedDir, openTasks, runCheck, type Runtime } from './runtime.ts';
+import { applyEvent, collectedDir, loadTask, openTasks, runCheck, type Runtime } from './runtime.ts';
 import type { Task } from './task.ts';
 import { pruneArchive } from '../journal/writer.ts';
 import { pruneQueue } from './queue.ts';
@@ -50,6 +50,21 @@ export function sweep(rt: Runtime, now: number = Date.now()): string[] {
     // no questions wait
   }
   pruneQueue(rt, now);
+  // The files of a task that ended a week ago: the journal keeps its facts, and every reader of
+  // the open tasks reads each file that lies here. A contract stays: the craft reads its manifest.
+  try {
+    const dir = path.join(rt.stateDir, 'tasks');
+    const names = fs.readdirSync(dir);
+    for (const name of names) {
+      const id = /^(t[0-9a-f]{12})\.json$/.exec(name)?.[1];
+      if (id === undefined || now - fs.statSync(path.join(dir, name)).mtimeMs <= 7 * 24 * HOUR) continue;
+      const task = loadTask(rt, id);
+      if (task === null || (task.state !== 'closed' && task.state !== 'skipped') || task.kind === 'contract') continue;
+      for (const other of names) if (other.startsWith(`${id}.`) && !other.endsWith('.lock')) fs.rmSync(path.join(dir, other), { recursive: true, force: true });
+    }
+  } catch {
+    // no tasks
+  }
   // The copies of collected results that nobody touched for a week: their tasks ended long ago.
   // A link is never followed. The copies of an earlier version lay beside the tasks in the state.
   for (const [base, pattern] of [[collectedDir(rt), /^t[0-9a-f]{12}$/], [path.join(rt.stateDir, 'tasks'), /^t[0-9a-f]{12}\.collected$/]] as const) {

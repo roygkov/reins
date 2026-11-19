@@ -28,7 +28,7 @@ const TOOLS = { 'tracker__add_comment': { kind: 'write', action: 'comment', targ
 const REPORT = JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'the first line of the file', text: 'x' }] });
 
 type Box = { rt: Runtime; root: string; cwd: string };
-type Opts = { collect?: string; check?: string; parts?: Record<string, string>; done?: Record<string, unknown>; output?: Record<string, unknown>; organization?: Record<string, unknown> };
+type Opts = { trigger?: Record<string, unknown>; collect?: string; check?: string; parts?: Record<string, string>; done?: Record<string, unknown>; output?: Record<string, unknown>; organization?: Record<string, unknown> };
 let n = 0;
 function box(o: Opts = {}): Box {
   n += 1;
@@ -46,7 +46,7 @@ function box(o: Opts = {}): Box {
     const file = path.join(root, 'packs', rel);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     if (rel.endsWith('.sh')) fs.writeFileSync(file, collect.replaceAll('$OUT', out).replaceAll('$WORK', cwd), { mode: 0o755 });
-    else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), ...(o.done !== undefined ? { done: o.done } : {}), ...(o.output !== undefined ? { output: o.output } : {}) }));
+    else if (value === '$manifest:review') fs.writeFileSync(file, JSON.stringify({ ...manifests.get('review'), ...(o.trigger !== undefined ? { trigger: o.trigger } : {}), ...(o.done !== undefined ? { done: o.done } : {}), ...(o.output !== undefined ? { output: o.output } : {}) }));
     else if (typeof value === 'string' && value.startsWith('$manifest:')) fs.writeFileSync(file, JSON.stringify(manifests.get(value.slice(10))));
     else if (rel === 'project/pack.json' && o.parts !== undefined) fs.writeFileSync(file, JSON.stringify({ ...(value as object), checks: Object.keys(o.parts) }));
     else if (rel === 'organization/pack.json') fs.writeFileSync(file, JSON.stringify({ ...(value as object), tools: TOOLS, ...(o.organization ?? {}) }));
@@ -681,6 +681,27 @@ test('ready: a check without a named source is tied to the work where the report
   fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
   assert.equal(verifyWork({ ...b.rt, workDir: b.root }, id), false);
   assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.invalidated')?.data?.reason, 'work_changed');
+});
+
+test('ready: a script check whose source is an input of the task is tied to the directory that the input names, from any directory', () => {
+  const trigger = { kind: 'command', inputs: [{ name: 'change_id', type: 'id' }, { name: 'repo', type: 'string' }] };
+  const b = box({ trigger, done: { kind: 'command', check: 'tests', retries: 0, source: 'repo' }, check: PASSING });
+  // The session stands in no work: the report is given from a directory that has no fingerprint.
+  const { workDir: _, ...noDir } = b.rt;
+  const opened = openScenario(noDir, 'change-review', { change_id: '7', repo: b.cwd }, { session: 's1' });
+  assert.ok(opened.ok);
+  const r = submitReport(noDir, opened.task.id, REPORT);
+  assert.ok('step' in r && r.answer !== undefined);
+  assert.equal(r.answer.result, 'PASS', JSON.stringify(r.answer));
+  const task = loadTask(b.rt, opened.task.id);
+  assert.equal(task?.root, b.cwd);
+  assert.match(task?.work ?? '', /^[0-9a-f]{32}$/);
+  // An input that names no directory gives no fingerprint: no answer, as before.
+  const none = openScenario(noDir, 'change-review', { change_id: '8', repo: path.join(b.root, 'absent') }, { session: 's1' });
+  assert.ok(none.ok);
+  const second = submitReport(noDir, none.task.id, REPORT);
+  assert.ok('step' in second && second.answer !== undefined);
+  assert.deepEqual([second.answer.result, second.answer.reason], ['none', 'no_work']);
 });
 
 test('ready: a green answer of a script without a fingerprint of the work is no answer, unless the manifest says that there is no work', () => {

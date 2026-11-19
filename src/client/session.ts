@@ -437,10 +437,29 @@ export function takesOwnership(named: string | undefined, session: string | unde
 // that the human did not approve is not a task to take: only its approval starts it.
 // `owns`: the take moves the owner of the task to this session (`takesOwnership`). Else the
 // session only holds the task: the owner stays, and the answers about the task go to it.
-export function resumeTask(rt: Runtime, id: string, session: string | undefined, owns: boolean): boolean {
+// `how`: the client named the session of the command (`named`), or only the directory gave it
+// (`directory`): a guess about who runs the command. A take that moves the task from one session
+// to another is a row of the journal: without it nobody sees why a session works on a task that
+// it did not open.
+export function resumeTask(rt: Runtime, id: string, session: string | undefined, owns: boolean, how: 'named' | 'directory' = owns ? 'named' : 'directory'): boolean {
   if (session === undefined) return false;
-  const task = mutateTask(rt, id, (t) => (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract' ? null : { ...t, session, ...(owns ? { opener: session } : {}) }));
+  let from: string | undefined;
+  let moved = false;
+  const task = mutateTask(rt, id, (t) => {
+    if (t.kind === 'free' || t.state === 'closed' || t.state === 'skipped' || t.waiting === 'contract') return null;
+    from = t.session;
+    moved = t.session !== session;
+    return { ...t, session, ...(owns ? { opener: session } : {}) };
+  });
   if (task === null) return false;
   patchSession(rt, session, { scenario: id });
+  if (moved) {
+    const name = (s: string): string => (/^[A-Za-z0-9_-]{1,64}$/.test(s) ? s : sessionName(s));
+    rt.journal.write({
+      kind: 'task.taken', project: rt.project, task: id, session: name(session),
+      ...(task.scenario !== undefined ? { scenario: task.scenario, scenario_v: task.version ?? 1 } : {}),
+      data: { owns: owns ? 1 : 0, how, ...(from !== undefined ? { from: name(from) } : {}) },
+    });
+  }
   return true;
 }

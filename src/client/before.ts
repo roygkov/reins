@@ -16,7 +16,7 @@ import { applyEvent, confirm, decideAction, frozenRuntime, loadTask, mutateTask,
 import { pausedUntil } from '../core/pause.ts';
 import { deferCall } from '../core/queue.ts';
 import { currentScenario, patchSession, readSession, takeJudged, withSession } from '../core/sessions.ts';
-import { humanCommand, readsOnly, reinsCalls, touchedPlaces } from './places.ts';
+import { humanCommand, readsOnly, reinsCalls, runsTests, touchedPlaces } from './places.ts';
 import { heldFreeTask, sessionTask } from './session.ts';
 import { acceptedLabel, guardPattern, inputForm } from '../contracts/manifest.ts';
 import { roleOf } from './executors.ts';
@@ -281,7 +281,11 @@ function namedInCommand(rt: Runtime, command: string, open: string[] = []): stri
   if (!reads && (rt.merged.packs.some((p) => names(p.dir)) || (rt.projectPackDir !== undefined && names(rt.projectPackDir)) || /(^|[\s\/="'])\.reins(\/|[\s"']|$)/.test(command))) return 'protect.packs';
   // A task that is open for the harness: the text asks when it names a directory that is not
   // open, a place that is no open part, or a command of git that writes.
-  const named = reads ? [] : (rt.harnessDirs ?? []).filter(names);
+  // A run of the tests in the directory of the harness itself (a closed list of forms, see
+  // `runsTests`) changes nothing of the harness: a change of a test or of the code asked before it.
+  const run = reads ? null : runsTests(command);
+  const tests = run !== null && (rt.harnessDirs ?? []).some((d) => real(d) === real(run));
+  const named = reads || tests ? [] : (rt.harnessDirs ?? []).filter(names);
   if (named.length > 0 && (!named.every((d) => open.includes(real(d))) || NAMES_CLOSED.test(command) || GIT_WRITES.test(command))) return 'protect.harness';
   // Every word of the command is tested as a path: a relative path after a space or a redirect too.
   const words = command.replace(/['"\\]/g, '').split(/[\s;&|<>()=]+/);
@@ -508,6 +512,12 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   // The decision about a tool of a connector names the tool: the craft finds chains of tools that repeat.
   const tool = call.named;
   const named = tool === undefined ? marked : marked.map((row) => (row.kind === 'policy.decision' ? { ...row, data: { ...row.data, tool, ...(call.held === true ? { in_scenario: 1 } : {}) } } : row));
+  // An attempt on the harness itself is written under the free task of the session. The row says
+  // whether a task of a scenario executes in the session, and which scenario: without the mark
+  // nobody can count the questions that a task with an open part of the harness still gets.
+  const held = !named.some((row) => row.kind === 'policy.protected_attempt') ? null : loadTask(rt, currentScenario(rt, call.session) ?? '');
+  const mark = held !== null && held.state === 'executing' && held.scenario !== undefined ? { in_scenario: 1, scenario: held.scenario } : null;
+  const scoped = mark === null ? named : named.map((row) => (row.kind === 'policy.protected_attempt' ? { ...row, data: { ...row.data, ...mark } } : row));
   // The basis of a decision that a pack gave names the level of that pack.
   const pack = (row: Pick<RowInput, 'kind' | 'data'>): { pack?: 'organization' | 'project' | 'person' } => {
     const layer = row.kind === 'policy.basis' ? row.data?.layer : undefined;
@@ -515,7 +525,7 @@ function record(rt: Runtime, call: ToolCall, rows: Pick<RowInput, 'kind' | 'data
   };
   // The cost of the decision: the time since the process of the hook started, when the adapter gives it.
   const ms = rt.uptimeMs?.();
-  const timed = ms === undefined ? named : named.map((row) => (row.kind === 'policy.decision' || row.kind === 'policy.protected_attempt' ? { ...row, data: { ...row.data, ms } } : row));
+  const timed = ms === undefined ? scoped : scoped.map((row) => (row.kind === 'policy.decision' || row.kind === 'policy.protected_attempt' ? { ...row, data: { ...row.data, ms } } : row));
   for (const row of timed) rt.journal.write({ ...row, ...pack(row), ...sub, project: rt.project, task, ...(call.session !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(call.session) ? { session: call.session } : {}) });
 }
 

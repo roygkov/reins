@@ -91,6 +91,25 @@ test('loop: a new scenario in a session suspends the one before it, a resume bri
   assert.equal(beforeAction(b.rt, comment(b, 's1', '8'), CLIENT).task, undefined);
 });
 
+test('loop: a take that moves a task to another session is a row of the journal: who took it, from whom, and how the session was known', () => {
+  const b = box();
+  const id = open(b, 's1');
+  const taken = () => readJournal(b.rt.journal.file).filter((r) => r.kind === 'task.taken');
+  // The session that holds the task reads it again: nothing moved, no row.
+  assert.equal(resumeTask(b.rt, id, 's1', true, 'named'), true);
+  assert.deepEqual(taken(), []);
+  // A session that only the directory gave takes the task: it holds it, the owner stays.
+  assert.equal(resumeTask(b.rt, id, 's2', false, 'directory'), true);
+  assert.deepEqual(taken().map((r) => [r.task, r.session, r.data]), [[id, 's2', { owns: 0, how: 'directory', from: 's1' }]]);
+  // The window itself takes it back and owns it.
+  assert.equal(resumeTask(b.rt, id, 's1', true, 'named'), true);
+  assert.deepEqual(taken().map((r) => [r.session, r.data]).at(-1), ['s1', { owns: 1, how: 'named', from: 's2' }]);
+  for (const r of taken()) assert.deepEqual(validateRow(r), []);
+  // A task that cannot be taken writes nothing.
+  assert.equal(resumeTask(b.rt, 'tffffffffffff', 's2', true, 'named'), false);
+  assert.equal(taken().length, 2);
+});
+
 test('loop: a task continues in another session after a resume there', () => {
   const b = box();
   const id = open(b, 's1');

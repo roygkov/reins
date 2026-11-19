@@ -64,6 +64,28 @@ test('sweep: a task that nobody touched past its term is closed', () => {
   assert.deepEqual(sweep(rt), []);
 });
 
+test('sweep: the files of a task that ended a week ago go away, an open task and a fresh end stay', () => {
+  const rt = runtime();
+  const old = scenario(rt, '7');
+  const fresh = scenario(rt, '8');
+  const open = scenario(rt, '9');
+  age(rt, old, 25 * HOUR);
+  age(rt, fresh, 25 * HOUR);
+  assert.deepEqual(sweep(rt).sort(), [old, fresh].sort());
+  const dir = path.join(rt.stateDir, 'tasks');
+  fs.writeFileSync(path.join(dir, `${old}.report.txt`), 'a report');
+  age(rt, old, 8 * 24 * HOUR);
+  age(rt, fresh, 6 * 24 * HOUR);
+  sweep(rt);
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.startsWith(old)), []);
+  assert.equal(loadTask(rt, fresh)?.state, 'closed');
+  assert.deepEqual(openTasks(rt).map((t) => t.id), [open]);
+  // An open task past the week is ended by its term, not removed: its end is a fact of this sweep.
+  age(rt, open, 8 * 24 * HOUR);
+  assert.deepEqual(sweep(rt), [open]);
+  assert.equal(loadTask(rt, open)?.state, 'closed');
+});
+
 test('sweep: a task inside its term stays open', () => {
   const rt = runtime();
   const free = openFreeTask(rt).id;

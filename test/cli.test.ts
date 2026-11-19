@@ -698,6 +698,41 @@ test('cli: a check script gets the time limit of the harness in its input, from 
   assert.equal(JSON.parse(fs.readFileSync(seen, 'utf8')).limit_s, 7);
 });
 
+test('cli: the journal is read by a command: the last rows of a window, a filter by kind, rule, task and project, and a count by a field', () => {
+  const b = box();
+  const id = reins(b, ['open', 'change-review', 'change_id=7']).json.task;
+  reins(b, ['open', 'change-review', 'change_id=8']);
+  const all = reins(b, ['journal']);
+  assert.equal(all.code, 0, all.stdout);
+  assert.equal(all.json.ok, true);
+  const whole = readJournal(path.join(b.state, 'journal.jsonl'));
+  assert.equal(all.json.n, whole.length);
+  assert.deepEqual(all.json.rows, whole);
+  // A filter by the start of the kind, and by the task.
+  const tasks = reins(b, ['journal', 'kind=task.', `task=${id}`]).json;
+  assert.ok(tasks.n > 0);
+  assert.ok(tasks.rows.every((r: any) => r.kind.startsWith('task.') && r.task === id));
+  // The last rows only: the count is of all the rows that the filter took.
+  const last = reins(b, ['journal', 'last=1']).json;
+  assert.deepEqual([last.n, last.rows], [whole.length, whole.slice(-1)]);
+  // A count by a field gives no rows.
+  const counted = reins(b, ['journal', 'count=kind']).json;
+  assert.equal(counted.rows, undefined);
+  assert.equal(counted.counts['task.opened'], 2);
+  assert.equal(Object.values(counted.counts).reduce((a: number, x: any) => a + x, 0), whole.length);
+  // A rule is a value of the data of a row; a project that wrote nothing gives nothing.
+  assert.equal(reins(b, ['journal', 'rule=no.such-rule']).json.n, 0);
+  assert.equal(reins(b, ['journal', 'project=p00000000']).json.n, 0);
+  assert.equal(reins(b, ['journal', 'project=here']).json.n, whole.length);
+  // A word that the command does not know, a word given twice and a value out of range are a fault of the use.
+  for (const bad of [['journal', 'x=1'], ['journal', 'last=0'], ['journal', 'last=501'], ['journal', 'hours=0'], ['journal', 'kind=a b'], ['journal', 'count=text'], ['journal', 'last=1', 'last=2'], ['journal', 'tail']]) {
+    const r = reins(b, bad);
+    assert.deepEqual([r.code, r.json.error], [1, 'usage'], bad.join(' '));
+  }
+  // The command writes nothing to the journal.
+  assert.equal(readJournal(path.join(b.state, 'journal.jsonl')).length, whole.length);
+});
+
 test('cli: the metrics are a series of the eight numbers by day or by week, in a form with a version', () => {
   const b = box();
   reins(b, ['open', 'change-review', 'change_id=7']);
