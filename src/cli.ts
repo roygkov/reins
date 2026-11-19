@@ -718,7 +718,8 @@ function main(args: string[]): Out {
       const root = findRoot(process.cwd());
       if (root.isRepo) input.root = root.root;
       const r = addRecord(rt, input);
-      if (!r.ok) throw new Stop(r.error, faultOf(r));
+      // A decision that is there already: the answer names the record that holds it.
+      if (!r.ok) throw new Stop(r.error, { ...faultOf(r), ...(r.record !== undefined ? { record: r.record } : {}) });
       return { ok: true, record: r.record };
     }
     throw new Stop('usage');

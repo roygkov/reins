@@ -79,7 +79,7 @@ function badText(field: TextFault['field'], value: unknown, max: number, oneLine
   if (oneLine && /[\r\n]/.test(value)) return { ok: false, error: 'bad_text', field, cause: 'line_break' };
   return null;
 }
-export type AddError = 'bad_type' | 'bad_text' | 'bad_path' | 'human_only' | 'not_allowed' | 'no_reason' | 'unknown_record';
+export type AddError = 'bad_type' | 'bad_text' | 'bad_path' | 'human_only' | 'not_allowed' | 'no_reason' | 'unknown_record' | 'duplicate';
 
 const VETO_DAYS = 7;
 const IDLE_DAYS = 180; // a record that no report cited for this long goes stale
@@ -391,7 +391,7 @@ function mayWrite(rt: Runtime, id: string | undefined, type: RecordType): { clas
   return memory;
 }
 
-export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now()): { ok: true; record: MemoryRecord } | ({ ok: false; error: AddError } & Partial<TextFault>) {
+export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now()): { ok: true; record: MemoryRecord } | ({ ok: false; error: AddError; record?: string } & Partial<TextFault>) {
   if (!(RECORD_TYPES as readonly string[]).includes(input.type)) return { ok: false, error: 'bad_type' };
   const type = input.type as RecordType;
   const text = badText('text', input.text, MAX_TEXT);
@@ -427,6 +427,15 @@ export function addRecord(rt: Runtime, input: NewRecord, now: number = Date.now(
   if (input.supersedes !== undefined && type !== 'decision') return { ok: false, error: 'bad_type' };
   const before = input.supersedes === undefined ? undefined : stored(rt).find((r) => r.id === input.supersedes && r.type === 'decision' && r.state !== 'vetoed');
   if (input.supersedes !== undefined && before === undefined) return { ok: false, error: 'unknown_record' };
+  // A decision whose text a decision in use of this project holds already is not written twice: a
+  // command that ran again must not leave two records of one decision. The same text with a new
+  // reason replaces the decision when the human names it (`supersedes`).
+  if (type === 'decision') {
+    const words = (text: string): string => text.replace(/\s+/g, ' ').trim();
+    const mine = words(scrub(input.text));
+    const same = stored(rt).find((r) => r.type === 'decision' && r.state === 'active' && r.id !== before?.id && (r.project === rt.project || r.scope === 'common') && words(r.text) === mine);
+    if (same !== undefined) return { ok: false, error: 'duplicate', record: same.id };
+  }
   // A pitfall that somebody hit again names the record of the first time: the memory did not stop the repeat.
   if (input.repeats !== undefined && type !== 'pitfall') return { ok: false, error: 'bad_type' };
   const again = input.repeats === undefined ? undefined : stored(rt).find((r) => r.id === input.repeats && r.type === 'pitfall' && r.state !== 'vetoed');

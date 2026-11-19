@@ -215,6 +215,29 @@ test('memory: a decision needs its reason, and it can replace an older decision'
   assert.deepEqual(addRecord(b.rt, { type: 'decision', text: 'x', because: 'y', supersedes: 'mffffffffff', paths: [], by: 'human' }, T0), { ok: false, error: 'unknown_record' });
 });
 
+test('memory: a decision with the text of a decision in use is refused: the answer names the record that holds it', () => {
+  const b = box();
+  const first = addRecord(b.rt, { type: 'decision', text: 'Reports are data, not prose.', because: 'One format.', paths: [], by: 'human' }, T0);
+  assert.ok(first.ok);
+  // The same text, with other spaces and another reason: the decision is there already.
+  assert.deepEqual(addRecord(b.rt, { type: 'decision', text: '  Reports are  data,\tnot prose. ', because: 'Another reason.', paths: [], by: 'human' }, T0 + 1000), { ok: false, error: 'duplicate', record: first.record.id });
+  assert.equal(listRecords(b.rt, T0 + 2000).length, 1);
+  // Another text is another decision; another type with the same text is no decision.
+  assert.ok(addRecord(b.rt, { type: 'decision', text: 'Reports are data.', because: 'Shorter.', paths: [], by: 'human' }, T0 + 1000).ok);
+  assert.ok(addRecord(b.rt, { type: 'pitfall', text: 'Reports are data, not prose.', paths: [], by: 'human' }, T0 + 1000).ok);
+  // The same text with a new reason replaces the decision when the human names it.
+  const again = addRecord(b.rt, { type: 'decision', text: 'Reports are data, not prose.', because: 'A better reason.', supersedes: first.record.id, paths: [], by: 'human' }, T0 + 2000);
+  assert.ok(again.ok);
+  // A decision that the human removed holds nothing: the text can be decided again.
+  assert.equal(vetoRecord(b.rt, again.record.id, T0 + 3000), true);
+  const back = addRecord(b.rt, { type: 'decision', text: 'Reports are data, not prose.', because: 'Decided again.', paths: [], by: 'human' }, T0 + 4000);
+  assert.ok(back.ok);
+  // A decision of another project does not hold the text of this one.
+  const other = { ...b.rt, project: 'p0000000f' };
+  assert.ok(addRecord(other, { type: 'decision', text: 'Reports are data, not prose.', because: 'Its own project.', paths: [], by: 'human' }, T0 + 5000).ok);
+  assert.deepEqual(addRecord(other, { type: 'decision', text: 'Reports are data, not prose.', because: 'Twice.', paths: [], by: 'human' }, T0 + 6000).ok, false);
+});
+
 test('memory: a record about a place goes stale when the place changes', () => {
   const b = box();
   const root = repo(b);
