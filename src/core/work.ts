@@ -6,6 +6,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -148,4 +149,39 @@ export function changedFiles(facts: WorkFacts, since?: string | null, after?: nu
     for (const file of committed.split(/[\0\n]/)) if (file !== '') files.add(file);
   }
   return files.size;
+}
+
+// The tree of the content of a work: the name that git gives to the files as they are now, with
+// the changes that are not committed and the new files. A commit of that content has the same
+// tree, so a commit after a check is no new work (contracts AD12). The fingerprint of `workNow`
+// holds the commit too and tells a commit from no change; this value does not. The read writes
+// nothing into the repository: the index and the new objects go to a directory of their own.
+// null: the directory is no repository, or git gave no answer in time.
+export function workTree(cwd: string): string | null {
+  const top = git(cwd, ['rev-parse', '--show-toplevel'])?.trim();
+  if (top === undefined || top === '') return null;
+  const status = git(top, ['status', '--porcelain=v1', '-uall', '-z']);
+  if (status === null) return null;
+  const name = (out: string | null): string | null => (out !== null && /^[0-9a-f]{40,64}$/.test(out.trim()) ? out.trim() : null);
+  // A clean work: its content is the tree of its commit.
+  if (status === '') return name(git(top, ['rev-parse', '--verify', '-q', 'HEAD^{tree}']));
+  const places = git(top, ['rev-parse', '--path-format=absolute', '--git-path', 'objects', '--git-path', 'index'])?.split('\n');
+  const [objects, index] = places ?? [];
+  if (objects === undefined || objects === '' || index === undefined || index === '') return null;
+  let dir: string | undefined;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reins-tree-'));
+    // A copy of the index keeps what git knows about the files: only the changed ones are read.
+    if (fs.existsSync(index)) fs.copyFileSync(index, path.join(dir, 'index'));
+    fs.mkdirSync(path.join(dir, 'objects'));
+    const env = { ...ENV, GIT_INDEX_FILE: path.join(dir, 'index'), GIT_OBJECT_DIRECTORY: path.join(dir, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
+    const added = spawnSync('git', ['add', '-A'], { cwd: top, encoding: 'utf8', timeout: 5000, env });
+    if (added.status !== 0 || added.error !== undefined) return null;
+    const tree = spawnSync('git', ['write-tree'], { cwd: top, encoding: 'utf8', timeout: 5000, env });
+    return tree.status === 0 && tree.error === undefined ? name(tree.stdout) : null;
+  } catch {
+    return null;
+  } finally {
+    if (dir !== undefined) fs.rmSync(dir, { recursive: true, force: true });
+  }
 }

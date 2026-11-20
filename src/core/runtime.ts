@@ -15,7 +15,7 @@ import { closedContext } from '../packs/packs.ts';
 import { patchSession, withSession, readSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect, type CollectResult, type Sandbox } from './collect.ts';
-import { workState, workTop } from './work.ts';
+import { workState, workTop, workTree } from './work.ts';
 import { notify } from './notify.ts';
 import { noteUse, scenarioOff } from './idle.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
@@ -938,13 +938,18 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   // The cause of one script without an answer is a code of the journal; its text is not. A script
   // that answered FAIL has a result in the journal, not a cause.
   if (answer.result === 'none' && answer.why?.length === 1 && answer.why[0] !== undefined) detail.cause = answer.why[0].cause;
+  // The tree of the content that a green answer holds for: a commit of that content is the same work (contracts AD12).
+  const tree = answer.result === 'PASS' && root !== null && work !== null ? workTree(root) : null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const r = withLock(rt, id, (): Checked => {
       const task = loadTask(rt, id);
       if (task === null) return { error: 'unknown_task' };
       // The same wait: the same count of returns and the same report that the check read.
       if (task.state !== 'checking' || task.returns !== before.returns || task.soak !== before.soak || readReport(rt, id) !== text) return { error: 'not_checking' };
-      return { step: commit(rt, step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null && answer.reason !== 'work_changed' ? { work } : {}), ...(onlyRejected ? { rejected: true } : {}) })), answer };
+      const stepped = step(task, { type: 'check', result: answer.result, detail, at: now, ...(version !== null ? { check: version } : {}), ...(work !== null && answer.reason !== 'work_changed' ? { work } : {}), ...(onlyRejected ? { rejected: true } : {}) });
+      // The tree goes with the fingerprint of the work that the answer holds for, and leaves with it.
+      const { tree: _t, ...bare } = stepped.task;
+      return { step: commit(rt, { ...stepped, task: tree !== null && bare.work !== undefined && bare.work === work ? { ...bare, tree } : bare }), answer };
     });
     if (r !== 'busy') {
       if (!('error' in r)) noteReview(rt, r.step.task, answer);

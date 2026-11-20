@@ -12,7 +12,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { readSession } from '../src/core/sessions.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { applyEvent, loadTask, mutateTask, openScenario, openTasks, submitReport, type Runtime } from '../src/core/runtime.ts';
-import { workNow, workState } from '../src/core/work.ts';
+import { workNow, workState, workTree } from '../src/core/work.ts';
 import { afterAction, beforeAction } from '../src/client/before.ts';
 import { agentStopped, humanRequest, resumeTask, sessionEnd, sessionStart, takesOwnership } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
@@ -976,4 +976,35 @@ test('session: a take that is not the one of a window itself leaves the owner of
   assert.equal(takesOwnership(undefined, 'A', {}), false, 'a session found through the directory');
   assert.equal(takesOwnership('A', 'A', { REINS_HEADLESS: '1' }), false, 'a client without a window');
   assert.equal(takesOwnership('A', 'B', {}), false);
+});
+
+test('session: a commit of the work that a check judged is no new work: the tree of the commit is the tree that the check read', () => {
+  const b = repoBox(1);
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  fs.writeFileSync(path.join(b.cwd, 'new.txt'), 'new\n');
+  const opened = openScenario(b.rt, 'draft-message', {}, { session: 's1' });
+  assert.equal(opened.ok, true);
+  if (!opened.ok) return;
+  // The tree of a work with changes that are not committed: the content of the files, not the commit.
+  const tree = workTree(b.cwd);
+  assert.match(tree ?? '', /^[0-9a-f]{40,64}$/);
+  // The read of the tree writes nothing into the repository: the index and the objects stay.
+  assert.equal(spawnSync('git', ['status', '--porcelain'], { cwd: b.cwd, encoding: 'utf8' }).stdout, ' M a.txt\n?? new.txt\n');
+  mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'closed', label: 'verified_result', work: workState(b.cwd) ?? '', tree: tree ?? '' }));
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unchecked, undefined);
+  // The next request only commits the work that the check judged: the fingerprint is another, the tree is the same.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  git('add', '-A');
+  git('commit', '-q', '-m', 'checked');
+  assert.equal(workTree(b.cwd), tree);
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unchecked, undefined);
+  // A commit with another content is another work.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed after the check\n');
+  git('commit', '-q', '-am', 'more');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+  // A directory that is no repository has no tree.
+  assert.equal(workTree(os.tmpdir()), null);
 });

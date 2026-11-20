@@ -10,7 +10,7 @@ import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, ownerOf, typ
 import type { Task } from '../core/task.ts';
 import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, takeJudged, withSession, type SessionFile } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
-import { changedFiles, workNow, workTop } from '../core/work.ts';
+import { changedFiles, workNow, workTop, workTree } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { applyDue, listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
@@ -328,7 +328,9 @@ function scenarioFacts(rt: Runtime, session: string | undefined, seen: SessionFi
   };
   const ended = (task: Task): boolean => task.state === 'closed' || task.state === 'publishing' || task.state === 'skipped';
   const last = mine(seen.scenario);
-  const judged = last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && last.work === now && here(last);
+  const judged = last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && here(last)
+    // A commit of the content that the check read changes the fingerprint and not the tree (contracts AD12).
+    && (last.work === now || (last.work !== undefined && last.tree !== undefined && last.tree === workTree(top)));
   const open: string[] = [];
   for (const id of seen.opened ?? []) {
     const task = mine(id);

@@ -835,3 +835,27 @@ test('ready: an answer about a work that changed during the check carries no fin
   const row = readJournal(b.rt.journal.file).find((x) => x.kind === 'check.no_answer');
   assert.deepEqual([row?.data?.reason, row?.fp], ['work_changed', undefined]);
 });
+
+test('ready: a green answer of a script keeps the tree of the content of the work: the commit of that content has the same tree (contracts AD12)', () => {
+  const trigger = { kind: 'command', inputs: [{ name: 'change_id', type: 'id' }, { name: 'repo', type: 'string' }] };
+  const b = box({ trigger, done: { kind: 'command', check: 'tests', retries: 0, source: 'repo' }, check: PASSING });
+  const git = (...args: string[]): string => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git('init', '-q');
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  // The work has a change that is not committed and a new file.
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  fs.writeFileSync(path.join(b.cwd, 'new.txt'), 'new\n');
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7', repo: b.cwd }, { session: 's1' });
+  assert.ok(opened.ok);
+  const r = submitReport(b.rt, opened.task.id, REPORT);
+  assert.ok('step' in r && r.answer !== undefined);
+  assert.equal(r.answer.result, 'PASS', JSON.stringify(r.answer));
+  const tree = loadTask(b.rt, opened.task.id)?.tree;
+  assert.match(tree ?? '', /^[0-9a-f]{40,64}$/);
+  // The commit of that content has the same tree.
+  git('add', '-A');
+  git('commit', '-q', '-m', 'checked');
+  assert.equal(git('rev-parse', 'HEAD^{tree}'), tree);
+});
