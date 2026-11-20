@@ -18,11 +18,16 @@ function evalHostingCli(seg) {
   if (b !== 'gh' && b !== 'glab') return null;
   const pos = positionals(seg.argv);
   if (matchSub(pos, [['pr', 'merge'], ['mr', 'merge']])) return { decision: 'ask', id: 'hosting.merge', cls: 'protected', why: b + ' merges a pull request into its base branch' };
-  // a comment, a review or a note is a text that other people read: the words stand as positionals, so a flag
-  // between them (`gh -R owner/repo pr comment`) does not hide the command
-  if (matchSub(pos, [['pr', 'comment'], ['pr', 'review'], ['issue', 'comment'], ['mr', 'note'], ['issue', 'note']])) return { decision: 'ask', id: 'hosting.comment', cls: 'hosting', why: b + ' writes a text that other people read in the hosting' };
-  // a new pull request, merge request or issue is a record that other people read and act on
-  if (matchSub(pos, [['pr', 'create'], ['mr', 'create'], ['issue', 'create']])) return { decision: 'ask', id: 'hosting.create', cls: 'hosting', why: b + ' creates a record that other people read in the hosting' };
+  // The words of a write stand anywhere among the positionals: a value of a flag is a positional too, so
+  // a window of the first words would let `gh --repo a --hostname b -R c --foo d pr comment` pass.
+  const has = (seqs) => pos.some((_, s) => seqs.some((seq) => seq.every((w, n) => pos[s + n] === w)));
+  // a comment, a review or a note is a text that other people read; `mr comment` is the other name of `mr note`
+  if (has([['pr', 'comment'], ['pr', 'review'], ['issue', 'comment'], ['mr', 'note'], ['mr', 'comment'], ['issue', 'note']])) return { decision: 'ask', id: 'hosting.comment', cls: 'hosting', why: b + ' writes a text that other people read in the hosting' };
+  // a new pull request, merge request or issue is a record that other people read and act on; `new` is the
+  // other name of `create`, and `mr for <issue>` creates a merge request for an issue
+  if (has([['pr', 'create'], ['pr', 'new'], ['mr', 'create'], ['mr', 'new'], ['mr', 'for'], ['issue', 'create'], ['issue', 'new']])) return { decision: 'ask', id: 'hosting.create', cls: 'hosting', why: b + ' creates a record that other people read in the hosting' };
+  // an alias gives a write command another name: the rules above read the words of the command, not of the alias
+  if (has([['alias', 'set'], ['alias', 'import']])) return { decision: 'ask', id: 'hosting.alias', cls: 'hosting', why: b + ' alias gives a command another name that the rules of the hosting do not read' };
   const k = seg.argv.indexOf('api');
   if (k < 0 || k > 3) return null;
   const argv = seg.argv.slice(k);
@@ -42,7 +47,7 @@ function evalHostingCli(seg) {
   return { decision: 'ask', id: 'hosting.api-write', cls: prot ? 'protected' : 'hosting', why: b + ' api ' + method.toUpperCase() + ' ' + short(endpoint) + ' writes to the hosting' };
 }
 // `gh pr view` stays out of Node; a merge, a create, a comment or an `api` call goes in (the release and repo rules are data)
-evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }, { cmd: ['gh', 'glab'], sub: 'create' }];
+evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }, { cmd: ['gh', 'glab'], sub: 'create' }, { cmd: ['gh', 'glab'], sub: 'new' }, { cmd: ['gh', 'glab'], sub: 'for' }, { cmd: ['gh', 'glab'], sub: 'alias' }];
 
 const MCP_DENY = /^(drop|delete[-_]?many|deletemany|drop[-_]?(database|collection|table|index)|rename[-_]?collection|truncate)/i;
 const MCP_ASK = /^(insert|update|delete|create|replace|bulk|write|put|set|upsert|patch|remove|move|rename|import|restore)/i;

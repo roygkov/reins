@@ -2223,5 +2223,45 @@
   "repo": "onfeature",
   "command": "gh pr list --state open",
   "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr comment 1 -m text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh --repo a --hostname b -R c --foo d pr comment 1",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr new -f",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab issue new -t title",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr for 12",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr new --fill",
+  "expect": "ask hosting.create"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh alias set c \"pr comment\"",
+  "expect": "ask hosting.alias"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh alias list",
+  "expect": "allow"
  }
 ]
