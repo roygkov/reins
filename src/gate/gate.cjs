@@ -69,7 +69,7 @@ function prodEvidence(seg, rule, cfg, cwd) {
 function evalRule(rule, seg, cfg, cwd) {
   if (!cmdMatches(rule, seg.argv[0])) return null;
   const pos = positionals(seg.argv);
-  if (rule.sub && !matchSub(pos, rule.sub)) {
+  if (rule.sub && !matchSub(pos, rule.sub, rule.sub_anywhere === true)) {
     if (!(rule.flags && !rule.sub_required && hasFlag(seg.argv, rule.flags) && false)) return null;
   }
   if (rule.flags && !hasFlag(seg.argv, rule.flags)) return null;

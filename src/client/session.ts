@@ -10,7 +10,7 @@ import { applyEvent, loadTask, mutateTask, openFreeTask, openTasks, ownerOf, typ
 import type { Task } from '../core/task.ts';
 import { currentScenario, forgetDirectory, noteDirectory, patchSession, readSession, sessionFile, sessionName, takeJudged, withSession, type SessionFile } from '../core/sessions.ts';
 import { sweep } from '../core/sweep.ts';
-import { changedFiles, workNow, workTop, workTree } from '../core/work.ts';
+import { changedFiles, workNow, workTop, workTreeOf } from '../core/work.ts';
 import { scenarioOff } from '../core/idle.ts';
 import { readJournalSince } from '../journal/writer.ts';
 import { applyDue, listProposals, measure, proposalLine, propose } from '../craft/craft.ts';
@@ -315,7 +315,7 @@ const JUDGED: readonly string[] = ['verified_result', 'verified_form', 'approved
 // no root of its work: it counts. A task that the request only took again is not in the list.
 // A task whose work lies in another repository says nothing about this work. The repository of a
 // root is asked of git last, and once for a root: the stop has a time limit.
-function scenarioFacts(rt: Runtime, session: string | undefined, seen: SessionFile, top: string, now: string): { judged: boolean; open: string[] } {
+function scenarioFacts(rt: Runtime, session: string | undefined, seen: SessionFile, top: string, now: string, tree: () => string | null): { judged: boolean; open: string[] } {
   const tops = new Map<string, string | null>();
   const here = (task: Task): boolean => {
     if (task.root === undefined) return true;
@@ -328,9 +328,13 @@ function scenarioFacts(rt: Runtime, session: string | undefined, seen: SessionFi
   };
   const ended = (task: Task): boolean => task.state === 'closed' || task.state === 'publishing' || task.state === 'skipped';
   const last = mine(seen.scenario);
-  const judged = last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && here(last)
-    // A commit of the content that the check read changes the fingerprint and not the tree (contracts AD12).
-    && (last.work === now || (last.work !== undefined && last.tree !== undefined && last.tree === workTree(top)));
+  const answered = last !== null && (last.state === 'closed' || last.state === 'publishing') && last.label !== undefined && JUDGED.includes(last.label) && here(last);
+  // A commit of the content that the check read changes the fingerprint and not the tree (contracts AD12).
+  const byTree = answered && last !== null && last.work !== now && last.work !== undefined && last.tree !== undefined && last.tree === tree();
+  // The same content under another fingerprint: the task keeps the fingerprint of now, so the next
+  // stop compares fingerprints and reads no tree.
+  if (byTree && last !== null && now !== '') mutateTask(rt, last.id, (t) => (t.work === last.work && t.tree === last.tree ? { ...t, work: now } : null));
+  const judged = answered && last !== null && (last.work === now || byTree);
   const open: string[] = [];
   for (const id of seen.opened ?? []) {
     const task = mine(id);
@@ -380,10 +384,23 @@ export function agentStopped(rt: Runtime, e: SessionEvent): Stopped {
   // not returned yet. The answer about the scenario tasks is read once, and only when a rule needs it.
   const acts = changed === true && now !== null && facts !== null && seen !== null && seen.returned !== true && seen.top === facts.top;
   let read: { judged: boolean; open: string[] } | undefined;
-  const says = (): { judged: boolean; open: string[] } => (read ??= scenarioFacts(rt, e.session, seen ?? {}, facts?.top ?? '', now ?? ''));
+  // The tree of the content of the work now: read at most once for a stop, and only when a fingerprint differs.
+  // It is the tree of the fingerprint `now`: a work that moved between the two reads has no tree (contracts AD16).
+  let treeNow: string | null | undefined;
+  const tree = (): string | null => (treeNow === undefined ? (treeNow = facts === null || now === null ? null : workTreeOf(facts.top, now)) : treeNow);
+  const says = (): { judged: boolean; open: string[] } => (read ??= scenarioFacts(rt, e.session, seen ?? {}, facts?.top ?? '', now ?? '', tree));
   if (acts && facts !== null && seen !== null) {
     // The record lies in the file of this session: the session is the owner of that review.
-    const due = (seen.reviews ?? []).find((r) => r.top === facts.top && r.work !== now);
+    // A commit of the content that the review read changes the fingerprint and not the tree (contracts AD12): no new work.
+    const byTree = (r: { work: string; tree?: string }): boolean => r.work !== now && r.tree !== undefined && r.tree === tree();
+    const due = (seen.reviews ?? []).find((r) => r.top === facts.top && r.work !== now && !byTree(r));
+    // The same content under another fingerprint: the record keeps the fingerprint of now, so the
+    // next stop compares fingerprints and reads no tree.
+    const kept = (seen.reviews ?? []).filter((r) => r.top === facts.top && byTree(r)).map((r) => r.task);
+    if (kept.length > 0) {
+      const content = tree();
+      withSession(rt, e.session, (file) => ({ next: { ...file, reviews: (file.reviews ?? []).map((r) => (kept.includes(r.task) && r.tree === content ? { ...r, work: now } : r)) }, result: undefined }));
+    }
     // Only the same scenario under way holds the return back: tests that run are no review.
     if (due !== undefined && !says().open.includes(due.scenario)) {
       patchSession(rt, e.session, { returned: true, returnedFor: due.task });

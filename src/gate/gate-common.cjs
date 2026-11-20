@@ -5,9 +5,11 @@
 
 function positionals(argv) { return argv.slice(1).filter((a) => !a.startsWith('-')); }
 function hasFlag(argv, flags) { return argv.some((a) => flags.some((f) => a === f || a.startsWith(f + '='))); }
-function matchSub(pos, seqs) {
+// `anywhere`: the words stand at any place among the positionals, not only among the first four. A value of
+// a flag is a positional too, so a window lets a command with several flags before its words pass.
+function matchSub(pos, seqs, anywhere) {
   if (!seqs) return true;
-  for (let s = 0; s < Math.min(4, pos.length); s++) {
+  for (let s = 0; s < (anywhere ? pos.length : Math.min(4, pos.length)); s++) {
     for (const seq of seqs) if (seq.every((w, k) => pos[s + k] === w)) return true;
   }
   return false;

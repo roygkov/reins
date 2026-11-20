@@ -40,6 +40,7 @@ export type Task = {
   work?: string; // the fingerprint of the work that the accepted result holds for
   tree?: string; // the tree of the content of that work, when it is a repository: a commit of the same content has it too
   read?: string; // the fingerprint of the source at the end of the preparation: the work that the executor read
+  readTree?: string; // the tree of the content of that source, for a review that names findings to fix (`done.recheck`)
   root?: string; // the directory of that work: the source of the manifest, else the directory where the report was given
   cost?: { tokens: number }; // what the model spent on the task, as the client reported it
   budget?: number; // the limit of tokens after the human gave more
@@ -305,7 +306,12 @@ export function step(task: Task, event: TaskEvent): Step {
         return back(task, [decided], 'human', false);
       }
       // The approval holds for the work as the human saw it: a change after it ends the publication.
-      if (event.decision === 'accept') return accept(event.work === undefined ? task : { ...task, work: event.work, ...(event.at !== undefined ? { checked: event.at } : {}) }, 'approved_by_human', [decided]);
+      // The tree of a check is the tree of the work of that check: another work of the approval has none.
+      if (event.decision === 'accept') {
+        if (event.work === undefined) return accept(task, 'approved_by_human', [decided]);
+        const { tree, ...bare } = task;
+        return accept({ ...bare, ...(tree !== undefined && task.work === event.work ? { tree } : {}), work: event.work, ...(event.at !== undefined ? { checked: event.at } : {}) }, 'approved_by_human', [decided]);
+      }
       // One more try: after a human check it counts as a send-back, after the limit it does not.
       if (event.decision === 'return') return back(task, [decided], 'human', task.waiting === 'approval');
       return refuse(task);

@@ -8,14 +8,31 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 
 const MAX_UNTRACKED = 500; // new files whose content is a part of the fingerprint
 
-function git(cwd: string, args: string[]): string | null {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: 5000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+function git(cwd: string, args: string[], timeout: number = 5000): string | null {
+  if (timeout <= 0) return null;
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', timeout, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
   return r.status === 0 && r.error === undefined ? r.stdout : null;
 }
+
+// One term for the read of a tree with its second fingerprint. A hook of the client has ten
+// seconds for all its work, and the read of a tree is up to five calls of git. A call gets the
+// time that is left of the term, at most five seconds; a read with no time left starts no call
+// and gives no answer (contracts AD18).
+export type Term = { until: number; now: () => number };
+export const TREE_BUDGET_MS = 4000; // the tree with its second fingerprint
+export const termOf = (budgetMs: number = TREE_BUDGET_MS, now: () => number = Date.now): Term => ({ until: now() + budgetMs, now });
+// One call of git within a term. The time that is left is read once, and that value is the limit
+// of the call: a second read could give zero, which for the call means "no limit", or less than
+// zero, which the call refuses with an error. null: no time is left, and no call starts.
+function call(args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; input?: string }, term: Term | undefined): SpawnSyncReturns<string> | null {
+  const ms = leftOf(term);
+  return ms <= 0 ? null : spawnSync('git', args, { ...options, encoding: 'utf8', timeout: ms });
+}
+const leftOf = (term: Term | undefined): number => (term === undefined ? 5000 : Math.min(5000, term.until - term.now()));
 
 const MAX_ENTRIES = 2000; // the files and directories of a work that is no repository
 
@@ -71,26 +88,26 @@ const ENV = { ...process.env, GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' };
 
 // 'none': git answered that the directory is no repository. null: no answer in time, or a refusal
 // (a repository that git does not trust, a broken one): no fact.
-function repoFacts(cwd: string): WorkFacts | 'none' | null {
-  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 5000, env: ENV });
-  if (top.error !== undefined || top.status === null) return null;
+function repoFacts(cwd: string, term?: Term): WorkFacts | 'none' | null {
+  const top = call(['rev-parse', '--show-toplevel'], { cwd, env: ENV }, term);
+  if (top === null || top.error !== undefined || top.status === null) return null;
   if (top.status !== 0) return /not a git repository/.test(top.stderr) ? 'none' : null;
   const root = top.stdout.trim();
   if (root === '') return null;
   // No commit is an answer of git (it ends with a code); no answer in time is no fact.
-  const rev = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: root, encoding: 'utf8', timeout: 5000, env: ENV });
-  if (rev.error !== undefined || rev.status === null) return null;
+  const rev = call(['rev-parse', '--verify', '-q', 'HEAD'], { cwd: root, env: ENV }, term);
+  if (rev === null || rev.error !== undefined || rev.status === null) return null;
   const head = rev.status === 0 && rev.stdout.trim() !== '' ? rev.stdout.trim() : null;
-  const status = git(root, ['status', '--porcelain=v1', '-uall', '-z']);
-  const diff = head === null ? '' : git(root, ['diff', 'HEAD']);
+  const status = git(root, ['status', '--porcelain=v1', '-uall', '-z'], leftOf(term));
+  const diff = head === null ? '' : git(root, ['diff', 'HEAD'], leftOf(term));
   if (status === null || diff === null) return null;
   const entries = status.split('\0');
   // A file that git does not track has no diff: its content is hashed, so an edit of it is a change.
   const untracked = entries.filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3)).slice(0, MAX_UNTRACKED);
   let contents = '';
   if (untracked.length > 0) {
-    const hashed = spawnSync('git', ['hash-object', '--stdin-paths'], { cwd: root, input: untracked.join('\n'), encoding: 'utf8', timeout: 5000 });
-    if (hashed.status !== 0 || hashed.error !== undefined) return null;
+    const hashed = call(['hash-object', '--stdin-paths'], { cwd: root, input: untracked.join('\n') }, term);
+    if (hashed === null || hashed.status !== 0 || hashed.error !== undefined) return null;
     contents = hashed.stdout;
   }
   // A renamed file gives two entries: the new name with its two letters, then the old name alone.
@@ -112,14 +129,14 @@ function repoFacts(cwd: string): WorkFacts | 'none' | null {
 }
 
 // The fingerprint of the work and, for a repository, the facts of git behind it: one pass.
-export function workNow(cwd: string): { state: string | null; facts: WorkFacts | null } {
-  const facts = repoFacts(cwd);
+export function workNow(cwd: string, term?: Term): { state: string | null; facts: WorkFacts | null } {
+  const facts = repoFacts(cwd, term);
   if (facts === 'none') return { state: treeState(cwd), facts: null };
   return facts === null ? { state: null, facts: null } : { state: facts.state, facts };
 }
 
 // null: git did not answer in time, or the directory is no repository and has no state of its own.
-export const workState = (cwd: string): string | null => workNow(cwd).state;
+export const workState = (cwd: string, term?: Term): string | null => workNow(cwd, term).state;
 
 // The root of the repository of a directory, with links resolved: two directories of one work
 // tree have one root. null: the directory is no repository, or git gave no answer.
@@ -157,15 +174,16 @@ export function changedFiles(facts: WorkFacts, since?: string | null, after?: nu
 // holds the commit too and tells a commit from no change; this value does not. The read writes
 // nothing into the repository: the index and the new objects go to a directory of their own.
 // null: the directory is no repository, or git gave no answer in time.
-export function workTree(cwd: string): string | null {
-  const top = git(cwd, ['rev-parse', '--show-toplevel'])?.trim();
+export function workTree(cwd: string, term: Term = termOf()): string | null {
+  const left = (): number => leftOf(term);
+  const top = git(cwd, ['rev-parse', '--show-toplevel'], left())?.trim();
   if (top === undefined || top === '') return null;
-  const status = git(top, ['status', '--porcelain=v1', '-uall', '-z']);
+  const status = git(top, ['status', '--porcelain=v1', '-uall', '-z'], left());
   if (status === null) return null;
   const name = (out: string | null): string | null => (out !== null && /^[0-9a-f]{40,64}$/.test(out.trim()) ? out.trim() : null);
   // A clean work: its content is the tree of its commit.
-  if (status === '') return name(git(top, ['rev-parse', '--verify', '-q', 'HEAD^{tree}']));
-  const places = git(top, ['rev-parse', '--path-format=absolute', '--git-path', 'objects', '--git-path', 'index'])?.split('\n');
+  if (status === '') return name(git(top, ['rev-parse', '--verify', '-q', 'HEAD^{tree}'], left()));
+  const places = git(top, ['rev-parse', '--path-format=absolute', '--git-path', 'objects', '--git-path', 'index'], left())?.split('\n');
   const [objects, index] = places ?? [];
   if (objects === undefined || objects === '' || index === undefined || index === '') return null;
   let dir: string | undefined;
@@ -175,13 +193,23 @@ export function workTree(cwd: string): string | null {
     if (fs.existsSync(index)) fs.copyFileSync(index, path.join(dir, 'index'));
     fs.mkdirSync(path.join(dir, 'objects'));
     const env = { ...ENV, GIT_INDEX_FILE: path.join(dir, 'index'), GIT_OBJECT_DIRECTORY: path.join(dir, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
-    const added = spawnSync('git', ['add', '-A'], { cwd: top, encoding: 'utf8', timeout: 5000, env });
-    if (added.status !== 0 || added.error !== undefined) return null;
-    const tree = spawnSync('git', ['write-tree'], { cwd: top, encoding: 'utf8', timeout: 5000, env });
-    return tree.status === 0 && tree.error === undefined ? name(tree.stdout) : null;
+    const added = call(['add', '-A'], { cwd: top, env }, term);
+    if (added === null || added.status !== 0 || added.error !== undefined) return null;
+    const tree = call(['write-tree'], { cwd: top, env }, term);
+    return tree !== null && tree.status === 0 && tree.error === undefined ? name(tree.stdout) : null;
   } catch {
     return null;
   } finally {
     if (dir !== undefined) fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// The tree of the content of a work whose fingerprint is `state`. The fingerprint and the tree are
+// two reads of the work: a change between them would give the tree of another content. So the
+// fingerprint is read again after the tree, and a tree of a work that moved is no tree of `state`.
+// null: no tree, or the work is not the one of `state` any more.
+export function workTreeOf(cwd: string, state: string, read: (cwd: string, term: Term) => string | null = workTree, term: Term = termOf()): string | null {
+  const tree = read(cwd, term);
+  // The second fingerprint is read within the same term: no time left is no tree.
+  return tree !== null && workState(cwd, term) === state ? tree : null;
 }

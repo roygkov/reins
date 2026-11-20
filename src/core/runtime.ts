@@ -15,7 +15,7 @@ import { closedContext } from '../packs/packs.ts';
 import { patchSession, withSession, readSession } from './sessions.ts';
 import { checkCitations, type Answer } from '../check/citations.ts';
 import { runCollect, type CollectResult, type Sandbox } from './collect.ts';
-import { workState, workTop, workTree } from './work.ts';
+import { workState, workTop, workTreeOf } from './work.ts';
 import { notify } from './notify.ts';
 import { noteUse, scenarioOff } from './idle.ts';
 import { TASK_STATES, confirmGrant, decideFor, newContractTask, newFreeTask, newScenarioTask, step, type InputError, type Inputs, type RowDraft, type Step, type Task, type TaskEvent } from './task.ts';
@@ -308,6 +308,9 @@ function prepareTask(rt: Runtime, start: Task): Prepared {
     // work. The check answers later, and the work can change meanwhile.
     const source = manifest.done.source === undefined ? undefined : outputs?.[manifest.done.source];
     const read = typeof source === 'string' && source !== '' ? workState(source) : null;
+    // The tree of that content, for a review whose findings need a fix: a commit of the content
+    // that the review read, also one during the review, is no new work (contracts AD15).
+    const readTree = read !== null && typeof source === 'string' && manifest.done.recheck !== undefined ? workTreeOf(source, read) : null;
     // A busy lock is tried again: the end of a preparation must not be lost.
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const done = withLock(rt, id, () => {
@@ -317,6 +320,7 @@ function prepareTask(rt: Runtime, start: Task): Prepared {
         const next = step(now, event);
         took = next.error === undefined;
         if (next.error === undefined && read !== null) next.task.read = read;
+        if (next.error === undefined && readTree !== null) next.task.readTree = readTree;
         return commit(rt, next).task;
       });
       if (done !== 'busy') return done ?? start;
@@ -456,8 +460,23 @@ export function verifyWork(rt: Runtime, id: string, now: number = Date.now()): b
   const root = task.root ?? sourceRoot(rt, task);
   const term = task.manifest?.done.valid_minutes;
   // The work had a fingerprint at the check. No fingerprint now is not "the same work".
+  // A commit of the content that the check read changes the fingerprint and not the tree (contracts AD12).
+  const same = (): boolean => {
+    if (task.work === undefined) return true;
+    if (root === null) return false;
+    const state = workState(root);
+    // No fingerprint now (git gave no answer) is no fact about the work: the tree is not asked.
+    if (state === null) return false;
+    if (state === task.work) return true;
+    // A tree that git did not give in its term is no tree: the work is not shown to be the same.
+    if (task.tree === undefined || workTreeOf(root, state) !== task.tree) return false;
+    // The same content under another fingerprint: the task keeps the fingerprint of now, so the
+    // next call compares fingerprints and reads no tree. Only the task that was read is changed.
+    mutateTask(rt, id, (t) => (t.state === 'publishing' && t.work === task.work && t.tree === task.tree ? { ...t, work: state } : null));
+    return true;
+  };
   const reason =
-    task.work !== undefined && (root === null ? null : workState(root)) !== task.work ? 'work_changed'
+    !same() ? 'work_changed'
     // The check itself is a part of the answer: a weaker check would have given another one.
     : task.check !== undefined && checkVersion(rt, task) !== task.check ? 'check_changed'
     : term !== undefined && task.checked !== undefined && now - task.checked > term * 60_000 ? 'expired'
@@ -915,7 +934,12 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   // The check changed while it ran: nothing says which check answered.
   if (checkVersion(rt, before) !== version) answer = { result: 'none', reason: 'check_failed', n: 0, faults: [] };
   // The second answer of a soak is about the work and the check of the first: a soak shows that one state held over the term.
-  if (before.soak !== undefined && answer.result === 'PASS' && ((work ?? undefined) !== before.work || (version ?? undefined) !== before.check)) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
+  // A commit of the content of the first answer is the same work (contracts AD12, AD17): the tree is
+  // read only when the fingerprint differs, and then once for this answer.
+  let treeNow: string | null | undefined;
+  const treeOfNow = (): string | null => (treeNow === undefined ? (treeNow = root !== null && work !== null ? workTreeOf(root, work) : null) : treeNow);
+  const soaked = (): boolean => (work ?? undefined) === before.work || (work !== null && before.work !== undefined && before.tree !== undefined && treeOfNow() === before.tree);
+  if (before.soak !== undefined && answer.result === 'PASS' && (!soaked() || (version ?? undefined) !== before.check)) answer = { result: 'none', reason: 'work_changed', n: 0, faults: [] };
   const detail: Record<string, string | number> = answer.result === 'none' ? {} : { n: answer.n, faults: answer.faults.length };
   // How long the check ran: the wait of a task between its report and its answer.
   detail.ms = checkMs;
@@ -939,7 +963,7 @@ export function runCheck(rt: Runtime, id: string, now: number = Date.now()): Che
   // that answered FAIL has a result in the journal, not a cause.
   if (answer.result === 'none' && answer.why?.length === 1 && answer.why[0] !== undefined) detail.cause = answer.why[0].cause;
   // The tree of the content that a green answer holds for: a commit of that content is the same work (contracts AD12).
-  const tree = answer.result === 'PASS' && root !== null && work !== null ? workTree(root) : null;
+  const tree = answer.result === 'PASS' && root !== null && work !== null ? treeOfNow() : null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const r = withLock(rt, id, (): Checked => {
       const task = loadTask(rt, id);
@@ -983,14 +1007,17 @@ function noteReview(rt: Runtime, task: Task, answer: Answer): void {
   const { id, scenario } = task;
   const open = answer.recheck;
   // The review judged the work that it read at its preparation, not the work at the moment of the
-  // check: the author can change the work while the reviewer reads.
-  const work = task.read ?? task.work;
-  const moved = work !== task.work;
+  // check: the author can change the work while the reviewer reads. A commit of the content that
+  // the review read is no change: the read and the check are then about one content (contracts AD15).
+  const moved = task.read !== undefined && task.read !== task.work && !(task.readTree !== undefined && task.readTree === task.tree);
+  // The record holds the work that the review judged, with the tree of that work.
+  const work = moved ? task.read ?? task.work : task.work;
+  const tree = moved ? task.readTree : task.tree ?? task.readTree;
   withSession(rt, session, (now) => {
     const others = (now.reviews ?? []).filter((r) => r.scenario !== scenario || r.top !== top);
     // A report with nothing to fix about an older state of the work ends no record: nobody read the work of now.
     if (open === 0 && (moved || others.length === (now.reviews ?? []).length)) return { next: null, result: undefined };
-    const reviews = open > 0 ? [...others, { task: id, scenario, open, top, work }].slice(-MAX_REVIEWS) : others;
+    const reviews = open > 0 ? [...others, { task: id, scenario, open, top, work, ...(tree !== undefined ? { tree } : {}) }].slice(-MAX_REVIEWS) : others;
     const { reviews: _reviews, ...rest } = now;
     return { next: reviews.length > 0 ? { ...rest, reviews } : rest, result: undefined };
   }, 'known');

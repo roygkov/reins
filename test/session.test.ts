@@ -12,7 +12,7 @@ import { openJournal, readJournal } from '../src/journal/writer.ts';
 import { readSession } from '../src/core/sessions.ts';
 import { validateRow } from '../src/contracts/journal.ts';
 import { applyEvent, loadTask, mutateTask, openScenario, openTasks, submitReport, type Runtime } from '../src/core/runtime.ts';
-import { workNow, workState, workTree } from '../src/core/work.ts';
+import { TREE_BUDGET_MS, termOf, workNow, workState, workTree, workTreeOf, type Term } from '../src/core/work.ts';
 import { afterAction, beforeAction } from '../src/client/before.ts';
 import { agentStopped, humanRequest, resumeTask, sessionEnd, sessionStart, takesOwnership } from '../src/client/session.ts';
 import { loadCases } from './cases.ts';
@@ -710,6 +710,31 @@ test('session: a fix after a review with findings is returned until the review r
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: third.task, label: 'not_verified', changed: true });
 });
 
+test('session: a commit of the content that a review with findings read is no new work; a commit of other content is returned (contracts AD15)', () => {
+  const b = reviewBox();
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const id = review(b, 'should-fix', 'a changed line of the work');
+  assert.match(readSession(b.rt, 's1')?.reviews?.[0]?.tree ?? '', /^[0-9a-f]{40,64}$/);
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  // The human asks for a commit of the work as the review read it: the fingerprint changes, the content does not.
+  const second = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  git('add', '-A');
+  git('commit', '-q', '-m', 'reviewed');
+  const tree = readSession(b.rt, 's1')?.reviews?.[0]?.tree;
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: second.task, label: 'not_verified', changed: true });
+  // The review with the finding stays: a commit of other content is returned.
+  assert.deepEqual(readSession(b.rt, 's1')?.reviews?.map((r) => r.task), [id]);
+  // The record keeps the fingerprint of the work as it is now: the next stop compares fingerprints and reads no tree.
+  assert.deepEqual(readSession(b.rt, 's1')?.reviews?.map((r) => [r.work, r.tree]), [[workState(b.cwd), tree]]);
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'fix');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: id, scenario: 'change-review', open: 1 } });
+});
+
 test('session: a review without findings to fix, or a request that changed nothing, returns nothing', () => {
   const b = reviewBox();
   humanRequest(b.rt, { session: 's1', cwd: b.cwd });
@@ -884,6 +909,56 @@ test('session: a review judges the work that it read, not the work at the moment
   assert.deepEqual(readSession(b.rt, 's1')?.reviews?.map((r) => r.task), [opened.task.id]);
 });
 
+test('session: a commit during a review of the content that the review read is no new work (contracts AD15)', () => {
+  const b = reviewBox();
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  const first = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  // The review reads the work when it opens. The author commits that content while the reviewer reads.
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(opened.ok);
+  if (!opened.ok) return;
+  const read = loadTask(b.rt, opened.task.id)?.read;
+  git('add', '-A');
+  git('commit', '-q', '-m', 'during the review');
+  const submitted = submitReport(b.rt, opened.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'a changed line of the work', severity: 'should-fix', text: 'x' }] }));
+  assert.ok('step' in submitted && submitted.step.task.label === 'verified_form');
+  // The fingerprint of the check is not the one that the review read; the content is the same.
+  assert.notEqual(loadTask(b.rt, opened.task.id)?.work, read);
+  // The read and the check are about one content: the record holds the work of the check.
+  const record = readSession(b.rt, 's1')?.reviews?.[0];
+  assert.equal(record?.work, loadTask(b.rt, opened.task.id)?.work);
+  assert.match(record?.tree ?? '', /^[0-9a-f]{40,64}$/);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: first.task, label: 'not_verified', changed: true });
+  // A change after it is a new work: the review with the finding returns it.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unreviewed: { task: opened.task.id, scenario: 'change-review', open: 1 } });
+});
+
+test('session: a clean review ends the record when the author commits the content that it read during the review (contracts AD15)', () => {
+  const b = reviewBox();
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  const id = review(b, 'should-fix', 'a changed line of the work');
+  agentStopped(b.rt, { session: 's1', cwd: b.cwd });
+  // The fix, and the review of the fix. The author commits the fix while the reviewer reads.
+  const second = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the fix of the finding here\n');
+  const again = openScenario(b.rt, 'change-review', { change_id: '7' }, { session: 's1' });
+  assert.ok(again.ok);
+  if (!again.ok) return;
+  git('add', '-A');
+  git('commit', '-q', '-m', 'the fix');
+  const clean = submitReport(b.rt, again.task.id, JSON.stringify({ items: [{ file: 'a.txt', line: 1, quote: 'the fix of the finding here', severity: 'note', text: 'x' }] }));
+  assert.ok('step' in clean && clean.step.task.label === 'verified_form');
+  assert.notEqual(loadTask(b.rt, again.task.id)?.work, loadTask(b.rt, again.task.id)?.read);
+  // The review read the content of now: the record with the finding ends, and the stop passes.
+  assert.equal(readSession(b.rt, 's1')?.reviews, undefined, id);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: second.task, label: 'not_verified', changed: true });
+});
+
 test('session: a check of another scenario does not end the review; the count of files does not apply; one return for a request', () => {
   const b = reviewBox();
   const rt: Runtime = { ...b.rt, merged: { ...b.rt.merged, context: { ...b.rt.merged.context, maxFreeUnchecked: 1 } } };
@@ -988,10 +1063,18 @@ test('session: a commit of the work that a check judged is no new work: the tree
   assert.equal(opened.ok, true);
   if (!opened.ok) return;
   // The tree of a work with changes that are not committed: the content of the files, not the commit.
+  // The repository before the read: the bytes of the index and every file of the objects.
+  const stored = (): string[] => (fs.readdirSync(path.join(b.cwd, '.git/objects'), { recursive: true }) as string[]).map(String).sort();
+  const index = fs.readFileSync(path.join(b.cwd, '.git/index'));
+  const objects = stored();
   const tree = workTree(b.cwd);
   assert.match(tree ?? '', /^[0-9a-f]{40,64}$/);
   // The read of the tree writes nothing into the repository: the index and the objects stay.
   assert.equal(spawnSync('git', ['status', '--porcelain'], { cwd: b.cwd, encoding: 'utf8' }).stdout, ' M a.txt\n?? new.txt\n');
+  assert.deepEqual(fs.readFileSync(path.join(b.cwd, '.git/index')), index, 'the index of the repository');
+  assert.deepEqual(stored(), objects, 'the objects of the repository');
+  // The objects of the tree were written, into a directory of their own: the repository does not hold the tree.
+  assert.notEqual(spawnSync('git', ['cat-file', '-e', tree ?? ''], { cwd: b.cwd }).status, 0);
   mutateTask(b.rt, opened.task.id, (t) => ({ ...t, state: 'closed', label: 'verified_result', work: workState(b.cwd) ?? '', tree: tree ?? '' }));
   assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unchecked, undefined);
   // The next request only commits the work that the check judged: the fingerprint is another, the tree is the same.
@@ -1007,4 +1090,100 @@ test('session: a commit of the work that a check judged is no new work: the tree
   assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
   // A directory that is no repository has no tree.
   assert.equal(workTree(os.tmpdir()), null);
+});
+
+test('work: the tree of a work that changed between the read of its fingerprint and the read of its tree is no tree of that fingerprint (contracts AD16)', () => {
+  const b = repoBox();
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'the content that was read\n');
+  const state = workState(b.cwd);
+  assert.ok(state !== null);
+  if (state === null) return;
+  // Nothing changes between the two reads: the tree is the one of the content.
+  assert.equal(workTreeOf(b.cwd, state), workTree(b.cwd));
+  assert.match(workTreeOf(b.cwd, state) ?? '', /^[0-9a-f]{40,64}$/);
+  // The author edits the work after the fingerprint and before the tree: the tree is of newer content.
+  const late = (cwd: string): string | null => { fs.writeFileSync(path.join(cwd, 'a.txt'), 'an edit that nobody read\n'); return workTree(cwd); };
+  assert.equal(workTreeOf(b.cwd, state, late), null);
+  // An edit after the tree is read, before the second read of the fingerprint: the same answer.
+  const state2 = workState(b.cwd);
+  assert.ok(state2 !== null);
+  if (state2 === null) return;
+  const after = (cwd: string): string | null => { const tree = workTree(cwd); fs.writeFileSync(path.join(cwd, 'a.txt'), 'one more edit\n'); return tree; };
+  assert.equal(workTreeOf(b.cwd, state2, after), null);
+});
+
+test('session: a check of a scenario that judged the work keeps a commit of that content free of a return; a commit of other content is returned (contracts AD12)', () => {
+  const box = reviewBox();
+  const b = { ...box, rt: { ...box.rt, merged: { ...box.rt.merged, context: { ...box.rt.merged.context, maxFreeUnchecked: 1 } } } };
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a changed line of the work\n');
+  // The check of the harness itself writes the tree: nothing sets the field by hand.
+  const id = review(b, 'note', 'a changed line of the work');
+  const task = loadTask(b.rt, id);
+  assert.match(task?.tree ?? '', /^[0-9a-f]{40,64}$/);
+  assert.equal(task?.tree, workTree(b.cwd));
+  assert.equal(agentStopped(b.rt, { session: 's1', cwd: b.cwd }).unchecked, undefined);
+  // The next request only commits that content: another fingerprint, the same tree, no return.
+  const second = humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  git('add', '-A');
+  git('commit', '-q', '-m', 'checked');
+  assert.notEqual(workState(b.cwd), task?.work);
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { task: second.task, label: 'not_verified', changed: true });
+  // The task keeps the fingerprint of the work as it is now, with its tree and its label.
+  assert.deepEqual([loadTask(b.rt, id)?.work, loadTask(b.rt, id)?.tree, loadTask(b.rt, id)?.label], [workState(b.cwd), task?.tree, task?.label]);
+  // A commit of other content is a work that no check judged.
+  humanRequest(b.rt, { session: 's1', cwd: b.cwd });
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed after the check\n');
+  git('commit', '-q', '-am', 'more');
+  assert.deepEqual(agentStopped(b.rt, { session: 's1', cwd: b.cwd }), { unchecked: { files: 1 } });
+});
+
+test('work: the read of a tree and its second fingerprint share one term: a read with no time left starts no call of git and leaves nothing behind (contracts AD18)', () => {
+  const b = repoBox();
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  const state = workState(b.cwd);
+  assert.ok(state !== null);
+  if (state === null) return;
+  // The directories of the reads of this test lie in a place of their own: other tests read trees too.
+  const tmp = fs.mkdtempSync(path.join(b.root, 'tmp-'));
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = tmp;
+  try {
+    // A clock that jumps to the moment `at` at its n-th read: the read of the tree asks the clock once for each call of git.
+    const jump = (n: number, at: number = 2000): { term: Term; asked: () => number } => { let asked = 0; return { term: { until: 1000, now: () => ((asked += 1) >= n ? at : 0) }, asked: () => asked }; };
+    const whole = jump(100);
+    assert.match(workTree(b.cwd, whole.term) ?? '', /^[0-9a-f]{40,64}$/);
+    // The read of a tree of a work with changes is five calls of git, and the clock is asked once for each: the
+    // root, the status, the places, the add, the tree. One read of the clock gives the check and the limit of a call.
+    const steps = whole.asked();
+    assert.equal(steps, 5);
+    // The term ends at each step in turn, past its end and exactly at its end (a limit of zero would mean "no
+    // limit" for a call): no tree, the read stops at that step, and no directory of the read is left, also after
+    // the directory was made (steps 4 and 5).
+    for (const at of [2000, 1000]) {
+      for (let n = 1; n <= steps; n += 1) {
+        const cut = jump(n, at);
+        assert.equal(workTree(b.cwd, cut.term), null, `the term ends at the step ${n}, the clock at ${at}`);
+        assert.equal(cut.asked(), n, `the read stops at the step ${n}, the clock at ${at}`);
+        assert.deepEqual(fs.readdirSync(tmp), [], `the step ${n} leaves no directory`);
+      }
+    }
+    // A fingerprint is four calls of git for this work, each with one read of the clock: a term that ends
+    // at a call gives no fingerprint and no error.
+    const print = jump(100);
+    assert.equal(workState(b.cwd, print.term), state);
+    for (const at of [2000, 1000]) for (let n = 1; n <= print.asked(); n += 1) assert.equal(workState(b.cwd, jump(n, at).term), null, `the fingerprint, the step ${n}, the clock at ${at}`);
+    // The second fingerprint is read within the same term: a tree that used the term up is no tree of the fingerprint.
+    assert.match(workTreeOf(b.cwd, state) ?? '', /^[0-9a-f]{40,64}$/);
+    const late = jump(steps + 1);
+    assert.equal(workTreeOf(b.cwd, state, undefined, late.term), null);
+    assert.equal(late.asked(), steps + 1, 'the second fingerprint starts no call of git');
+    // A fingerprint with no time left is no fact.
+    assert.equal(workState(b.cwd, termOf(0)), null);
+    assert.ok(TREE_BUDGET_MS < 10_000, 'the term stays below the ten seconds of a hook');
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
 });

@@ -143,3 +143,15 @@ test('task: a closed task has no envelope', () => {
   const d = decideFor(task, comment('change/7'), []);
   assert.deepEqual([task.state, d.decision.outcome, d.decision.envelope], ['closed', 'ask', 'none']);
 });
+
+test('task: an approval of the human for another work drops the tree of the check; for the same work the tree stays (contracts AD14)', () => {
+  const checked: Task = { ...start('review').task, state: 'waiting_human', waiting: 'approval', work: 'a'.repeat(32), tree: 'b'.repeat(40) };
+  // The human saw a work that the check did not read: the tree of the check is not the tree of that work.
+  const other = step(checked, { type: 'human', decision: 'accept', work: 'c'.repeat(32), at: 1 });
+  assert.equal(other.error, undefined);
+  assert.deepEqual([other.task.label, other.task.work, other.task.tree], ['approved_by_human', 'c'.repeat(32), undefined]);
+  assert.equal('tree' in other.task, false);
+  // The same work: the tree of the check is the tree of the approval.
+  const same = step(checked, { type: 'human', decision: 'accept', work: 'a'.repeat(32), at: 1 });
+  assert.deepEqual([same.task.label, same.task.work, same.task.tree], ['approved_by_human', 'a'.repeat(32), 'b'.repeat(40)]);
+});

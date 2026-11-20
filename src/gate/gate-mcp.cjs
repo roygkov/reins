@@ -17,12 +17,22 @@ function evalHostingCli(seg) {
   const b = base(seg.argv[0]);
   if (b !== 'gh' && b !== 'glab') return null;
   const pos = positionals(seg.argv);
-  if (matchSub(pos, [['pr', 'merge'], ['mr', 'merge']])) return { decision: 'ask', id: 'hosting.merge', cls: 'protected', why: b + ' merges a pull request into its base branch' };
   // The words of a write stand anywhere among the positionals: a value of a flag is a positional too, so
   // a window of the first words would let `gh --repo a --hostname b -R c --foo d pr comment` pass.
-  const has = (seqs) => pos.some((_, s) => seqs.some((seq) => seq.every((w, n) => pos[s + n] === w)));
+  const has = (seqs) => matchSub(pos, seqs, true);
+  if (has([['pr', 'merge'], ['mr', 'merge']])) return { decision: 'ask', id: 'hosting.merge', cls: 'protected', why: b + ' merges a pull request into its base branch' };
   // a comment, a review or a note is a text that other people read; `mr comment` is the other name of `mr note`
   if (has([['pr', 'comment'], ['pr', 'review'], ['issue', 'comment'], ['mr', 'note'], ['mr', 'comment'], ['issue', 'note']])) return { decision: 'ask', id: 'hosting.comment', cls: 'hosting', why: b + ' writes a text that other people read in the hosting' };
+  // a change of the state with a comment writes the comment: `gh pr close 1 --comment text`, `gh issue reopen 1
+  // -c text`; the letter `c` stands at any place of a group of short flags (`-dc text`, `-ctext`)
+  if (has([['pr', 'close'], ['issue', 'close'], ['pr', 'reopen'], ['issue', 'reopen']]) && seg.argv.some((a) => a === '--comment' || a.startsWith('--comment=') || /^-[a-zA-Z]*c/.test(a))) return { decision: 'ask', id: 'hosting.comment', cls: 'hosting', why: b + ' writes a text that other people read in the hosting' };
+  // a change of a pull request, merge request or issue changes a record that other people read: its title,
+  // its text, its labels, its reviewers
+  if (has([['pr', 'edit'], ['issue', 'edit'], ['mr', 'update'], ['issue', 'update'], ['issue', 'transfer']])) return { decision: 'ask', id: 'hosting.edit', cls: 'hosting', why: b + ' changes a record that other people read in the hosting' };
+  // a delete of a pull request, merge request or issue takes away a record that other people read, for ever
+  if (has([['pr', 'delete'], ['mr', 'delete'], ['issue', 'delete']])) return { decision: 'ask', id: 'hosting.delete', cls: 'protected', why: b + ' deletes a record that other people read in the hosting' };
+  // an approval of a merge request, or its withdrawal, is a decision that other people act on
+  if (has([['mr', 'approve'], ['mr', 'revoke']])) return { decision: 'ask', id: 'hosting.approve', cls: 'hosting', why: b + ' approves a merge request or takes the approval back' };
   // a new pull request, merge request or issue is a record that other people read and act on; `new` is the
   // other name of `create`, and `mr for <issue>` creates a merge request for an issue
   if (has([['pr', 'create'], ['pr', 'new'], ['mr', 'create'], ['mr', 'new'], ['mr', 'for'], ['issue', 'create'], ['issue', 'new']])) return { decision: 'ask', id: 'hosting.create', cls: 'hosting', why: b + ' creates a record that other people read in the hosting' };
@@ -47,7 +57,7 @@ function evalHostingCli(seg) {
   return { decision: 'ask', id: 'hosting.api-write', cls: prot ? 'protected' : 'hosting', why: b + ' api ' + method.toUpperCase() + ' ' + short(endpoint) + ' writes to the hosting' };
 }
 // `gh pr view` stays out of Node; a merge, a create, a comment or an `api` call goes in (the release and repo rules are data)
-evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }, { cmd: ['gh', 'glab'], sub: 'create' }, { cmd: ['gh', 'glab'], sub: 'new' }, { cmd: ['gh', 'glab'], sub: 'for' }, { cmd: ['gh', 'glab'], sub: 'alias' }];
+evalHostingCli.NEEDLES = [{ cmd: ['gh', 'glab'], sub: 'merge' }, { cmd: ['gh', 'glab'], sub: 'api' }, { cmd: ['gh', 'glab'], sub: 'comment' }, { cmd: ['gh', 'glab'], sub: 'review' }, { cmd: ['gh', 'glab'], sub: 'note' }, { cmd: ['gh', 'glab'], sub: 'create' }, { cmd: ['gh', 'glab'], sub: 'new' }, { cmd: ['gh', 'glab'], sub: 'for' }, { cmd: ['gh', 'glab'], sub: 'alias' }, { cmd: ['gh', 'glab'], sub: 'close' }, { cmd: ['gh', 'glab'], sub: 'reopen' }, { cmd: ['gh', 'glab'], sub: 'edit' }, { cmd: ['gh', 'glab'], sub: 'update' }, { cmd: ['gh', 'glab'], sub: 'approve' }, { cmd: ['gh', 'glab'], sub: 'revoke' }, { cmd: ['gh', 'glab'], sub: 'delete' }, { cmd: ['gh', 'glab'], sub: 'transfer' }];
 
 const MCP_DENY = /^(drop|delete[-_]?many|deletemany|drop[-_]?(database|collection|table|index)|rename[-_]?collection|truncate)/i;
 const MCP_ASK = /^(insert|update|delete|create|replace|bulk|write|put|set|upsert|patch|remove|move|rename|import|restore)/i;

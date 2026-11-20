@@ -14,6 +14,7 @@ import { validateRow } from '../src/contracts/journal.ts';
 import { acceptedLabel, validateManifest } from '../src/contracts/manifest.ts';
 import { applyEvent, loadTask, openScenario, runCheck, submitReport, verifyWork, type Runtime } from '../src/core/runtime.ts';
 import { dueChecks, sweep } from '../src/core/sweep.ts';
+import { workState } from '../src/core/work.ts';
 import { taskInput } from '../src/client/input.ts';
 import { runCollect, sandboxProfile } from '../src/core/collect.ts';
 import { beforeAction, type ClientTools } from '../src/client/before.ts';
@@ -510,6 +511,71 @@ test('ready: with a soak the first PASS is not the result: the check answers a s
   assert.deepEqual([moved.answer.result, moved.answer.reason, moved.step.task.state], ['none', 'work_changed', 'waiting_human']);
 });
 
+test('ready: a commit of the checked content during a soak is the same work for the second answer; a commit of other content is not (contracts AD17)', () => {
+  const trigger = { kind: 'command', inputs: [{ name: 'change_id', type: 'id' }, { name: 'repo', type: 'string' }] };
+  const done = { kind: 'external', check: 'tests', retries: 0, source: 'repo', soak_minutes: 10 };
+  const soaking = (): { b: ReturnType<typeof box>; id: string; git: (...args: string[]) => string } => {
+    const b = box({ trigger, done, check: PASSING });
+    const git = (...args: string[]): string => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+    git('init', '-q');
+    fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'base');
+    fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+    const opened = openScenario(b.rt, 'change-review', { change_id: '7', repo: b.cwd }, { session: 's1' });
+    assert.ok(opened.ok);
+    const first = submitReport(b.rt, opened.task.id, REPORT);
+    assert.ok('step' in first);
+    assert.equal(first.step.task.state, 'checking', JSON.stringify(first));
+    assert.match(loadTask(b.rt, opened.task.id)?.tree ?? '', /^[0-9a-f]{40,64}$/);
+    return { b, id: opened.task.id, git };
+  };
+  // The commit of the content of the first answer: another fingerprint, the same content.
+  const same = soaking();
+  const work = loadTask(same.b.rt, same.id)?.work;
+  same.git('add', '-A');
+  same.git('commit', '-q', '-m', 'checked');
+  const second = runCheck(same.b.rt, same.id, Date.now() + 11 * MIN);
+  assert.ok('step' in second);
+  assert.deepEqual([second.answer.result, second.step.task.state], ['PASS', 'publishing']);
+  // The accepted result holds for the work as it is now, with its tree.
+  assert.notEqual(second.step.task.work, work);
+  assert.equal(second.step.task.tree, same.git('rev-parse', 'HEAD^{tree}'));
+  assert.equal(verifyWork(same.b.rt, same.id), true);
+  // A commit of other content is another work: no answer.
+  const other = soaking();
+  fs.appendFileSync(path.join(other.b.cwd, 'a.txt'), 'one more line\n');
+  other.git('add', '-A');
+  other.git('commit', '-q', '-m', 'other');
+  const moved = runCheck(other.b.rt, other.id, Date.now() + 11 * MIN);
+  assert.ok('step' in moved);
+  assert.deepEqual([moved.answer.result, moved.answer.reason, moved.step.task.state], ['none', 'work_changed', 'waiting_human']);
+});
+
+test('ready: a red answer after a green one takes the tree of the content away with the fingerprint of the work (contracts AD12)', () => {
+  const trigger = { kind: 'command', inputs: [{ name: 'change_id', type: 'id' }, { name: 'repo', type: 'string' }] };
+  const b = box({ trigger, done: { kind: 'external', check: 'tests', retries: 0, source: 'repo', soak_minutes: 10 }, check: PASSING });
+  const git = (...args: string[]): void => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  git('init', '-q');
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7', repo: b.cwd }, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  submitReport(b.rt, id, REPORT);
+  // The green answer holds a fingerprint and a tree.
+  assert.match(loadTask(b.rt, id)?.work ?? '', /^[0-9a-f]{32}$/);
+  assert.match(loadTask(b.rt, id)?.tree ?? '', /^[0-9a-f]{40,64}$/);
+  // The second answer is red: nothing of the green answer stays.
+  fs.writeFileSync(path.join(b.cwd, '..', 'red'), '');
+  const red = runCheck(b.rt, id, Date.now() + 11 * MIN);
+  assert.ok('step' in red);
+  assert.deepEqual([red.answer.result, red.step.task.state], ['FAIL', 'waiting_human']);
+  const task = loadTask(b.rt, id);
+  assert.deepEqual([task?.work, task?.tree, task !== null && 'tree' in task], [undefined, undefined, false]);
+});
+
 test('ready: the term of an answer and the soak are numbers of minutes in the manifest', () => {
   const errors = (done: Record<string, unknown>) => validateManifest({ ...manifests.get('review'), done }).map((e) => `${e.code} ${e.path}`);
   assert.deepEqual(errors({ kind: 'external', check: 'tests', retries: 1, valid_minutes: 30, soak_minutes: 10 }), []);
@@ -858,4 +924,40 @@ test('ready: a green answer of a script keeps the tree of the content of the wor
   git('add', '-A');
   git('commit', '-q', '-m', 'checked');
   assert.equal(git('rev-parse', 'HEAD^{tree}'), tree);
+});
+
+test('ready: a commit of the content that the check read keeps the publication; a commit of other content ends it (contracts AD12)', () => {
+  const trigger = { kind: 'command', inputs: [{ name: 'change_id', type: 'id' }, { name: 'repo', type: 'string' }] };
+  const b = box({ trigger, done: { kind: 'command', check: 'tests', retries: 0, source: 'repo' }, check: PASSING });
+  const git = (...args: string[]): string => { const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: b.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git('init', '-q');
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'a\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  fs.writeFileSync(path.join(b.cwd, 'a.txt'), 'changed\n');
+  fs.writeFileSync(path.join(b.cwd, 'new.txt'), 'new\n');
+  const opened = openScenario(b.rt, 'change-review', { change_id: '7', repo: b.cwd }, { session: 's1' });
+  assert.ok(opened.ok);
+  const id = opened.task.id;
+  const r = submitReport(b.rt, id, REPORT);
+  assert.ok('step' in r);
+  assert.equal(r.step.task.state, 'publishing');
+  const work = loadTask(b.rt, id)?.work;
+  // The commit of the checked content: another fingerprint, the same tree.
+  git('add', '-A');
+  git('commit', '-q', '-m', 'checked');
+  assert.notEqual(workState(b.cwd), work);
+  const tree = loadTask(b.rt, id)?.tree;
+  assert.equal(verifyWork(b.rt, id), true);
+  assert.equal(loadTask(b.rt, id)?.state, 'publishing');
+  // The task keeps the fingerprint of the work as it is now: the next check compares fingerprints and reads no tree.
+  assert.deepEqual([loadTask(b.rt, id)?.work, loadTask(b.rt, id)?.tree], [workState(b.cwd), tree]);
+  assert.equal(verifyWork(b.rt, id), true);
+  // A commit of other content is another work.
+  fs.appendFileSync(path.join(b.cwd, 'a.txt'), 'one more line\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'other');
+  assert.equal(verifyWork(b.rt, id), false);
+  assert.deepEqual([loadTask(b.rt, id)?.state, loadTask(b.rt, id)?.label], ['closed', 'not_verified']);
+  assert.equal(readJournal(b.rt.journal.file).find((x) => x.kind === 'check.invalidated')?.data?.reason, 'work_changed');
 });

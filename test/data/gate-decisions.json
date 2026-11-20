@@ -2263,5 +2263,165 @@
   "repo": "onfeature",
   "command": "gh alias list",
   "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr close 1 --comment text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr close 1 -c text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue close 1 --comment=text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr close 1",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr edit 1 --title x",
+  "expect": "ask hosting.edit"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue edit 1 --body x",
+  "expect": "ask hosting.edit"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr update 1 --title x",
+  "expect": "ask hosting.edit"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab issue update 1 --title x",
+  "expect": "ask hosting.edit"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh -R o/r pr edit 1 --add-label bug",
+  "expect": "ask hosting.edit"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr approve 1",
+  "expect": "ask hosting.approve"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr revoke 1",
+  "expect": "ask hosting.approve"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr view 1",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh release create v1.0",
+  "expect": "ask release.gh"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh --repo a --hostname b -R c --foo d release create v1.0",
+  "expect": "ask release.gh"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab release create v1.0",
+  "expect": "ask release.glab"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab -R a --foo b --bar c --baz d release create v1.0",
+  "expect": "ask release.glab"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh release view v1.0",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh --repo a --hostname b -R c --foo d pr merge 1",
+  "expect": "ask hosting.merge"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh --repo a --hostname b --foo c --bar d repo delete o/r --yes",
+  "expect": "ask hosting.repo-delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr close 1 -ctext",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr reopen 1 --comment text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue reopen 1 -c text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr close 1 -dc text",
+  "expect": "ask hosting.comment"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr reopen 1",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh pr close 1 -d",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue delete 1 --yes",
+  "expect": "ask hosting.delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr delete 1",
+  "expect": "ask hosting.delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab issue delete 1",
+  "expect": "ask hosting.delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh -R o/r issue delete 1",
+  "expect": "ask hosting.delete"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue transfer 1 o/other",
+  "expect": "ask hosting.edit"
+ },
+ {
+  "repo": "onfeature",
+  "command": "gh issue list",
+  "expect": "allow"
+ },
+ {
+  "repo": "onfeature",
+  "command": "glab mr list",
+  "expect": "allow"
  }
 ]
